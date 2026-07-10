@@ -22,3 +22,6 @@ tmp_query.sql
 
 # Playwright MCP デバッグ出力（ブラウザ調査時に自動生成される一時ファイル）
 .playwright-mcp/
+
+# Claude Codeのローカル権限設定（個人環境固有のため管理外）
+.claude/settings.local.json
