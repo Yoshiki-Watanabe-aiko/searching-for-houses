@@ -3,6 +3,8 @@
 **作成日**: 2026-06-16  
 **言語/スタック**: Go / PostgreSQL / Discord Webhook
 
+最終更新: 2026-07-10（project-scaffold雛形への整理。docs/詳細設計書・docs/課題管理書.mdを新設し、調査資料と未解決課題を本書から切り出した）
+
 ---
 
 ## 1. システム概要
@@ -344,8 +346,14 @@ f:\searching-for-houses\
 │   ├── 06_site_mappings.sql
 │   └── setup.ps1
 ├── docs/
-│   └── requirements.md
-├── .env
+│   ├── requirements.md
+│   ├── 課題管理書.md
+│   └── 詳細設計書/
+│       ├── 01_検索条件マッピング設計.md
+│       └── 資料_サイト別検索条件一覧.md
+├── .env                    # Git管理外（.env.example を参照して作成）
+├── .env.example
+├── .gitignore
 ├── go.mod
 └── go.sum
 ```
@@ -367,3 +375,10 @@ f:\searching-for-houses\
 ## 13. 将来の拡張予定
 
 - **クロスサイト重複検知**: `address_hash` を使って異なるサイトの同一物件を名寄せし、最初の1回のみ通知
+
+---
+
+## 14. 参考
+
+- 各サイトの検索条件対応状況・スクレイパー実装方針の詳細 → `docs/詳細設計書/01_検索条件マッピング設計.md`
+- 未解決の課題・残作業一覧 → `docs/課題管理書.md`
