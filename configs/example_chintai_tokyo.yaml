@@ -1,0 +1,35 @@
+# 検索パターン設定サンプル。実際に使う場合はこのファイルをコピーして
+# discord_webhook を自分のWebhook URLに書き換えること（このファイル自体は
+# .gitignore で configs/*.yaml が除外対象のため、コピーしたファイルはGit管理外になる）
+name: "東京1LDK賃貸"                # パターン名（DB・通知ログで使用）
+property_type: "CHINTAI"          # 物件種別コード
+site_ids:                         # スクレイプ対象サイト
+  - "SUUMO"
+  - "HOMES"
+  - "ATHOME"
+discord_webhook: "https://discord.com/api/webhooks/xxxxxxxxxxxx/yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+conditions:
+  area:
+    prefectures: ["東京都"]
+    cities: []                    # 区市町村（空=都道府県全体）
+                                  # 値は cities テーブルの canonical_name を指定
+                                  # 例: ["新宿区", "横浜市西区", "大阪市北区"]
+                                  # 政令指定都市の区は「横浜市西区」のように市名を prefix
+    stations: []                  # 最寄り駅名
+    walk_minutes_max: 10          # 徒歩分数上限
+  price:
+    rent_max: 200000              # 賃料上限（円）
+    price_max:                    # 売買価格上限（円）
+    include_mgmt_fee: true        # 管理費込みで上限判定
+    no_reikin: false              # 礼金なし限定
+    no_shikikin: false            # 敷金なし限定
+  building:
+    layouts: ["1LDK", "2K", "2DK"]
+    area_min: 40.0                # 面積下限（㎡）
+    area_max:                     # 面積上限（㎡）
+    age_max: 15                   # 築年数上限
+    floor_min:                    # 階数下限
+  features:                       # 設備・条件コード
+    - MOVEIN_PET
+    - SEC_AUTOLOCK
+    - BATH_SEPARATE

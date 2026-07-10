@@ -1,0 +1,24 @@
+# 環境変数・シークレット
+.env
+.env.*
+!.env.example
+
+# 検索パターン設定（discord_webhookに実際のURLを含むため管理外。雛形は configs/example_*.yaml を参照）
+configs/*.yaml
+configs/**/*.yaml
+!configs/example_*.yaml
+
+# ビルド出力
+*.exe
+*.exe~
+
+# ログ
+logs/
+*.log
+
+# 一時ファイル・ロック
+tmp_query.sql
+.claude/scheduled_tasks.lock
+
+# Playwright MCP デバッグ出力（ブラウザ調査時に自動生成される一時ファイル）
+.playwright-mcp/
