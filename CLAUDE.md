@@ -11,7 +11,7 @@
 ## 参照ファイル
 - 要件定義書          → @docs/requirements.md
 - 詳細設計書          → @docs/詳細設計書/
-- 課題管理書          → @docs/課題管理書.md
+- 課題管理表          → @docs/課題管理表.md
 - 設計判断の記録      → @docs/adr/
 
 ## AI回答方針
