@@ -1,6 +1,6 @@
 """scan 以外のコマンド本体。
 
-digest / rescore / check-sold / re-extract / report-unknown。
+digest / rescore / check-sold / re-extract / report-unknown / coverage。
 このうち rescore と re-extract は**ネットワークを一切使わない**DBバッチで、
 辞書や重みを変えたときの作り直しがスクレイピング無しで完結する。
 """
@@ -272,7 +272,7 @@ def check_sold(runtime: Runtime, pattern, *, limit: int = 100) -> CheckSoldResul
         scraper = get_scraper(site_code)
         if scraper is None:
             continue
-        client = runtime.http_client()
+        client = runtime.http_client(user_agent=scraper.user_agent)
         fetcher = SiteFetcher(
             site_code=site_code,
             client=client,
@@ -291,3 +291,86 @@ def check_sold(runtime: Runtime, pattern, *, limit: int = 100) -> CheckSoldResul
             persist.mark_status(conn, sold_ids, "sold")
     result.sold = len(sold_ids)
     return result
+
+
+@dataclass(frozen=True, slots=True)
+class SiteCoverage:
+    """サイト1件ぶんの充足率（``coverage`` コマンドの出力）。"""
+
+    site_code: str
+    properties: int
+    detail_fetched: int
+    with_features: int
+    features_avg: float
+    features_min: int
+    features_max: int
+    column_filled: dict[str, int]
+
+
+# 充足率を測る型付き列。MUST判定・metric の入力になるものを並べる。
+COVERAGE_COLUMNS = (
+    "price",
+    "mgmt_fee_monthly",
+    "rent_total",
+    "deposit_amount",
+    "key_money_amount",
+    "area_sqm",
+    "layout",
+    "floor_num",
+    "total_floors",
+    "built_on",
+    "walk_minutes",
+    "address",
+    "city_id",
+    "raw_features_text",
+)
+
+
+def measure_coverage(runtime: Runtime) -> list[SiteCoverage]:
+    """サイト別の設備抽出数分布と数値カラム非NULL率を実測する。
+
+    「実装済みだが未配線」を検出するための計測（→ 課題#11）。
+    アダプタを足しただけで抽出が動いていないサイトは、
+    ``detail_fetched`` は増えるのに ``features_avg`` が 0 のままになる。
+    """
+    filled = ", ".join(
+        f"count(p.{column}) AS filled_{column}" for column in COVERAGE_COLUMNS
+    )
+    query = text(
+        f"""
+        WITH feature_counts AS (
+            SELECT property_id, count(*) AS n
+            FROM t_property_features
+            GROUP BY property_id
+        )
+        SELECT s.code AS site_code,
+               count(*) AS properties,
+               count(p.detail_fetched_at) AS detail_fetched,
+               count(f.n) AS with_features,
+               COALESCE(avg(f.n), 0) AS features_avg,
+               COALESCE(min(f.n), 0) AS features_min,
+               COALESCE(max(f.n), 0) AS features_max,
+               {filled}
+        FROM t_properties p
+        JOIN m_sites s ON s.id = p.site_id
+        LEFT JOIN feature_counts f ON f.property_id = p.id
+        GROUP BY s.code
+        ORDER BY s.code
+        """
+    )
+    with runtime.engine.connect() as conn:
+        rows = conn.execute(query).mappings().all()
+
+    return [
+        SiteCoverage(
+            site_code=row["site_code"],
+            properties=row["properties"],
+            detail_fetched=row["detail_fetched"],
+            with_features=row["with_features"],
+            features_avg=float(row["features_avg"]),
+            features_min=int(row["features_min"]),
+            features_max=int(row["features_max"]),
+            column_filled={c: int(row[f"filled_{c}"]) for c in COVERAGE_COLUMNS},
+        )
+        for row in rows
+    ]

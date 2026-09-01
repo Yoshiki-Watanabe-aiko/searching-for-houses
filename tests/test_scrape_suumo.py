@@ -20,6 +20,7 @@ from house_search.scrape.base import (
     parse_total_floors,
     parse_walk_minutes,
     parse_yen,
+    prefecture_targets,
 )
 from house_search.scrape.suumo import PAGE_SIZE, SuumoScraper
 
@@ -91,6 +92,11 @@ def test_築年月は日を1日に固定する() -> None:
 # --- URL構築 -------------------------------------------------------------
 
 
+def _areas(pattern):
+    """パターンの都道府県から、市区指定なしのエリア対象を作る。"""
+    return prefecture_targets(pattern.search.prefectures)
+
+
 def _pattern(**search_overrides):
     return parse_pattern(
         {
@@ -104,7 +110,7 @@ def _pattern(**search_overrides):
 
 
 def test_一覧URLは都道府県ごとに1本作られる(scraper: SuumoScraper) -> None:
-    urls = scraper.list_urls(_pattern(price_max_hint=90000), {})
+    urls = scraper.list_urls(p := _pattern(price_max_hint=90000), _areas(p))
     assert len(urls) == 2
     assert "ta=13" in urls[0] and "ar=030" in urls[0]
     assert "ta=12" in urls[1]
@@ -113,7 +119,7 @@ def test_一覧URLは都道府県ごとに1本作られる(scraper: SuumoScraper
 def test_一覧URLに設備条件のパラメータを含めない(scraper: SuumoScraper) -> None:
     # v2 でサイトへ渡すのはエリア・種別・価格上限だけ（→ ADR 0003）。
     # tc= を送ると WANT の物件がサイト側で除外され、ランキングと両立しない
-    url = scraper.list_urls(_pattern(price_max_hint=90000), {})[0]
+    url = scraper.list_urls(p := _pattern(price_max_hint=90000), _areas(p))[0]
     assert "tc=" not in url
     assert "md=" not in url
     assert "mb=" not in url
@@ -121,13 +127,13 @@ def test_一覧URLに設備条件のパラメータを含めない(scraper: Suum
 
 
 def test_賃貸コードと価格上限が万円で渡る(scraper: SuumoScraper) -> None:
-    url = scraper.list_urls(_pattern(price_max_hint=90000), {})[0]
+    url = scraper.list_urls(p := _pattern(price_max_hint=90000), _areas(p))[0]
     assert "bs=040" in url
     assert "ct=9.0" in url
 
 
 def test_価格上限が未指定ならctを付けない(scraper: SuumoScraper) -> None:
-    assert "ct=" not in scraper.list_urls(_pattern(), {})[0]
+    assert "ct=" not in scraper.list_urls(p := _pattern(), _areas(p))[0]
 
 
 def test_未知の都道府県はエラーになる(scraper: SuumoScraper) -> None:
@@ -141,7 +147,7 @@ def test_未知の都道府県はエラーになる(scraper: SuumoScraper) -> No
         }
     )
     with pytest.raises(ValueError, match="未知の都道府県"):
-        scraper.list_urls(pattern, {})
+        scraper.list_urls(pattern, _areas(pattern))
 
 
 def test_ページ番号の付与と最終ページ判定(scraper: SuumoScraper) -> None:

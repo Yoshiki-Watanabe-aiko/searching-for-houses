@@ -11,16 +11,20 @@ v1 が取りこぼしていた管理費・敷金・礼金・所在階も一覧�
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from urllib.parse import urlencode, urljoin
 
 from lxml import html as lxml_html
 
+from house_search.scrape.area import CITY_VALUE_JIS, AreaTarget
 from house_search.scrape.base import (
+    EMPTY_MARKERS,
     ScrapedDetail,
     ScrapedListing,
     parse_age_years,
     parse_area_sqm,
     parse_built_on,
+    parse_fee,
     parse_floor,
     parse_total_floors,
     parse_walk_minutes,
@@ -72,9 +76,6 @@ _BC_PARAM = re.compile(r"[?&]bc=(\d+)")
 # 成約・掲載終了ページに出る文言
 _SOLD_MARKERS = ("この物件は掲載が終了", "掲載を終了", "ご覧いただけません", "お探しの物件は")
 
-# 値が入っていないことを表す表記。
-_EMPTY_MARKERS = ("-", "－", "—")
-
 # 詳細ページの th ラベル → 取り出したい項目
 _DETAIL_LABELS = {
     "所在地": "address",
@@ -96,13 +97,15 @@ class SuumoScraper:
     """SUUMO 賃貸の取得と解析。"""
 
     site_code = SITE_CODE
+    # 都道府県だけでも一覧が返る（市区指定は任意）
+    requires_city = False
+    # 市区は検索URLでは JIS5桁（sc=13101）を使う。m_city_site_values の
+    # ``sc_chiyoda`` は SEO パス用の別表現なので検索URLには使わない
+    city_value_source = CITY_VALUE_JIS
+    user_agent = None
 
-    def list_urls(self, pattern: object, cities: dict[str, str]) -> list[str]:
-        """検索パターンから一覧ページのURL（1ページ目）を組み立てる。
-
-        ``cities`` は ``m_city_site_values`` から引いた
-        「市区町村の正規名 → SUUMO の検索値」。空なら都道府県単位で検索する。
-        """
+    def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
+        """検索パターンと対象エリアから一覧ページのURL（1ページ目）を組み立てる。"""
         search = pattern.search  # type: ignore[attr-defined]
         params = {"sort": "2"}  # 新着順
         if search.price_max_hint:
@@ -110,22 +113,22 @@ class SuumoScraper:
             params["ct"] = f"{search.price_max_hint / 10_000:.1f}"
 
         urls: list[str] = []
-        for prefecture in search.prefectures:
-            region = PREFECTURE_REGION.get(prefecture)
-            jis = PREFECTURE_JIS.get(prefecture)
+        for area in areas:
+            region = PREFECTURE_REGION.get(area.prefecture)
+            jis = PREFECTURE_JIS.get(area.prefecture)
             if not region or not jis:
-                raise ValueError(f"SUUMO: 未知の都道府県です: {prefecture}")
-            query = urlencode({"ar": region, "bs": RENTAL_BS, "ta": jis, **params})
-            urls.append(f"{BASE_URL}/jj/chintai/ichiran/FR301FC001/?{query}")
+                raise ValueError(f"SUUMO: 未知の都道府県です: {area.prefecture}")
+            query: dict[str, str] = {"ar": region, "bs": RENTAL_BS, "ta": jis, **params}
+            if area.value:
+                query["sc"] = area.value
+            urls.append(f"{BASE_URL}/jj/chintai/ichiran/FR301FC001/?{urlencode(query)}")
         return urls
 
-    @staticmethod
-    def page_url(base_url: str, page: int) -> str:
+    def page_url(self, base_url: str, page: int) -> str:
         """一覧URLへページ番号を付ける。"""
         return f"{base_url}&pc={PAGE_SIZE}&pn={page}"
 
-    @staticmethod
-    def is_last_page(count: int) -> bool:
+    def is_last_page(self, count: int) -> bool:
         """1ページに満たない件数しか返らなければ最終ページ。"""
         return count < PAGE_SIZE
 
@@ -194,9 +197,9 @@ class SuumoScraper:
             url=url,
             title=title,
             price=parse_yen(_first_text(room, ".cassetteitem_price--rent")),
-            mgmt_fee_monthly=_parse_fee(_first_text(room, ".cassetteitem_price--administration")),
-            deposit_amount=_parse_fee(_first_text(room, ".cassetteitem_price--deposit")),
-            key_money_amount=_parse_fee(_first_text(room, ".cassetteitem_price--gratuity")),
+            mgmt_fee_monthly=parse_fee(_first_text(room, ".cassetteitem_price--administration")),
+            deposit_amount=parse_fee(_first_text(room, ".cassetteitem_price--deposit")),
+            key_money_amount=parse_fee(_first_text(room, ".cassetteitem_price--gratuity")),
             area_sqm=parse_area_sqm(_first_text(room, ".cassetteitem_menseki")),
             layout=_first_text(room, ".cassetteitem_madori"),
             floor_num=_room_floor(room),
@@ -224,10 +227,10 @@ class SuumoScraper:
         if structure := fields.get("structure"):
             derived_tokens.append(structure)
         facing = fields.get("facing")
-        if facing and facing not in _EMPTY_MARKERS:
+        if facing and facing not in EMPTY_MARKERS:
             derived_tokens.append(facing if facing.endswith("向き") else f"{facing}向き")
         parking = fields.get("parking")
-        if parking and parking not in (*_EMPTY_MARKERS, "無", "なし"):
+        if parking and parking not in EMPTY_MARKERS:
             derived_tokens.append("駐車場あり")
             if "敷地内" in parking:
                 derived_tokens.append("敷地内駐車場")
@@ -237,7 +240,7 @@ class SuumoScraper:
         # 汚すだけなので raw_features_text には載せない（type_specific_attrs には残す）
         for key in ("contract", "conditions"):
             value = fields.get(key)
-            if value and value not in _EMPTY_MARKERS:
+            if value and value not in EMPTY_MARKERS:
                 derived_tokens.append(value)
 
         parts = [part for part in (equipment, "、".join(derived_tokens)) if part]
@@ -256,7 +259,7 @@ class SuumoScraper:
                 for key, value in fields.items()
                 if key in ("structure", "facing", "building_type", "contract")
                 and value
-                and value not in _EMPTY_MARKERS
+                and value not in EMPTY_MARKERS
             },
         )
 
@@ -270,26 +273,6 @@ class SuumoScraper:
         if response.status_code == 404:
             return True
         return any(marker in response.text for marker in _SOLD_MARKERS)
-
-
-# 管理費・敷金・礼金の欄で「無し」を意味する表記。
-_ZERO_FEE_MARKERS = ("-", "－", "なし", "無", "0円")
-
-
-def _parse_fee(text: str | None) -> int | None:
-    """管理費・敷金・礼金を円へ。
-
-    SUUMO はこれらの欄が「-」なら「無し」を意味するので 0 として扱う。
-    None のままにすると rent_total（賃料＋管理費）が「管理費不明」となり、
-    実際には管理費0円の物件が MUST 判定で unknown に落ちてしまう。
-    欄そのものが無い場合だけ None（判定不能）を返す。
-    """
-    if text is None:
-        return None
-    stripped = text.strip()
-    if stripped in _ZERO_FEE_MARKERS:
-        return 0
-    return parse_yen(stripped)
 
 
 def _first_text(node, selector: str) -> str | None:

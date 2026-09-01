@@ -8,16 +8,22 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+import string
+import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
+from house_search.scrape.area import CITY_VALUE_MAPPING, AreaTarget
 from house_search.scrape.fetch import SiteFetcher
 
-# 「3.5万円」「10万5000円」などの金額表記。
-_MAN_YEN = re.compile(r"([\d,]+(?:\.\d+)?)\s*万円")
+# 「3.5万円」「10万5000円」などの金額表記。ABLE の敷金欄は「23.9万」と
+# 「円」を省くため、円は任意にしてある。
+_MAN_YEN = re.compile(r"([\d,]+(?:\.\d+)?)\s*万円?")
 _YEN = re.compile(r"([\d,]+)\s*円")
-# NFKC 後は「㎡」が「m2」になる。生HTMLでは <sup>2</sup> のため m2/m² 双方を見る。
-_AREA = re.compile(r"([\d,]+(?:\.\d+)?)\s*m\s*(?:2|²)")
+# 面積表記。入力を NFKC 正規化してから当てるので「㎡」「m²」「m<sup>2</sup>」が
+# すべて "m2" に寄る。正規化しないと ABLE の「42.9㎡」を取りこぼす。
+_AREA = re.compile(r"([\d,]+(?:\.\d+)?)\s*m\s*2")
 _AGE = re.compile(r"築\s*(\d+)\s*年")
 _NEW_BUILDING = re.compile(r"新築")
 _WALK = re.compile(r"歩\s*(\d+)\s*分")
@@ -78,9 +84,23 @@ class SiteScraper(Protocol):
     """サイトアダプタが満たすべき最小のインタフェース。"""
 
     site_code: str
+    # 市区の指定が必須か（True なら都道府県だけでは0件になる。ABLE・SMOCCA）
+    requires_city: bool
+    # 市区の検索値の出どころ。``area.CITY_VALUE_MAPPING`` / ``CITY_VALUE_JIS``
+    city_value_source: str
+    # このサイトにだけ使う User-Agent。None なら .env の USER_AGENT
+    user_agent: str | None
 
-    def list_urls(self, pattern: object, cities: dict[str, str]) -> list[str]:
-        """検索パターンから一覧ページのURLを組み立てる。"""
+    def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
+        """検索パターンと対象エリアから一覧ページ（1ページ目）のURLを組み立てる。"""
+        ...
+
+    def page_url(self, base_url: str, page: int) -> str:
+        """一覧URLへページ番号を付ける。"""
+        ...
+
+    def is_last_page(self, count: int) -> bool:
+        """このページの取得件数から最終ページかどうかを判定する。"""
         ...
 
     def parse_list(self, html_text: str) -> list[ScrapedListing]:
@@ -112,10 +132,14 @@ def parse_yen(text: str | None) -> int | None:
 
 
 def parse_area_sqm(text: str | None) -> float | None:
-    """「18m2」「42.5m²」などを㎡の実数へ。"""
+    """「18m2」「42.5m²」「42.9㎡」などを㎡の実数へ。
+
+    面積の単位表記はサイトごとに ㎡（U+33A1）・m²・m<sup>2</sup> とばらつくため、
+    NFKC 正規化で "m2" に寄せてから読む。
+    """
     if not text:
         return None
-    match = _AREA.search(text)
+    match = _AREA.search(unicodedata.normalize("NFKC", text))
     return float(match.group(1).replace(",", "")) if match else None
 
 
@@ -170,3 +194,104 @@ def parse_built_on(text: str | None) -> dt.date | None:
     if not (1800 <= year <= 2200 and 1 <= month <= 12):
         return None
     return dt.date(year, month, 1)
+
+
+# 金額欄で「無し」を意味する表記。サイトを問わず共通に現れる。
+EMPTY_MARKERS = ("-", "－", "—", "‐", "なし", "無", "無し", "無料", "0円")
+# ABLE の「--」のようにダッシュだけが並ぶ欄も「無し」を意味する。
+# 記号だけで構成されているかで判定する（「-」との完全一致では取りこぼす）
+_EMPTY_CHARS = frozenset("-－—‐/／ 　") | frozenset(string.whitespace)
+
+_MONTHS = re.compile(r"([\d.]+)\s*(?:ヶ月|ケ月|カ月|か月|ヵ月|月分)")
+
+
+def is_empty_fee(value: str) -> bool:
+    """金額欄が「無し」を意味しているか。"""
+    return not value or value in EMPTY_MARKERS or set(value) <= _EMPTY_CHARS
+
+
+def parse_fee(value: str | None) -> int | None:
+    """管理費・敷金・礼金の欄を円へ。「-」「なし」は 0 として扱う。
+
+    ``None`` のままにすると ``rent_total``（賃料＋管理費）が「管理費不明」となり、
+    実際には0円の物件が MUST 判定で ``unknown`` に落ちてしまう。
+    欄そのものが存在しない場合だけ ``None``（判定不能）を返す。
+    """
+    if value is None:
+        return None
+    stripped = value.strip()
+    if is_empty_fee(stripped):
+        return 0
+    return parse_yen(stripped)
+
+
+def parse_months_fee(value: str | None, rent: int | None) -> int | None:
+    """「1ヶ月」形式の敷金・礼金を円へ換算する。
+
+    HOMES・ABLE は敷金/礼金を賃料の月数で表す。円表記が混在するため、
+    まず月数として読み、当たらなければ通常の金額表記として読む。
+    賃料が不明なら月数を円に直せないので ``None``（判定不能）を返す。
+    """
+    if value is None:
+        return None
+    stripped = value.strip()
+    if is_empty_fee(stripped):
+        return 0
+    if match := _MONTHS.search(stripped):
+        if rent is None:
+            return None
+        return int(round(float(match.group(1)) * rent))
+    return parse_yen(stripped)
+
+
+def default_city_value_source() -> str:
+    """アダプタが指定しなかった場合の既定（サイト固有マッピング）。"""
+    return CITY_VALUE_MAPPING
+
+
+def prefecture_targets(prefectures: Sequence[str]) -> list[AreaTarget]:
+    """都道府県だけのエリア指定を作る（テストとフォールバック用）。"""
+    return [AreaTarget(prefecture=pref) for pref in prefectures]
+
+
+def age_years_from_built(text: str | None, *, today: dt.date | None = None) -> int | None:
+    """「1971年11月」のような築年月から築年数を計算する。
+
+    賃貸EX のように「築N年」を出さず築年月しか載せないサイト用。
+    月まで見て切り下げる（築年数は満年で数えるため）。
+    """
+    built = parse_built_on(text)
+    if built is None:
+        return None
+    reference = today or dt.date.today()
+    years = reference.year - built.year - ((reference.month, 1) < (built.month, 1))
+    return max(years, 0)
+
+
+# 住所欄に紛れ込む導線リンクの文言。text_content で拾うと住所の末尾に付く。
+_ADDRESS_NOISE = (
+    "地図を見る",
+    "地図で見る",
+    "周辺地図",
+    "詳細地図",
+    "の行政データ",
+    "の家賃相場",
+    "周辺の",
+)
+
+
+def clean_address(value: str | None) -> str | None:
+    """住所欄から導線リンクの文言を落とす。
+
+    HOME'S は「…12-12地図を見る」、goo は「…23-2周辺地図 千代田区の行政データ」の
+    ように、住所の td/dd に案内リンクが同居する。最初に現れた文言以降を切る。
+    """
+    if not value:
+        return None
+    cleaned = value
+    for marker in _ADDRESS_NOISE:
+        index = cleaned.find(marker)
+        if index > 0:
+            cleaned = cleaned[:index]
+    cleaned = cleaned.strip()
+    return cleaned or None

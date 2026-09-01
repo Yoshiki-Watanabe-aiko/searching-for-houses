@@ -26,7 +26,8 @@ from house_search.pipeline.runtime import Runtime
 from house_search.scoring.must import evaluate_must
 from house_search.scoring.property_view import PropertyView
 from house_search.scoring.score import calculate_score
-from house_search.scrape import get_scraper
+from house_search.scrape import get_scraper, resolve_areas
+from house_search.scrape.area import AreaTarget
 from house_search.scrape.base import ScrapedListing
 from house_search.scrape.fetch import RateLimit, RobotsDisallowed, SiteAborted, SiteFetcher
 
@@ -121,12 +122,43 @@ def _site_rate_limit(runtime: Runtime, site_code: str) -> RateLimit:
     )
 
 
+def _inactive_sites(runtime: Runtime) -> set[str]:
+    """``m_sites.is_active = false`` のサイトコード。"""
+    with runtime.engine.connect() as conn:
+        rows = conn.execute(text("SELECT code FROM m_sites WHERE is_active = false")).scalars()
+        return set(rows)
+
+
+def _site_areas(runtime: Runtime, scraper, pattern) -> list[AreaTarget]:
+    """サイトの性質に合わせて対象エリアを解決する。
+
+    市区が必須のサイト（ABLE・GOO・賃貸EX）は ``search.cities`` が空でも
+    都道府県内の全市区へ自動展開する（→ 課題#1）。
+    """
+    search = pattern.search
+    with runtime.engine.connect() as conn:
+        return resolve_areas(
+            conn,
+            site_code=scraper.site_code,
+            prefectures=list(search.prefectures),
+            cities=list(search.cities),
+            requires_city=scraper.requires_city,
+            city_value_source=scraper.city_value_source,
+        )
+
+
 def _collect_listings(
-    scraper, fetcher: SiteFetcher, pattern, *, max_pages: int, outcome: SiteOutcome
+    scraper,
+    fetcher: SiteFetcher,
+    pattern,
+    *,
+    areas: list[AreaTarget],
+    max_pages: int,
+    outcome: SiteOutcome,
 ) -> list[ScrapedListing]:
     """一覧ページを辿って掲載を集める。"""
     collected: list[ScrapedListing] = []
-    for base_url in scraper.list_urls(pattern, {}):
+    for base_url in scraper.list_urls(pattern, areas):
         for page in range(1, max_pages + 1):
             url = scraper.page_url(base_url, page)
             try:
@@ -136,7 +168,12 @@ def _collect_listings(
             except Exception as exc:  # noqa: BLE001 - 1ページの失敗で実行を止めない
                 outcome.errors.append(f"一覧取得に失敗: {url} ({exc})")
                 break
-            listings = scraper.parse_list(response.text)
+            try:
+                listings = scraper.parse_list(response.text)
+            except Exception as exc:  # noqa: BLE001 - 壊れたページで他ページを止めない
+                # 空応答や想定外のDOMで落ちても、そのページを飛ばして続ける
+                outcome.errors.append(f"一覧の解析に失敗: {url} ({exc})")
+                break
             collected.extend(listings)
             if scraper.is_last_page(len(listings)):
                 break
@@ -166,21 +203,27 @@ def _fetch_details(
             outcome.errors.append(f"詳細取得に失敗: {url} ({exc})")
             continue
 
-        detail = scraper.parse_detail(response.text)
-        extraction = extract_from_text(
-            detail.raw_features_text,
-            runtime.dictionary,
-            family=family,
-            site_code=scraper.site_code,
-            source=SOURCE_DETAIL,
-        )
-        # 型付き列からの導出を先に渡して、辞書照合より優先させる。
-        derived = derive_features(
-            floor_num=detail.floor_num,
-            total_floors=detail.total_floors,
-            age_years=None,
-        )
-        features = merge_features(derived, extraction.features)
+        try:
+            detail = scraper.parse_detail(response.text)
+            extraction = extract_from_text(
+                detail.raw_features_text,
+                runtime.dictionary,
+                family=family,
+                site_code=scraper.site_code,
+                source=SOURCE_DETAIL,
+            )
+            # 型付き列からの導出を先に渡して、辞書照合より優先させる。
+            derived = derive_features(
+                floor_num=detail.floor_num,
+                total_floors=detail.total_floors,
+                age_years=None,
+            )
+            features = merge_features(derived, extraction.features)
+        except Exception as exc:  # noqa: BLE001 - 1件の失敗でサイト全体を止めない
+            # 空応答（HOME'S で実測）や想定外のDOMでも、その物件だけ飛ばす。
+            # ここを括らないと1ページの破損で残りのキューが丸ごと処理されない
+            outcome.errors.append(f"詳細の解析に失敗: {url} ({exc})")
+            continue
 
         with runtime.engine.begin() as conn:
             persist.save_detail(conn, property_id, detail)
@@ -324,8 +367,14 @@ def scan_pattern(
     all_outcomes: list[persist.UpsertOutcome] = []
 
     target_sites = [s for s in pattern.sites if site_filter is None or s == site_filter]
+    # 無効化されたサイト（観測モード待ちの賃貸EX など）は通常の実行では取りに行かない。
+    # ただし --site で名指しされたときは観測のために動かす
+    inactive = _inactive_sites(runtime) if site_filter is None else set()
 
     for site_code in target_sites:
+        if site_code in inactive:
+            summary.skipped_sites.append(site_code)
+            continue
         scraper = get_scraper(site_code)
         if scraper is None:
             summary.skipped_sites.append(site_code)
@@ -337,6 +386,13 @@ def scan_pattern(
             continue
 
         outcome = SiteOutcome(site_code=site_code)
+        areas = _site_areas(runtime, scraper, pattern)
+        if not areas:
+            # 市区必須のサイトで検索値を1つも解決できなかった場合。
+            # 都道府県で代替すると0件になるだけなので、理由を残してスキップする
+            outcome.errors.append("対象市区の検索値を解決できませんでした")
+            summary.sites.append(outcome)
+            continue
         rate_limit = _site_rate_limit(runtime, site_code)
         max_pages = rate_limit.max_pages_per_run if full_scan else 1
         detail_limit = FULL_DETAIL_LIMIT if full_scan else DEFAULT_DETAIL_LIMIT
@@ -350,12 +406,12 @@ def scan_pattern(
                 site_id=site_id,
             )
 
-        client = runtime.http_client()
+        client = runtime.http_client(user_agent=scraper.user_agent)
         fetcher = SiteFetcher(site_code=site_code, client=client, rate_limit=rate_limit)
         status = "completed"
         try:
             listings = _collect_listings(
-                scraper, fetcher, pattern, max_pages=max_pages, outcome=outcome
+                scraper, fetcher, pattern, areas=areas, max_pages=max_pages, outcome=outcome
             )
             outcome.listings_seen = len(listings)
 

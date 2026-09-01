@@ -152,6 +152,16 @@ class SiteFetcher:
         raise RuntimeError(f"{self.site_code}: 取得に失敗しました: {url}") from last_error
 
 
+# 自己申告のUser-Agentを 403 で拒否するサイト向けのブラウザ相当UA。
+# LIFULL HOME'S は robots.txt で当該パスを User-agent: * に許可しているのに、
+# 名乗りが既定のUAだと 403 を返す（実測）。適用はアダプタが
+# ``user_agent`` を宣言したサイトだけに限り、間隔・robots.txt の尊重は変えない。
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+
 def build_client(*, user_agent: str, timeout_sec: float) -> httpx.Client:
     """スクレイピング用のHTTPクライアント。"""
     return httpx.Client(

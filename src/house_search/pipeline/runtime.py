@@ -43,10 +43,14 @@ class Runtime:
             self._sender = build_sender(user_agent=self.settings.user_agent)
         return self._sender
 
-    def http_client(self):
-        """スクレイピング用のHTTPクライアント。"""
+    def http_client(self, *, user_agent: str | None = None):
+        """スクレイピング用のHTTPクライアント。
+
+        ``user_agent`` を渡すとそのサイトだけ名乗りを差し替える
+        （既定のUAを 403 で拒否するサイトがあるため）。
+        """
         return build_client(
-            user_agent=self.settings.user_agent,
+            user_agent=user_agent or self.settings.user_agent,
             timeout_sec=self.settings.request_timeout_sec,
         )
 
