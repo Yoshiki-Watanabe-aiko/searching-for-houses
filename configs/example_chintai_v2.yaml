@@ -1,0 +1,77 @@
+# ============================================================
+# 検索パターン YAML v2 の雛形（賃貸）
+#
+# v1 からの主な変更:
+#   - discord_webhook（実URL）→ webhook_ref（論理名）。実URLは .env の
+#     DISCORD_WEBHOOK_{論理名を大文字化} に置く
+#   - conditions（全条件AND絞り込み）→ search / must / want の3層
+#   - サイト側フォームへ渡すのは search の3項目だけ。設備条件はローカル判定する
+#
+# 検証: uv run house-search validate-config
+# ============================================================
+
+name: "東京賃貸一人暮らし（雛形）"
+property_type: "CHINTAI"
+
+# .env の DISCORD_WEBHOOK_CHINTAI_ALONE を参照する
+webhook_ref: "CHINTAI_ALONE"
+
+sites:
+  - "SUUMO"
+  - "HOMES"
+  - "ATHOME"
+  - "GOO"
+  - "ABLE"
+  - "MINIMINI"
+  - "EHEYA"
+  - "NIFTY"
+  - "APAMAN"
+  - "SMOCCA"
+  # - "CHINTAI_EX"   # Phase 2 で base_url 確定後に有効化する
+
+# ---- サイト側へ渡す唯一の条件 ----
+search:
+  prefectures:
+    - "東京都"
+    - "千葉県"
+    - "埼玉県"
+    - "神奈川県"
+  # 空なら ABLE / SMOCCA は都道府県内の全市区へ自動展開する
+  # 指定する場合は m_cities.canonical_name の値を使う（例: "新宿区", "横浜市西区"）
+  cities: []
+  # MUST上限の2〜3割増し。管理費が別計上のサイトで取りこぼさないためのバッファ
+  price_max_hint: 90000
+
+# ---- MUST: 未充足なら除外 ----
+must:
+  rent_total_max: 70000
+  layouts: ["1LDK", "2K", "2DK", "2LDK", "3LDK"]
+  area_min: 30.0
+  walk_minutes_max: 20
+  features: []
+  # 判定不能（unknown）なMUSTの扱い。keep=通す / drop=除外
+  unknown_policy: keep
+
+# ---- WANT: 重み付き加点。合計 0〜100点へ正規化される ----
+want:
+  # 該当すれば weight 満点を加点する
+  features:
+    - { code: INT_LAUNDRY,          weight: 10 }
+    - { code: BATH_SEPARATE,        weight: 9 }
+    - { code: SEC_AUTOLOCK,         weight: 8 }
+    - { code: EQUIP_DELIVERY_BOX,   weight: 7 }
+    - { code: INT_WASHROOM,         weight: 6 }
+    - { code: SEC_MONITOR_INTERCOM, weight: 5 }
+    - { code: COMM_NET_FREE,        weight: 5 }
+    - { code: EQUIP_TRASH_24H,      weight: 4 }
+  # best で満点(1.0)、worst で0点。間は線形。範囲外はクランプされる
+  numeric:
+    - { metric: rent_total,   weight: 10, best: 50000, worst: 70000 }
+    - { metric: area_sqm,     weight: 6,  best: 45,    worst: 30 }
+    - { metric: age_years,    weight: 4,  best: 0,     worst: 30 }
+    - { metric: walk_minutes, weight: 3,  best: 3,     worst: 20 }
+
+ranking:
+  top_n: 15
+  # 同一グループのパターンをダイジェストにセクション並記する（スコアは混ぜない）
+  digest_group: null
