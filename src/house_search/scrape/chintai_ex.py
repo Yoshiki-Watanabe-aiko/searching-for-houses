@@ -81,6 +81,7 @@ class ChintaiExScraper:
     requires_city = True
     city_value_source = CITY_VALUE_JIS
     user_agent = None
+    ignore_robots = False
 
     def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
         """``/search/city/{JIS5}`` を組み立てる。

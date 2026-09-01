@@ -407,7 +407,13 @@ def scan_pattern(
             )
 
         client = runtime.http_client(user_agent=scraper.user_agent)
-        fetcher = SiteFetcher(site_code=site_code, client=client, rate_limit=rate_limit)
+        fetcher = SiteFetcher(
+            site_code=site_code,
+            client=client,
+            rate_limit=rate_limit,
+            # robots.txt を無視するのはアダプタが明示的に宣言したサイトだけ
+            ignore_robots=bool(getattr(scraper, "ignore_robots", False)),
+        )
         status = "completed"
         try:
             listings = _collect_listings(

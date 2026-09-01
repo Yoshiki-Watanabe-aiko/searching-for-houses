@@ -98,6 +98,7 @@ class AbleScraper:
     requires_city = True
     city_value_source = CITY_VALUE_JIS
     user_agent = None
+    ignore_robots = False
 
     def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
         """``/{都道府県}/area/{JIS5}/list/`` を組み立てる。
@@ -336,26 +337,6 @@ def _room_image(room) -> str | None:
         if value and not value.startswith("data:"):
             return value
     return None
-
-
-def _first_part(value: str | None) -> str | None:
-    """「23.9万/--」「なし/--」の前半（敷金・礼金の本体）を返す。"""
-    if not value:
-        return None
-    return value.split("/")[0].strip() or None
-
-
-def _split_rent_mgmt(value: str | None) -> tuple[int | None, int | None]:
-    """「23.9万円10,000円」を賃料と管理費へ分ける。
-
-    詳細ページでは <br> が入らず連結されるため、金額表記を順に拾う。
-    """
-    if not value:
-        return None, None
-    amounts = _AMOUNT.findall(value)
-    rent = parse_yen(amounts[0]) if amounts else None
-    mgmt = parse_fee(amounts[1]) if len(amounts) > 1 else None
-    return rent, mgmt
 
 
 def _first_part(value: str | None) -> str | None:

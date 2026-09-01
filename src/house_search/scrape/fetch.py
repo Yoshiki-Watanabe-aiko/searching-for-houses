@@ -68,6 +68,11 @@ class SiteFetcher:
     rate_limit: RateLimit = field(default_factory=RateLimit)
     stats: FetchStats = field(default_factory=FetchStats)
     sleep: object = time.sleep
+    # robots.txt を無視するか。**既定は False で、既定を変えてはいけない。**
+    # アパマンショップだけ `User-agent: * / Disallow: /` に対してユーザーが
+    # 明示的に取得を選んだため、そのサイトのアダプタだけが True を宣言する
+    # （→ ADR 0011）。取得間隔・日次上限はこのフラグでも一切緩めない
+    ignore_robots: bool = False
     _last_request_at: float = 0.0
     _robots: urllib.robotparser.RobotFileParser | None = None
     _robots_origin: str | None = None
@@ -99,6 +104,8 @@ class SiteFetcher:
 
     def is_allowed(self, url: str) -> bool:
         """robots.txt 上、このURLを取得してよいか。"""
+        if self.ignore_robots:
+            return True
         self._load_robots(url)
         if self._robots is None:
             return True

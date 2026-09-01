@@ -12,7 +12,6 @@ dependencies = [
     "pyyaml>=6.0.2",
     "httpx>=0.28.0",
     "lxml>=5.3.0",
-    "playwright>=1.49.0",
     "cssselect>=1.5.0",
 ]
 

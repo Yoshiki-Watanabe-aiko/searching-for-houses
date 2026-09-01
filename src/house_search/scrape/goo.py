@@ -89,6 +89,7 @@ class GooScraper:
     requires_city = True
     city_value_source = CITY_VALUE_JIS
     user_agent = None
+    ignore_robots = False
 
     def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
         """``/rent/{地方}_ap/area_{都道府県}/{JIS5}.html`` を組み立てる。"""

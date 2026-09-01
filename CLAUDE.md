@@ -5,13 +5,13 @@
 MUST（未充足なら除外）＋WANT（重み付き加点）のスコアでランク付けして
 新着・成約・価格変動・日次ランキングをDiscordへ通知するシステム。
 
-**v2（Python）へ全面再設計中。Phase 2（HTTP取得サイトの展開）まで完了。**
+**v2（Python）へ全面再設計中。Phase 3（取得サイトの展開）まで完了。**
 進捗と残作業は `docs/再設計計画.md` を参照。
 v1（Go）の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全済み。
 
 ## 技術スタック
 - Python 3.12+（パッケージ管理は uv。Windowsタスクスケジューラーで定期実行、常駐プロセスではない）
-- スクレイピング: httpx + lxml + cssselect / Playwright（ATHOME・EHEYA・NIFTY・APAMAN・SMOCCA の5サイト）
+- スクレイピング: httpx + lxml + cssselect（**全10サイトHTTP取得**。Playwrightは Phase 3 で撤去 → ADR 0010）
 - DB: PostgreSQL 18（SQLAlchemy 2.x + psycopg3 / Alembic）
 - 設定・スキーマ検証: pydantic / pydantic-settings
 - テスト: pytest（`DATABASE_TEST_URL` 未設定時はDB統合テストをスキップ）
@@ -63,14 +63,21 @@ uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観�
 - SUUMO の管理費・敷金・礼金欄の「-」は**0円**の意味。`None` にすると
   `rent_total` が「管理費不明」になり MUST 判定が `unknown` に落ちる
 - `scan` の前に `sync-dict` が要る（辞書が空だとエラー終了する）
-- **市区の検索値が JIS5桁のサイト（SUUMO/GOO/ABLE/賃貸EX）は `m_cities.jis_code` から導く。**
+- **市区の検索値が JIS5桁のサイトは `m_cities.jis_code` から導く。**
   `m_city_site_values` に縛ると対象4都県で 67/253市区しか指定できない（東京は23区のみ）
 - **詳細ページに「非該当」条件を並べるサイトがある**（HOMES の `sr-only`、goo の `td` が `-`）。
   そのまま `raw_features_text` に載せると辞書が非該当の条件を拾う
 - **`m_sites.is_active = false` のサイトは通常の `scan` では取りに行かない。**
   `--site` で名指ししたときだけ動く（賃貸EX の観測モードの入口）
-- **能動的なボット検知は突破しない。** MINIMINI は reCAPTCHA（課題#18）、
-  HOME'S は AWS WAF のチャレンジ（課題#17）で取得できないことがある
+- **能動的なボット検知は突破しない。** MINIMINI は reCAPTCHA（課題#18・**素のブラウザでも通らない**）、
+  HOME'S は AWS WAF（課題#17）、ATHOME はパズル認証（課題#20）で取得できないことがある。
+  ⚠ **検知ページは HTTP 200 で返る。** そのまま解析すると掲載0件になるだけでエラーにならず
+  「取れているつもり」で気づけないので、判別できるサイトはアダプタが例外にする
+- **robots.txt を無視するのは APAMAN だけ**（`ignore_robots=True`・ユーザー判断 → ADR 0011）。
+  他のサイトでこのフラグを立ててはいけない。取得間隔・上限はこのフラグでも緩めない
+- **市区の検索値は3系統ある。** JIS5桁（SUUMO/GOO/ABLE/賃貸EX/EHEYA/SMOCCA）／
+  JIS5桁の下3桁（APAMAN）／サイト固有スラグ（HOMES/ATHOME/NIFTY/MINIMINI）。
+  スラグ系だけが `m_city_site_values` を引く
 - 面積の単位は ㎡（U+33A1）・m²・`m<sup>2</sup>` とばらつく。
   `parse_area_sqm` は NFKC 正規化してから読む
 

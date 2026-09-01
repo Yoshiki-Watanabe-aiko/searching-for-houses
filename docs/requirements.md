@@ -1,10 +1,10 @@
 # 物件検索通知システム v2 要件定義書
 
-**作成日**: 2026-06-16（v1）/ **v2改訂**: 2026-09-01
+**作成日**: 2026-06-16（v1）/ **v2改訂**: 2026-09-02
 **言語/スタック**: Python 3.12+ / PostgreSQL 18 / Discord Webhook
 
-> **本書の状態**: Phase 2（HTTP取得サイトの展開）完了時点。
-> Phase 2 以降で確定した仕様を各Phase完了時に本書へ反映していく。
+> **本書の状態**: Phase 3（取得サイトの展開）完了時点。
+> Phase 3 以降で確定した仕様を各Phase完了時に本書へ反映していく。
 > 移行の全体像・Phase構成・未確定事項は [`再設計計画.md`](./再設計計画.md) を参照。
 > **未確定の節には「Phase N で確定」と明記している。**
 
@@ -39,30 +39,35 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 
 `m_sites` が正典。実データは [`db/seed/02_sites.sql`](../db/seed/02_sites.sql)。
 
-| サイトコード | サイト名 | 取得方式 | 状態 |
-|---|---|---|---|
-| SUUMO | SUUMO | HTTP | ✅ 実装済み |
-| HOMES | LIFULL HOME'S | HTTP | ✅ 実装済み（**AWS WAFに阻まれ取得不安定** → 課題#17） |
-| ATHOME | アットホーム | **Playwright** | 有効 |
-| NIFTY | ニフティ不動産 | Playwright | 有効 |
-| GOO | goo不動産 | HTTP | ✅ 実装済み（市区指定必須） |
-| CHINTAI_EX | 賃貸EX | HTTP | ✅ 実装済み（**観測モード**。`is_active=false`） |
-| ABLE | エイブル | HTTP | ✅ 実装済み（市区指定必須・価格上限が効かない） |
-| MINIMINI | minimini | HTTP | **一覧がreCAPTCHA下で取得不可** → 課題#18 |
-| APAMAN | アパマンショップ | Playwright | 有効 |
-| EHEYA | いい部屋ネット | Playwright | 有効 |
-| SMOCCA | スモッカ | Playwright | 有効（市区指定必須） |
-| SHAMAISON | シャーメゾン | — | 無効（v1から未実装。自社物件のみのため対象外） |
+**取得方式は全サイト HTTP。** Phase 3 の実測で、v1 がブラウザ自動化を使っていた
+5サイトもサーバレンダリング済みHTMLを返すことが分かり、`playwright` は依存から外した
+（→ [ADR 0010](./adr/0010-http-only-fetch.md)）。
+
+| サイトコード | サイト名 | 状態 |
+|---|---|---|
+| SUUMO | SUUMO | ✅ 実装済み |
+| HOMES | LIFULL HOME'S | ✅ 実装済み（WAFに阻まれることがある。2026-09-02 は回復 → 課題#17） |
+| ATHOME | アットホーム | ✅ 実装済み（**パズル認証のボット検知が発動中** → 課題#20） |
+| NIFTY | ニフティ不動産 | ✅ 実装済み（市区指定必須・他社掲載を集約するポータル） |
+| GOO | goo不動産 | ✅ 実装済み（市区指定必須） |
+| CHINTAI_EX | 賃貸EX | ✅ 実装済み（**観測モード**。`is_active=false`） |
+| ABLE | エイブル | ✅ 実装済み（市区指定必須・価格上限が効かない） |
+| MINIMINI | minimini | **取得手段なし**（HTTPでもブラウザでもreCAPTCHA）→ 課題#18 |
+| APAMAN | アパマンショップ | ✅ 実装済み（市区指定必須・**robots.txt を無視する唯一の例外** → ADR 0011） |
+| EHEYA | いい部屋ネット | ✅ 実装済み（掲載データは `__NEXT_DATA__` のJSON） |
+| SMOCCA | スモッカ | ✅ 実装済み（市区指定必須・**1ページ90件のみ** → 課題#22） |
+| SHAMAISON | シャーメゾン | 無効（v1から未実装。自社物件のみのため対象外） |
 
 - **賃貸のスクレイピング対象は11サイト**（SHAMAISON を除く）。マスタ行数は12。
-- Phase 2 時点でアダプタ実装済みは **SUUMO / HOMES / GOO / ABLE / CHINTAI_EX** の5サイト。
+- Phase 3 時点でアダプタ実装済みは **MINIMINI を除く10サイト**。
   未実装サイトは `scan` が「スキップ（アダプタ未実装）」と明示的に報告する。
 - `m_sites.is_active = false` のサイトは通常の `scan` では取りに行かない。
   `--site` で名指ししたときだけ動く（観測モードの入口）。
-- **Playwright 必須は ATHOME / EHEYA / NIFTY / APAMAN / SMOCCA の5サイト。**
-  v1 の本書は ATHOME を「HTTP + goquery」と記載していたが誤り
-  （`cmd/main.go:82` で go-rod を使っていた）。Phase 3 で HTTP 降格可否を再検証する。
-- Playwright 利用サイトはブラウザのインストール（`playwright install chromium`）が前提。
+- **ブラウザ自動化は使わない。** v1 の本書は ATHOME を「HTTP + goquery」と記載していたが、
+  実際は go-rod を使っていた（`cmd/main.go:82`）。ただし理由は検索フォームの操作であり、
+  URLを直接組み立てる v2 では5サイトともHTTPで取得できる（→ ADR 0010）。
+- **能動的なボット検知は突破しない。** ページが 200 で返るため、
+  検知ページを判別できるサイトはアダプタが例外にする（黙って0件になると気づけないため）。
 
 ---
 
@@ -331,7 +336,7 @@ DDLは Alembic（`migrations/`）、マスタデータは `db/seed/*.sql`（冪�
 | `m_condition_property_types` | 条件×物件種別（487行） |
 | `m_condition_synonyms` | **設備抽出辞書**（条件コード → 表記パターン） |
 | `m_cities` | 市区町村（947行。`canonical_name` がYAML指定値の正典） |
-| `m_city_site_values` | 市区町村×サイトの検索値（**縦持ち**・1181行。JIS系サイトは `m_cities.jis_code` を優先） |
+| `m_city_site_values` | 市区町村×サイトの検索値（**縦持ち**・1833行。JIS系サイトは `m_cities.jis_code` から導出するのでこの表を引かない） |
 | `t_properties` | 物件（1行=1サイト掲載） |
 | `t_property_features` | 設備・特性の抽出結果 |
 | `t_property_scores` | パターン別スコア（内訳JSONB・`config_hash`） |
@@ -355,12 +360,13 @@ v1 はサイトごとに列を持つワイドテーブルだった（ADR 0001）
 「サイトを増やすたびに DDL 変更（監査カラム末尾維持のためテーブル再作成）が要る」問題が
 顕在化したため縦持ちへ転換した（→ ADR 0009）。以後のサイト追加は行の挿入だけで済む。
 
-**Phase 2 で、市区の検索値には2系統あることが判明した。**
+**市区の検索値には3系統ある**（Phase 2 で2系統、Phase 3 で3系統目が判明）。
 
 | 系統 | サイト | 値の出どころ |
 |---|---|---|
-| JIS5桁 | SUUMO / GOO / ABLE / CHINTAI_EX（実測で確認） | `m_cities.jis_code` から導出 |
-| サイト固有スラグ | HOMES（`tokyo/chiyoda-city`）/ MINIMINI（`chiyodaku`）| `m_city_site_values` |
+| JIS5桁 | SUUMO / GOO / ABLE / CHINTAI_EX / **EHEYA / SMOCCA** | `m_cities.jis_code` から導出 |
+| JIS5桁の**下3桁** | **APAMAN**（新宿区 13104 → `104`） | 同上（アダプタが末尾3桁を切る） |
+| サイト固有スラグ | HOMES（`tokyo/chiyoda-city`）/ MINIMINI（`chiyodaku`）/ **ATHOME**（`tokyo/adachi-city`）/ **NIFTY**（`adachiku`） | `m_city_site_values` |
 
 JIS系は `m_city_site_values` に行が無くても値を作れる。マッピング表に縛ると
 対象4都県253市区のうち **67市区しか指定できず**、東京都は23区だけで多摩地域が
@@ -375,10 +381,17 @@ JIS系は `m_city_site_values` に行が無くても値を作れる。マッピ�
 市区が必須でないサイトは都道府県レベル検索へフォールバックし、
 必須のサイト（ABLE / GOO / CHINTAI_EX / SMOCCA）はその市区を対象から外す。
 
-> v1 の本書は EHEYA・SMOCCA を「JIS5桁」、MINIMINI を「URLスラグ」と記載していたが、
-> `m_city_site_values` の実データはブロックごとに矛盾している（東京23区の行と
-> それ以外の行で形式が逆）。Phase 2 で実測して確定したのは
-> **MINIMINI がスラグ**であることまで。EHEYA・SMOCCA は Phase 3 で確定する。
+> **Phase 3 で全サイトの形式が確定した。**
+> `m_city_site_values` の初版は EHEYA・SMOCCA について、東京23区の行が JIS5桁、
+> それ以外の行がスラグという矛盾した状態だった。実URLで確かめた結果
+> **JIS5桁が正**である（`https://www.eheya.net/tokyo/area/13121/search/` /
+> `https://smocca.jp/search/tokyo/city/13121`）。
+>
+> 逆に **ATHOME・NIFTY は初版が JIS5桁で誤り**だった。実際はサイト固有スラグで、
+> 各サイトのエリア索引から実測した902行を
+> [`db/seed/08_city_site_values_slugs.sql`](../db/seed/08_city_site_values_slugs.sql) に置いた。
+> ⚠ ATHOME はボット検知が発動したため**東京都ぶんしか集まっていない**（→ 課題#21）。
+> `requires_city=False` なので都道府県単位の検索は動く。
 
 ### 11.3 `t_properties` の主要カラム
 
@@ -453,7 +466,15 @@ uv run house-search db-seed --test-db
 - robots.txt はオリジンごとに起動時1回だけ取得し Disallow ならスキップ
 - User-Agent は既定で `.env` の `USER_AGENT`。アダプタが宣言したサイトだけ差し替える
   （LIFULL HOME'S は自己申告UAを 403 で拒否するため）
-- **能動的なボット検知（reCAPTCHA・WAFチャレンジ）は突破しない**（→ 課題#17・#18）
+- **能動的なボット検知は突破しない**（→ 課題#17・#18・#20）。
+  MINIMINI の reCAPTCHA は Phase 3 で素の Chromium でも試したが通らず、
+  **ブラウザに替えても結論は変わらない**ことを実測で確認した
+- ボット検知のページは **200 で返ることがある**。そのまま解析すると0件になり
+  エラーにならないため、判別できるサイトはアダプタが例外にする（ATHOME で実装）
+- **robots.txt を無視するのは APAMAN だけ**。`SiteFetcher.ignore_robots` を
+  アダプタが明示的に宣言したときにしか効かず、既定は `False`。
+  取得間隔・日次上限・バックオフはこのフラグでも緩めない
+  （→ [ADR 0011](./adr/0011-apaman-robots-exception.md)）
 - 詳細取得は1回の実行あたりサイト単位で上限（既定40件 / `--full` は400件）。
   取り残しは `detail_fetched_at IS NULL` のキューに残り次回実行で拾われる
 
@@ -490,6 +511,7 @@ f:\searching-for-houses\
 │   │   ├── area.py             # 検索対象エリア（都道府県・市区）の解決
 │   │   ├── prefectures.py      # 都道府県名 → URLスラグ
 │   │   ├── suumo.py / homes.py / goo.py / able.py / chintai_ex.py
+│   │   ├── athome.py / eheya.py / nifty.py / apaman.py / smocca.py
 │   ├── extract/
 │   │   ├── normalize.py        # NFKC正規化・トークン化
 │   │   ├── dictionary.py       # 辞書のロードとDB同期
@@ -518,8 +540,9 @@ f:\searching-for-houses\
 │   ├── test_schema_conventions.py   # DB規約の回帰テスト
 │   ├── test_extract.py / test_scoring.py / test_notify.py / test_fetch.py
 │   ├── test_area.py / test_persist.py
-│   ├── test_scrape_{suumo,homes,goo,able,chintai_ex}.py  # 実HTMLフィクスチャ
-│   └── fixtures/{suumo,homes,goo,able,chintai_ex}/       # 実HTML（一覧・詳細）
+│   ├── test_scrape_{suumo,homes,goo,able,chintai_ex}.py       # 実HTMLフィクスチャ
+│   ├── test_scrape_{athome,eheya,nifty,apaman,smocca}.py
+│   └── fixtures/{10サイト}/                                    # 実HTML（一覧・詳細）
 ├── docs/
 ├── alembic.ini                 # ASCIIのみ（cp932環境で落ちるため）
 ├── pyproject.toml
@@ -538,7 +561,6 @@ f:\searching-for-houses\
 | `pydantic` / `pydantic-settings` | 設定・YAMLスキーマ検証 |
 | `httpx` | HTTP取得 |
 | `lxml` + `cssselect` | HTMLパース（CSSセレクタ） |
-| `playwright` | ブラウザ自動化（5サイト） |
 | `pyyaml` | YAML読み込み |
 | 開発: `pytest` / `pytest-cov` / `ruff` | テスト・lint |
 

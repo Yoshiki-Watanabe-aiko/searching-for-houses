@@ -103,6 +103,7 @@ class SuumoScraper:
     # ``sc_chiyoda`` は SEO パス用の別表現なので検索URLには使わない
     city_value_source = CITY_VALUE_JIS
     user_agent = None
+    ignore_robots = False
 
     def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
         """検索パターンと対象エリアから一覧ページのURL（1ページ目）を組み立てる。"""
