@@ -161,8 +161,15 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 
 **登録には管理者権限が要る**（2026-09-02 実測）。`LogonType=S4U`（ログオフ中も実行・
 パスワード保存なし）のタスク作成には `SeTcbPrivilege` が必要で、標準ユーザーで実行すると
-`schtasks` が「アクセスが拒否されました」で失敗する。`-DryRun`（XML生成と整形式検査だけ）は
-標準ユーザーでも通る。
+`schtasks` が「アクセスが拒否されました」で失敗する。**そのため `register_tasks.ps1` は
+自己昇格する**（UAC で管理者アカウントの資格情報を入力する）。
+`-DryRun`（XML生成と整形式検査だけ）は権限が要らないので昇格しない。
+
+⚠ **自己昇格するとタスクの実行アカウントがずれる罠がある。** 標準ユーザーが UAC で
+管理者の資格情報を入力すると**昇格後のプロセスはその管理者として動く**ため、
+`WindowsIdentity::GetCurrent()` をそのまま使うとタスクが管理者アカウントで登録される。
+昇格前の利用者名を `-TaskUser` で子プロセスへ引き継いで回避している。
+**登録後は `schtasks /query /tn HouseSearch-Scan /fo LIST /v` の「実行ユーザー」を確認すること。**
 
 **登録は初回全件スキャンの完了後に有効化する。** 取得を伴う2本（Scan / CheckSold）は
 `<Enabled>false</Enabled>` で登録され、`register_tasks.ps1 -EnableScraping` で有効化する。
