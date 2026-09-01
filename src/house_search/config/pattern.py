@@ -1,0 +1,268 @@
+"""検索パターンYAML（v2スキーマ）の型定義と読み込み。
+
+物件種別を discriminator にして3ファミリ粒度の discriminated union へ分岐する。
+5種別を5クラスに割らないのは、新築/中古の差が age_years・価格未定・リノベ関連の
+数項目だけで、クラスを分けるほどの構造差がないため。
+
+売買ファミリ（``MansionBuyPattern`` / ``KodateBuyPattern``）は Phase 0 時点では
+骨格のみ。Phase 6 で売買metricの実装と併せて肉付けする。
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from typing import Annotated, Any, Literal
+
+import yaml
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
+
+from house_search.config.metrics import (
+    FAMILY_OF,
+    METRICS_BY_NAME,
+    MUST_ITEMS_BY_NAME,
+    Family,
+)
+
+
+class Strict(BaseModel):
+    """YAMLの綴り間違いを黙って無視しないための共通設定。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class SearchSpec(Strict):
+    """サイト側へ渡す唯一の条件。
+
+    v2 ではサイトに渡すのは「エリア＋物件種別＋価格上限（バッファ付き）」の3つだけ。
+    設備条件をサイト側フィルタへ渡すと、対応サイトでは WANT 条件の物件が除外されて
+    順位に現れず、非対応サイトでは素通りするため、ランキングと両立しない。
+    """
+
+    prefectures: list[str] = Field(min_length=1, description="対象都道府県")
+    cities: list[str] = Field(
+        default_factory=list,
+        description=(
+            "対象市区町村（m_cities.canonical_name）。"
+            "空なら ABLE / SMOCCA は都道府県内の全市区へ自動展開する"
+        ),
+    )
+    price_max_hint: int | None = Field(
+        default=None,
+        description=(
+            "サイト側フォームに渡す価格上限。MUST上限の2〜3割増しにする"
+            "（管理費が別計上のサイトで取りこぼさないためのバッファ）"
+        ),
+    )
+
+
+class MustBase(Strict):
+    """MUST条件の共通部。"""
+
+    layouts: list[str] = Field(default_factory=list, description="許容する間取り")
+    walk_minutes_max: int | None = Field(default=None, description="駅徒歩の上限（分）")
+    features: list[str] = Field(
+        default_factory=list, description="必須の条件コード（m_conditions.code）"
+    )
+    unknown_policy: Literal["keep", "drop"] = Field(
+        default="keep",
+        description=(
+            "判定不能（unknown）なMUSTの扱い。keep=通す / drop=除外。"
+            "MUST判定は pass / fail / unknown の3値で、詳細取得をスキップするのは fail のみ"
+        ),
+    )
+
+
+class ChintaiMust(MustBase):
+    """賃貸のMUST条件。"""
+
+    rent_total_max: int | None = Field(default=None, description="賃料＋管理費の上限（円/月）")
+    area_min: float | None = Field(default=None, description="専有面積の下限（㎡）")
+    area_max: float | None = Field(default=None, description="専有面積の上限（㎡）")
+    age_max: int | None = Field(default=None, description="築年数の上限（年）")
+    floor_min: int | None = Field(default=None, description="所在階の下限")
+
+
+class MansionBuyMust(MustBase):
+    """マンション売買のMUST条件（Phase 6 で肉付けする骨格）。"""
+
+    price_max: int | None = Field(default=None, description="物件価格の上限（円）")
+    monthly_cost_max: int | None = Field(
+        default=None, description="管理費＋修繕積立金の上限（円/月）"
+    )
+    area_min: float | None = Field(default=None, description="専有面積の下限（㎡）")
+    age_max: int | None = Field(default=None, description="築年数の上限（年・中古のみ）")
+    floor_min: int | None = Field(default=None, description="所在階の下限")
+
+
+class KodateBuyMust(MustBase):
+    """戸建て売買のMUST条件（Phase 6 で肉付けする骨格）。"""
+
+    price_max: int | None = Field(default=None, description="物件価格の上限（円）")
+    land_area_min: float | None = Field(default=None, description="土地面積の下限（㎡）")
+    building_area_min: float | None = Field(default=None, description="建物面積の下限（㎡）")
+    age_max: int | None = Field(default=None, description="築年数の上限（年・中古のみ）")
+
+
+class FeatureWant(Strict):
+    """WANT の設備条件。該当すれば weight 満点を加点する。"""
+
+    code: str = Field(description="条件コード（m_conditions.code）")
+    weight: float = Field(gt=0, description="重み。大きいほど優先度が高い")
+
+
+class NumericWant(Strict):
+    """WANT の数値条件。best〜worst で線形正規化して加点する。"""
+
+    metric: str = Field(description="metric名（MetricRegistry に登録されたもの）")
+    weight: float = Field(gt=0, description="重み")
+    best: float = Field(description="満点(1.0)になる値")
+    worst: float = Field(description="0点になる値")
+
+    @model_validator(mode="after")
+    def _check_range(self) -> NumericWant:
+        if self.best == self.worst:
+            raise ValueError(
+                f"metric '{self.metric}' の best と worst が同じ値です（0除算になります）"
+            )
+        return self
+
+
+class WantSpec(Strict):
+    """加点条件。単位の異なる条件は正規化値 s で無次元化されるため、
+    weight だけで相対優先度を表現できる。"""
+
+    features: list[FeatureWant] = Field(default_factory=list)
+    numeric: list[NumericWant] = Field(default_factory=list)
+
+
+class RankingSpec(Strict):
+    """ランキング・ダイジェストの設定。"""
+
+    top_n: int = Field(default=15, gt=0, description="ダイジェストに載せる件数")
+    digest_group: str | None = Field(
+        default=None,
+        description=(
+            "同一グループのパターンを1メッセージにセクション並記する。"
+            "スコアは種別間で混ぜない（正規化基準が異なり数字が意味を失うため）"
+        ),
+    )
+
+
+class PatternBase(Strict):
+    """全ファミリ共通の検索パターン定義。"""
+
+    name: str = Field(min_length=1, description="パターン名（DB・通知ログで使う識別子）")
+    webhook_ref: str = Field(
+        min_length=1,
+        description="通知先の論理名。.env の DISCORD_WEBHOOK_{大文字} を参照する",
+    )
+    sites: list[str] = Field(min_length=1, description="スクレイプ対象サイトコード")
+    search: SearchSpec
+    want: WantSpec = Field(default_factory=WantSpec)
+    ranking: RankingSpec = Field(default_factory=RankingSpec)
+
+    @property
+    def family(self) -> Family:
+        return FAMILY_OF[self.property_type]  # type: ignore[attr-defined]
+
+    @model_validator(mode="after")
+    def _validate_against_registry(self) -> PatternBase:
+        """metric・MUST項目・条件コードが物件種別に適合するかをレジストリで検証する。"""
+        ptype: str = self.property_type  # type: ignore[attr-defined]
+
+        seen_metrics: set[str] = set()
+        for item in self.want.numeric:
+            spec = METRICS_BY_NAME.get(item.metric)
+            if spec is None:
+                known = ", ".join(sorted(METRICS_BY_NAME))
+                raise ValueError(f"未知の metric '{item.metric}'（使えるのは: {known}）")
+            if not spec.applies_to(ptype):
+                raise ValueError(f"metric '{item.metric}' は物件種別 {ptype} には適用できません")
+            if item.metric in seen_metrics:
+                raise ValueError(f"metric '{item.metric}' が重複しています")
+            seen_metrics.add(item.metric)
+
+        seen_features: set[str] = set()
+        for feat in self.want.features:
+            if feat.code in seen_features:
+                raise ValueError(f"WANT の条件コード '{feat.code}' が重複しています")
+            seen_features.add(feat.code)
+
+        must_fields = type(self.must).model_fields  # type: ignore[attr-defined]
+        for field_name in must_fields:
+            if getattr(self.must, field_name, None) in (None, [], ""):  # type: ignore[attr-defined]
+                continue
+            spec_must = MUST_ITEMS_BY_NAME.get(field_name)
+            if spec_must is None:
+                continue  # unknown_policy のような制御項目
+            if ptype not in spec_must.property_types:
+                raise ValueError(f"MUST項目 '{field_name}' は物件種別 {ptype} には適用できません")
+        return self
+
+    def score_config(self) -> dict[str, Any]:
+        """スコアに影響する部分だけを取り出す（config_hash の入力）。
+
+        検索範囲や通知先を変えただけで全件再スコアが走らないよう、
+        WANT と物件種別だけをハッシュ対象にする。
+        """
+        return {
+            "property_type": self.property_type,  # type: ignore[attr-defined]
+            "want": self.want.model_dump(mode="json"),
+        }
+
+    def config_hash(self) -> str:
+        """スコア関連設定のSHA256。DB上の値と不一致なら自動再スコアの対象になる。"""
+        payload = json.dumps(
+            self.score_config(), sort_keys=True, ensure_ascii=False, separators=(",", ":")
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+class ChintaiPattern(PatternBase):
+    """賃貸の検索パターン。"""
+
+    property_type: Literal["CHINTAI"]
+    must: ChintaiMust = Field(default_factory=ChintaiMust)
+
+
+class MansionBuyPattern(PatternBase):
+    """マンション売買（新築・中古）の検索パターン。"""
+
+    property_type: Literal["SHINCHIKU_MANSION", "CHUKO_MANSION"]
+    must: MansionBuyMust = Field(default_factory=MansionBuyMust)
+
+
+class KodateBuyPattern(PatternBase):
+    """戸建て売買（新築・中古）の検索パターン。"""
+
+    property_type: Literal["SHINCHIKU_KODATE", "CHUKO_KODATE"]
+    must: KodateBuyMust = Field(default_factory=KodateBuyMust)
+
+
+SearchPattern = Annotated[
+    ChintaiPattern | MansionBuyPattern | KodateBuyPattern,
+    Field(discriminator="property_type"),
+]
+
+PATTERN_ADAPTER: TypeAdapter[SearchPattern] = TypeAdapter(SearchPattern)
+
+
+def parse_pattern(data: dict[str, Any]) -> SearchPattern:
+    """dict から検索パターンを構築する。"""
+    return PATTERN_ADAPTER.validate_python(data)
+
+
+def load_pattern_file(path: Path) -> SearchPattern:
+    """YAMLファイル1件を読み込む。"""
+    with path.open(encoding="utf-8") as fh:
+        data = yaml.safe_load(fh)
+    if not isinstance(data, dict):
+        raise ValueError(f"{path} の内容がマッピングではありません")
+    return parse_pattern(data)
+
+
+def load_patterns(configs_dir: Path) -> list[SearchPattern]:
+    """ディレクトリ直下の ``*.yaml`` を名前順に読み込む。"""
+    return [load_pattern_file(p) for p in sorted(configs_dir.glob("*.yaml"))]

@@ -1,0 +1,48 @@
+[project]
+name = "house-search"
+version = "2.0.0.dev0"
+description = "物件検索通知システム v2 — 不動産サイトを横断取得し、MUST/WANTスコアでランク付けしてDiscordへ通知する"
+requires-python = ">=3.12"
+dependencies = [
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.14.0",
+    "psycopg[binary]>=3.2.3",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "pyyaml>=6.0.2",
+    "httpx>=0.28.0",
+    "lxml>=5.3.0",
+    "playwright>=1.49.0",
+]
+
+[project.scripts]
+house-search = "house_search.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.4",
+    "pytest-cov>=6.0.0",
+    "ruff>=0.8.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/house_search"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "db: PostgreSQL へ接続する統合テスト（DATABASE_TEST_URL 未設定時はスキップ）",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]

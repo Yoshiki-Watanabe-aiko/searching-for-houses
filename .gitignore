@@ -3,14 +3,25 @@
 .env.*
 !.env.example
 
-# 検索パターン設定（discord_webhookに実際のURLを含むため管理外。雛形は configs/example_*.yaml を参照）
-configs/*.yaml
-configs/**/*.yaml
-!configs/example_*.yaml
+# 検索パターン設定
+# v2 では Webhook URL を .env へ集約したため、パターンYAML自体はGit管理できる。
+# v1 形式の設定（configs/_v1/）と検証用（configs/_test/）は実URLを含むため除外する。
+configs/_v1/
+configs/_test/
 
-# ビルド出力
-*.exe
-*.exe~
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
 
 # ログ
 logs/
@@ -19,6 +30,10 @@ logs/
 # 一時ファイル・ロック
 tmp_query.sql
 .claude/scheduled_tasks.lock
+
+# v1（Go）の成果物。実装は legacy-go ブランチ / v1-go-final タグに保全済み
+*.exe
+*.exe~
 
 # Playwright MCP デバッグ出力（ブラウザ調査時に自動生成される一時ファイル）
 .playwright-mcp/
