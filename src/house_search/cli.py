@@ -54,6 +54,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument(
         "--full", action="store_true", help="全量スキャン（m_sites.max_pages_per_run まで辿る）"
     )
+    p_scan.add_argument(
+        "--detail-limit",
+        type=int,
+        help=(
+            "詳細ページを取りに行く上限（サイトあたり）。省略時は 40 / --full 時は 400。"
+            "初回全件スキャンで詳細キューを一気に掃くために使う"
+        ),
+    )
 
     p_sold = sub.add_parser("check-sold", help="成約・掲載終了の確認")
     p_sold.add_argument("--pattern", help="対象の検索パターン名")
@@ -192,6 +200,7 @@ def _cmd_scan(args: argparse.Namespace) -> int:
             site_filter=args.site,
             seed_mode=args.seed,
             full_scan=args.full,
+            detail_limit_override=args.detail_limit,
         )
         mode = "シードモード（通知なし）" if args.seed else "通常"
         print(f"\n=== {summary.pattern_name} / {mode} ===")

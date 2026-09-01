@@ -46,10 +46,10 @@ class Settings(BaseSettings):
         default=PROJECT_ROOT / "data",
         description="設備抽出辞書などGit管理データの置き場",
     )
-    log_dir: Path = Field(
-        default=PROJECT_ROOT / "logs",
-        description="実行ログの出力先ディレクトリ",
-    )
+    # 実行ログの出力先は Settings に持たない。ログの実体は t_scrape_logs（DB）と
+    # 標準出力で、ファイルへ落とすのは scripts/*.ps1 のリダイレクトだけ。
+    # log_dir フィールドは Phase 4 まで宣言されていたが src のどこからも参照されず、
+    # 「LOG_DIR を変えても何も変わらない」設定になっていたため Phase 5 で外した。
     discord_webhook_errors: str | None = Field(
         default=None,
         description="サイト失敗・YAML読込失敗を流すグローバルエラーチャンネルのWebhook URL",

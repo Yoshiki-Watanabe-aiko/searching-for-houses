@@ -39,6 +39,23 @@ DEFAULT_DETAIL_LIMIT = 40
 FULL_DETAIL_LIMIT = 400
 
 
+def resolve_detail_limit(full_scan: bool, override: int | None) -> int:
+    """1サイトぶんの詳細取得上限を決める。
+
+    ``--detail-limit`` は初回全件スキャン用の逃げ道。一覧を取り直さずに
+    詳細キューだけを掃けるようにするためにある（``--full`` を回し直すと
+    一覧1100リクエストを毎回取り直すことになる）。
+
+    ``m_sites.daily_request_cap`` は全サイト NULL で日次の安全弁が無いため、
+    「上限なし」は用意しない。掃き切れない場合は実行を分けて回す。
+    """
+    if override is not None:
+        if override < 1:
+            raise ValueError("--detail-limit は1以上を指定してください")
+        return override
+    return FULL_DETAIL_LIMIT if full_scan else DEFAULT_DETAIL_LIMIT
+
+
 @dataclass(slots=True)
 class SiteOutcome:
     """1サイトぶんの実行結果。"""
@@ -450,6 +467,7 @@ def scan_pattern(
     site_filter: str | None = None,
     seed_mode: bool = False,
     full_scan: bool = False,
+    detail_limit_override: int | None = None,
 ) -> ScanSummary:
     """検索パターン1件ぶんのスキャンを実行する。"""
     summary = ScanSummary(pattern_name=pattern.name)
@@ -486,7 +504,7 @@ def scan_pattern(
             continue
         rate_limit = _site_rate_limit(runtime, site_code)
         max_pages = rate_limit.max_pages_per_run if full_scan else 1
-        detail_limit = FULL_DETAIL_LIMIT if full_scan else DEFAULT_DETAIL_LIMIT
+        detail_limit = resolve_detail_limit(full_scan, detail_limit_override)
 
         with runtime.engine.begin() as conn:
             run_row = persist.start_run(

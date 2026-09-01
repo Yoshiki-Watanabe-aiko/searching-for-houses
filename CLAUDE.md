@@ -5,7 +5,7 @@
 MUST（未充足なら除外）＋WANT（重み付き加点）のスコアでランク付けして
 新着・成約・価格変動・日次ランキングをDiscordへ通知するシステム。
 
-**v2（Python）へ全面再設計中。Phase 4（クロスサイト名寄せ）まで完了。**
+**v2（Python）へ全面再設計中。Phase 5（賃貸の本運用）は実装完了・実行待ち。**
 進捗と残作業は `docs/再設計計画.md` を参照。
 v1（Go）の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全済み。
 
@@ -40,6 +40,18 @@ uv run house-search coverage               # サイト別の抽出充足率（�
 uv run house-search regroup                # 名寄せの再構築（ネットワーク不要・通知なし）
 uv run house-search dedup-stats            # サイト別の重複率・ユニーク率（ネットワーク不要）
 uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観測モード
+uv run house-search scan --detail-limit 800         # 詳細取得の上限を上書き（既定40 / --full時400）
+```
+
+運用スクリプト（PowerShell 5.1。1行ずつ実行する。`&&` は使えない）:
+
+```powershell
+.\scripts\run_initial_scan.ps1                # 初回全件スキャン（切り離して起動・約6.5〜9時間）
+.\scripts\run_initial_scan.ps1 -Drain         # 2晩目以降の詳細キュー掃き出し
+.\scripts\backup_db.ps1                       # pg_dump（14世代保持）
+.\scripts\register_tasks.ps1 -DryRun          # タスクXMLの生成と検証（権限不要）
+.\scripts\register_tasks.ps1                  # タスク登録（★管理者権限が要る → 課題#23）
+.\scripts\register_tasks.ps1 -EnableScraping  # 取得タスクを有効化（初回スキャン完了後）
 ```
 
 ## 参照ファイル
@@ -96,6 +108,20 @@ uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観�
   大量発火するのを避けるため。通知は次回の `scan` の差分に任せる
 - **順位はグループ代表と未グループ物件にだけ振る**（`update_ranks`）。
   `digest` は `rank_in_pattern` 起点なので、ここを崩すとランキングに重複が戻る
+- **レート制御は `SiteFetcher` のプロセス内にしかない。** 別プロセスの `scan` 同士や
+  `scan` と `check-sold` が並走すると同一サイトへの実効間隔が半分になる。
+  タスクのトリガー時刻を分離し、初回スキャン中は取得タスクを無効にしてあるのはこのため
+- **`scan` はサイトを直列に回す。** 増分でも約72分かかるので毎時実行には収まらない
+  （一覧1116リクエスト＋詳細320リクエスト）。タスクは2時間ごと
+- **`max_pages_per_run` は「一覧URL 1本あたり」のページ数**で、エリアごとに掛かる。
+  市区必須サイトは216〜240本の一覧URLを持つので、`--full` では5倍に効く
+- **PowerShell 5.1 は stdout と stderr に同じファイルを指定できない。**
+  `Start-Process` のリダイレクトは必ず別ファイルにする
+- **タスク用スクリプトと切り離し用スクリプトを流用し合わない。**
+  `run_initial_scan.ps1` は `Start-Process` で切り離す側、`task_runner.ps1` は
+  `-Wait` で待つ側。前者をタスクから呼ぶと即完了扱いになり二重起動する
+- **S4U のタスク登録には管理者権限が要る**（`SeTcbPrivilege`）。
+  通常アカウント `wy469` は標準ユーザーで `BUILTIN\Administrators` に入っていない
 
 ## AI回答方針
 - 複数実装がある場合はトレードオフを説明してから推奨案を提示する

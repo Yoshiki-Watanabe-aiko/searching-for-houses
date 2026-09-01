@@ -1,9 +1,11 @@
 # 物件検索通知システム v2 要件定義書
 
-**作成日**: 2026-06-16（v1）/ **v2改訂**: 2026-09-02（Phase 4）
+**作成日**: 2026-06-16（v1）/ **v2改訂**: 2026-09-02（Phase 5 着手）
 **言語/スタック**: Python 3.12+ / PostgreSQL 18 / Discord Webhook
 
-> **本書の状態**: Phase 4（クロスサイト名寄せ）完了時点。
+> **本書の状態**: Phase 5（賃貸の本運用）の**実装完了・実行待ち**。
+> 運用スクリプト4本とバックアップは完成して検証済みだが、
+> **初回全件スキャンの実行とタスク登録は未実施**（→ §4.4・[`再設計計画.md` §16.7](./再設計計画.md)）。
 > Phase 4 以降で確定した仕様を各Phase完了時に本書へ反映していく。
 > 移行の全体像・Phase構成・未確定事項は [`再設計計画.md`](./再設計計画.md) を参照。
 > **未確定の節には「Phase N で確定」と明記している。**
@@ -47,7 +49,7 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 |---|---|---|
 | SUUMO | SUUMO | ✅ 実装済み |
 | HOMES | LIFULL HOME'S | ✅ 実装済み（WAFに阻まれることがある。2026-09-02 は回復 → 課題#17） |
-| ATHOME | アットホーム | ✅ 実装済み（**パズル認証のボット検知が発動中** → 課題#20） |
+| ATHOME | アットホーム | ✅ 実装済み。**パズル認証が発動したままのため Phase 5 で `is_active=false`** → 課題#20 |
 | NIFTY | ニフティ不動産 | ✅ 実装済み（市区指定必須・他社掲載を集約するポータル） |
 | GOO | goo不動産 | ✅ 実装済み（市区指定必須） |
 | CHINTAI_EX | 賃貸EX | ✅ 実装済み（**観測モード**。`is_active=false`） |
@@ -108,6 +110,7 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 | `scan` | 一覧取得 → MUST判定 → 詳細 → 抽出 → スコア → 通知 | ✅ Phase 1 |
 | `scan --seed` | **シードモード**。通知を送らず記録だけ行う | ✅ Phase 1 |
 | `scan --full` | 全量スキャン（`m_sites.max_pages_per_run` まで） | ✅ Phase 1 |
+| `scan --detail-limit` | 詳細取得の上限（サイトあたり）を上書きする。省略時 40 / `--full` 時 400 | ✅ Phase 5 |
 | `scan --site` | 対象サイトを1つに絞る | ✅ Phase 1 |
 | `check-sold` | 成約/掲載終了の確認 | ✅ Phase 1 |
 | `digest` | 日次ランキングダイジェストの送信（`--dry-run` で件数確認） | ✅ Phase 1 |
@@ -132,8 +135,42 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 
 ### 4.4 タスクスケジューラー構成
 
-**Phase 5 で確定・登録する。** 予定は毎時スキャン／毎日9:00成約確認／
-毎日20:00ダイジェスト／毎日3:30 pg_dump の4本。
+**✅ Phase 5 で確定。** 登録は [`scripts/register_tasks.ps1`](../scripts/register_tasks.ps1)、
+実体は [`scripts/task_runner.ps1`](../scripts/task_runner.ps1)。
+
+| タスク名 | トリガー | 実行 | 実行時間上限 |
+|---|---|---|---|
+| `HouseSearch-Scan` | **2時間ごと・01:15起点** | `task_runner.ps1 -Task scan` | PT1H50M |
+| `HouseSearch-CheckSold` | 毎日 09:00 | `-Task check-sold` | PT1H |
+| `HouseSearch-Digest` | 毎日 20:00 | `-Task digest` | PT30M |
+| `HouseSearch-Backup` | 毎日 03:30 | `-Task backup` → `backup_db.ps1` | PT30M |
+
+**毎時ではなく2時間ごとにした理由**: 増分スキャンは実測ベースで**約72分**かかる
+（一覧1116リクエスト＋詳細320リクエスト・サイト直列）。毎時トリガーだと前回の終了前に
+次が起動し、`MultipleInstances=IgnoreNew` でスキップされて開始時刻が不定に揺れる。
+
+**01:15 起点にした理由**: **レート制御は `SiteFetcher` のプロセス内にしかない。**
+別プロセスの `scan` と `check-sold` が並走すると同一サイトへの実効間隔が半分になる。
+奇数時+15分起点なら 07:15（〜08:27）と 09:15 の間に 09:00 の check-sold が収まる。
+20:00 のダイジェストは 19:15 の scan と重なるが、DB読み＋Webhook送信だけで
+スクレイピングしないため問題ない。
+
+共通設定: `MultipleInstances=IgnoreNew` / `StartWhenAvailable=true` /
+**アイドル条件は付けない**（`RunOnlyIfIdle` を付けると手動の `schtasks /run` でも
+`Queued` のまま走らない。このシステムはレート待ちの sleep が大半でCPUをほぼ使わない）。
+
+**登録には管理者権限が要る**（2026-09-02 実測）。`LogonType=S4U`（ログオフ中も実行・
+パスワード保存なし）のタスク作成には `SeTcbPrivilege` が必要で、標準ユーザーで実行すると
+`schtasks` が「アクセスが拒否されました」で失敗する。`-DryRun`（XML生成と整形式検査だけ）は
+標準ユーザーでも通る。
+
+**登録は初回全件スキャンの完了後に有効化する。** 取得を伴う2本（Scan / CheckSold）は
+`<Enabled>false</Enabled>` で登録され、`register_tasks.ps1 -EnableScraping` で有効化する。
+初回スキャンと並走させないための措置（上記のプロセス内レート制御の話と同じ理由）。
+
+登録に `Register-ScheduledTask`（PowerShell の CIM 経由）は使わない。自分自身のタスクを
+登録するだけでも 0x80070005 で拒否されることがあるため、**XMLを UTF-16 で書き出して
+`schtasks /create /XML`** で登録する（UTF-8 だと読めない）。
 
 ---
 
@@ -466,6 +503,33 @@ uv run house-search db-seed --test-db
 
 `scripts/setup_db.ps1` は `~/.claude/.env` の管理者資格情報を読んでロールとDBを冪等に作る。
 
+### 11.6 バックアップ（課題#8）
+
+[`scripts/backup_db.ps1`](../scripts/backup_db.ps1) が `pg_dump -Fc` でダンプし、
+**`pg_restore --list` で読み直して無傷を検証**してから世代管理を行う。
+
+```powershell
+.\scripts\backup_db.ps1
+.\scripts\backup_db.ps1 -RetentionDays 30
+```
+
+| 項目 | 既定値 |
+|---|---|
+| 出力先 | `F:\backups\searching-for-houses\` |
+| ファイル名 | `searching_for_houses_yyyyMMdd_HHmmss.dump` |
+| 形式 | カスタム形式・圧縮レベル6（`-Fc -Z 6`） |
+| 保持世代 | 14日 |
+| 接続ロール | アプリロール `searching_for_houses`（`.env` の `DATABASE_URL` から読む） |
+
+- **パスワードは環境変数 `PGPASSWORD` でのみ渡す。** 引数に載せるとプロセス一覧と
+  シェル履歴に平文で残る。`finally` で必ず消す
+- `pg_dump` には `-w` を付ける。付けないと認証情報が足りないときプロンプトで固まり、
+  タスクが実行時間の上限まで居座る
+- **検証を省かない。** `pg_restore --list` の `TABLE DATA` が17件（マスタ8＋
+  トランザクション9）未満なら失敗として終了コード1を返す。これが無いと
+  「0バイトのファイルが毎日増えるだけ」の状態に気づけない
+- 実測（2026-09-02・301掲載時点）: 334KB / `TABLE DATA` 18件
+
 ---
 
 ## 12. 環境変数（.env）
@@ -478,7 +542,6 @@ uv run house-search db-seed --test-db
 | `DISCORD_WEBHOOK_{論理名}` | ✅ | 検索パターンの `webhook_ref` が参照する通知先 |
 | `CONFIGS_DIR` | — | 検索パターンYAMLのディレクトリ |
 | `DATA_DIR` | — | 設備抽出辞書などGit管理データのディレクトリ |
-| `LOG_DIR` | — | 実行ログの出力先 |
 | `DEFAULT_MIN_INTERVAL_SEC` | — | サイト個別設定が無い場合のリクエスト間隔（秒） |
 | `REQUEST_TIMEOUT_SEC` | — | HTTPリクエストのタイムアウト（秒） |
 | `USER_AGENT` | — | スクレイピング時に名乗る User-Agent |
@@ -570,7 +633,12 @@ f:\searching-for-houses\
 ├── db/seed/                    # マスタデータSQL（冪等）
 ├── configs/                    # 検索パターンYAML（examples/ は読み込み対象外）
 ├── data/feature_dictionary.yaml # 設備抽出辞書（正典）
-├── scripts/setup_db.ps1        # DB・ロール作成（冪等）
+├── scripts/
+│   ├── setup_db.ps1            # DB・ロール作成（冪等）
+│   ├── run_initial_scan.ps1    # 初回全件スキャン（Start-Process で切り離す側）
+│   ├── task_runner.ps1         # タスクから呼ばれる実体（-Wait で待つ側）
+│   ├── backup_db.ps1           # pg_dump（14世代保持・課題#8）
+│   └── register_tasks.ps1      # タスクスケジューラ登録（schtasks /XML・要管理者）
 ├── tests/
 │   ├── test_metrics.py
 │   ├── test_pattern.py
