@@ -24,7 +24,8 @@ EXPECTED_MIN_ROWS = {
     "m_conditions": 148,
     "m_condition_property_types": 487,
     "m_cities": 947,
-    "m_city_site_values": 1181,
+    # 07（サイト固有マッピング931行）＋ 08（ATHOME/NIFTY のスラグ902行）
+    "m_city_site_values": 1833,
 }
 
 

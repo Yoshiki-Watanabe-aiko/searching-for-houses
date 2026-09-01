@@ -90,6 +90,9 @@ class SiteScraper(Protocol):
     city_value_source: str
     # このサイトにだけ使う User-Agent。None なら .env の USER_AGENT
     user_agent: str | None
+    # robots.txt を無視するか。**既定は False。**
+    # 宣言してよいのはユーザーが明示的にそう決めたサイトだけ（→ ADR 0011）
+    ignore_robots: bool
 
     def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
         """検索パターンと対象エリアから一覧ページ（1ページ目）のURLを組み立てる。"""

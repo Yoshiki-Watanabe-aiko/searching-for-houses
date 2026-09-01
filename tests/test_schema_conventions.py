@@ -150,15 +150,17 @@ def test_賃貸EXを含む12サイトが登録されている(test_engine: Engin
     assert len(codes) == 12
 
 
-def test_Playwright必須サイトは5件(test_engine: Engine) -> None:
-    """requirements.md が ATHOME を HTTP としていたのは誤り（実測は go-rod）。"""
+def test_全サイトがHTTP取得(test_engine: Engine) -> None:
+    """Phase 3 の実測で Playwright 必須サイトは無くなった（→ ADR 0010）。
+
+    v1 が go-rod / Playwright を使っていた5サイト（ATHOME・EHEYA・NIFTY・
+    APAMAN・SMOCCA）も、いずれもサーバレンダリング済みHTMLを返すため
+    素のHTTPで取得できる。ブラウザを使っていたのは検索フォームを操作していた
+    ためで、URLを直接組み立てる v2 では不要。
+    """
     with test_engine.connect() as conn:
-        codes = set(
-            conn.execute(
-                text("SELECT code FROM m_sites WHERE fetch_method = 'PLAYWRIGHT'")
-            ).scalars()
-        )
-    assert codes == {"ATHOME", "EHEYA", "NIFTY", "APAMAN", "SMOCCA"}
+        methods = set(conn.execute(text("SELECT DISTINCT fetch_method FROM m_sites")).scalars())
+    assert methods == {"HTTP"}
 
 
 def test_市区町村サイト値が縦持ちで引ける(test_engine: Engine) -> None:

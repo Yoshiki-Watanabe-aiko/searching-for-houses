@@ -80,6 +80,7 @@ class HomesScraper:
     city_value_source = CITY_VALUE_MAPPING
     # 既定の自己申告UAだと robots.txt で許可されているパスでも 403 になる（実測）
     user_agent = BROWSER_USER_AGENT
+    ignore_robots = False
 
     def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
         """``/chintai/{エリアスラグ}/list/`` を組み立てる。

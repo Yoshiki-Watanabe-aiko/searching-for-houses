@@ -23,23 +23,23 @@ name: "東京賃貸一人暮らし"
 property_type: "CHINTAI"
 webhook_ref: "CHINTAI_ALONE"
 
-# Phase 2 時点で実装済みは SUUMO / HOMES / GOO / ABLE / CHINTAI_EX。
+# Phase 3 時点で実装済みは MINIMINI を除く10サイト（すべてHTTP取得）。
 # 未実装サイトは scan が明示的にスキップを報告する
 # （黙って無視すると「実装済みだが未配線」を見逃すため）。
 # CHINTAI_EX は m_sites.is_active=false のため通常の scan では取りに行かず、
 # `scan --site CHINTAI_EX --seed` で名指ししたときだけ観測用に動く。
 sites:
   - "SUUMO"
-  - "HOMES"
+  - "HOMES"      # AWS WAF に阻まれることがある（課題#17）
   - "GOO"
   - "ABLE"
   - "CHINTAI_EX"
-  - "ATHOME"     # Phase 3（Playwright）
-  - "MINIMINI"   # Phase 3（一覧が reCAPTCHA のボット判定下）
-  - "EHEYA"      # Phase 3（Playwright）
-  - "NIFTY"      # Phase 3（Playwright）
-  - "APAMAN"     # Phase 3（Playwright）
-  - "SMOCCA"     # Phase 3（Playwright）
+  - "ATHOME"     # パズル認証のボット検知が発動中（課題#20）
+  - "MINIMINI"   # 未実装。HTTPでもブラウザでも reCAPTCHA を通れない（課題#18）
+  - "EHEYA"
+  - "NIFTY"
+  - "APAMAN"     # robots.txt を無視する唯一の例外（ADR 0011）
+  - "SMOCCA"     # 1ページ90件のみ取得できる（課題#22）
 
 # ---- サイト側へ渡す唯一の条件（エリア＋種別＋価格上限）----
 search:

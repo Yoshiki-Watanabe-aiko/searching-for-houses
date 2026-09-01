@@ -1,20 +1,26 @@
 """サイト別の取得と解析。
 
-実装済みは SUUMO / HOME'S / goo不動産 / エイブル / 賃貸EX（HTTP取得）。
-Playwright が要る5サイト（ATHOME・EHEYA・NIFTY・APAMAN・SMOCCA）と、
-一覧が reCAPTCHA のボット判定下にある MINIMINI は Phase 3 で扱う。
+賃貸11サイトのうち **10サイトが実装済み**（SUUMO / HOME'S / goo不動産 /
+エイブル / 賃貸EX / アットホーム / いい部屋ネット / ニフティ不動産 /
+アパマンショップ / スモッカ）。**いずれも HTTP 取得**で、Phase 3 の実測により
+Playwright が必要なサイトは1つも無いことが分かった（→ ADR 0010）。
+
+未実装は MINIMINI だけ。一覧が reCAPTCHA のボット判定下にあり、
+素のブラウザでも通らないため取得しない（→ 課題#18）。
 
 ``SCRAPERS`` に載らないサイトは scan が「スキップ（アダプタ未実装）」として
 明示的に報告する。黙って無視すると「実装済みだが未配線」を見逃すため。
 """
 
 from house_search.scrape.able import AbleScraper
+from house_search.scrape.apaman import ApamanScraper
 from house_search.scrape.area import (
     CITY_VALUE_JIS,
     CITY_VALUE_MAPPING,
     AreaTarget,
     resolve_areas,
 )
+from house_search.scrape.athome import AthomeScraper
 from house_search.scrape.base import (
     ScrapedDetail,
     ScrapedListing,
@@ -30,6 +36,7 @@ from house_search.scrape.base import (
     parse_yen,
 )
 from house_search.scrape.chintai_ex import ChintaiExScraper
+from house_search.scrape.eheya import EheyaScraper
 from house_search.scrape.fetch import (
     RateLimit,
     RobotsDisallowed,
@@ -39,9 +46,11 @@ from house_search.scrape.fetch import (
 )
 from house_search.scrape.goo import GooScraper
 from house_search.scrape.homes import HomesScraper
+from house_search.scrape.nifty import NiftyScraper
+from house_search.scrape.smocca import SmoccaScraper
 from house_search.scrape.suumo import SuumoScraper
 
-# サイトコード → アダプタ。Phase 3 で Playwright サイトをここへ追加する。
+# サイトコード → アダプタ。賃貸11サイトのうち MINIMINI 以外の10サイト。
 SCRAPERS: dict[str, type] = {
     scraper.site_code: scraper
     for scraper in (
@@ -50,6 +59,11 @@ SCRAPERS: dict[str, type] = {
         GooScraper,
         AbleScraper,
         ChintaiExScraper,
+        AthomeScraper,
+        EheyaScraper,
+        NiftyScraper,
+        ApamanScraper,
+        SmoccaScraper,
     )
 }
 
@@ -65,10 +79,14 @@ __all__ = [
     "CITY_VALUE_MAPPING",
     "SCRAPERS",
     "AbleScraper",
+    "ApamanScraper",
     "AreaTarget",
+    "AthomeScraper",
     "ChintaiExScraper",
+    "EheyaScraper",
     "GooScraper",
     "HomesScraper",
+    "NiftyScraper",
     "RateLimit",
     "RobotsDisallowed",
     "ScrapedDetail",
@@ -76,6 +94,7 @@ __all__ = [
     "SiteAborted",
     "SiteFetcher",
     "SiteScraper",
+    "SmoccaScraper",
     "SuumoScraper",
     "age_years_from_built",
     "build_client",
