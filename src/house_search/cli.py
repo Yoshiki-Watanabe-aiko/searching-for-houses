@@ -80,6 +80,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "coverage", help="サイト別の設備抽出数分布・数値カラム非NULL率を実測する"
     )
+
+    sub.add_parser(
+        "regroup",
+        help="名寄せキーを全件作り直してグループを同期する（ネットワーク不要・通知なし）",
+    )
+    sub.add_parser("dedup-stats", help="サイト別の名寄せ実測（クロスサイト重複率・ユニーク率）")
     return parser
 
 
@@ -362,6 +368,60 @@ def _cmd_coverage(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_regroup(args: argparse.Namespace) -> int:
+    from house_search.pipeline.runtime import build_runtime
+    from house_search.pipeline.tasks import regroup
+
+    result = regroup(build_runtime())
+    print(f"名寄せキーを更新した物件: {result.keys_refreshed}件")
+    print(f"グループ: {result.groups}件 / グループ化された掲載: {result.grouped_properties}件")
+    print(f"代表が入れ替わったグループ: {result.representative_changes}件")
+    if result.cheaper_candidates:
+        # regroup では通知しない。既存データへの初回適用で大量発火するため
+        print(
+            f"うち他サイトのほうが安いもの: {result.cheaper_candidates}件"
+            "（regroup では通知しません。次回の scan の差分で通知されます）"
+        )
+    print()
+    print("スコアへ反映するには `house-search rescore` を実行してください。")
+    return 0
+
+
+def _cmd_dedup_stats(args: argparse.Namespace) -> int:
+    from house_search.pipeline.runtime import build_runtime
+    from house_search.pipeline.tasks import measure_dedup
+
+    rows = measure_dedup(build_runtime())
+    if not rows:
+        print("計測対象の物件がありません。先に scan を実行してください。")
+        return 0
+
+    print(
+        f"{'サイト':<12}{'掲載':>6}{'キー有':>7}{'ｷｰ率%':>7}"
+        f"{'代表':>6}{'他ｻｲﾄ重複':>10}{'ユニーク%':>10}"
+    )
+    print("-" * 60)
+    for row in rows:
+        print(
+            f"{row.site_code:<12}{row.properties:>6}{row.with_key:>7}{100 * row.key_rate:>7.0f}"
+            f"{row.representative:>6}{row.shared_with_other_sites:>10}"
+            f"{100 * row.unique_rate:>10.0f}"
+        )
+
+    print()
+    print("住所の粒度（名寄せキーは丁目までで打ち切る）")
+    print("-" * 60)
+    for row in rows:
+        detail = " / ".join(f"{label} {count}" for label, count in row.granularity.items())
+        print(f"{row.site_code:<12}{detail}")
+
+    total = sum(row.properties for row in rows)
+    shared = sum(row.shared_with_other_sites for row in rows)
+    print()
+    print(f"全体: 掲載 {total}件 / 他サイトにも同一住戸がある掲載 {shared}件")
+    return 0
+
+
 _COMMANDS = {
     "db-seed": _cmd_db_seed,
     "validate-config": _cmd_validate_config,
@@ -373,6 +433,8 @@ _COMMANDS = {
     "re-extract": _cmd_re_extract,
     "report-unknown": _cmd_report_unknown,
     "coverage": _cmd_coverage,
+    "regroup": _cmd_regroup,
+    "dedup-stats": _cmd_dedup_stats,
 }
 
 

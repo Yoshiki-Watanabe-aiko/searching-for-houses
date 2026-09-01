@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from house_search.scoring.property_view import PropertyView
 from house_search.scoring.score import STATUS_UNKNOWN, ScoreResult
 
 # 通知種別 → embed の色（requirements.md §9）。
@@ -53,6 +54,57 @@ class NotifiableProperty:
     address: str | None
     image_url: str | None = None
     price_prev: int | None = None
+    # --- 名寄せグループの情報（Phase 4） ---
+    # 同一住戸の別掲載を1グループに畳んだ結果を通知に出すためのもの。
+    # 既定値付きなので、グループを持たない呼び出しはこれまでどおり動く。
+    member_count: int = 1
+    other_site_codes: tuple[str, ...] = ()
+    previous_total: int | None = None
+    previous_site_code: str | None = None
+
+    @property
+    def listing_sites(self) -> tuple[str, ...]:
+        """この住戸が載っているサイトの一覧（自サイトを先頭に）。"""
+        seen = [self.site_code] if self.site_code else []
+        for code in self.other_site_codes:
+            if code not in seen:
+                seen.append(code)
+        return tuple(seen)
+
+
+def notifiable_from(
+    view: PropertyView,
+    *,
+    member_count: int = 1,
+    other_site_codes: tuple[str, ...] = (),
+    price_prev: int | None = None,
+    previous_total: int | None = None,
+    previous_site_code: str | None = None,
+) -> NotifiableProperty:
+    """採点用ビューを通知用の値に詰め替える。
+
+    ``scan`` と ``digest`` の双方が同じ形で通知を組み立てられるように、
+    詰め替えはここ1箇所にまとめてある。
+    """
+    return NotifiableProperty(
+        property_id=view.property_id or 0,
+        site_code=view.site_code or "",
+        url=view.url or "",
+        title=view.title,
+        price=view.price,
+        mgmt_fee_monthly=view.mgmt_fee_monthly,
+        rent_total=view.rent_total,
+        layout=view.layout,
+        area_sqm=view.area_sqm,
+        age_years=view.age_years,
+        walk_minutes=view.walk_minutes,
+        address=view.address,
+        price_prev=price_prev,
+        member_count=member_count,
+        other_site_codes=other_site_codes,
+        previous_total=previous_total,
+        previous_site_code=previous_site_code,
+    )
 
 
 def _yen(value: int | None) -> str:
@@ -107,6 +159,30 @@ def build_property_embed(
                 "value": f"{_yen(prop.price_prev)} → {_yen(prop.price)}（{sign}{diff:,}円）",
                 "inline": True,
             },
+        )
+    elif notification_type == "cheaper_listing" and prop.previous_total is not None:
+        # 同一住戸が他サイトでより安く出た。比較は月額（賃料＋管理費）で行う
+        diff = (prop.rent_total or 0) - prop.previous_total
+        previous_site = f"（{prop.previous_site_code}）" if prop.previous_site_code else ""
+        fields.insert(
+            1,
+            {
+                "name": "他サイトとの差",
+                "value": f"{_yen(prop.previous_total)}{previous_site} → "
+                f"{_yen(prop.rent_total)}（{diff:,}円）",
+                "inline": True,
+            },
+        )
+
+    if prop.member_count > 1:
+        # 同一条件の掲載が複数あることを明示する。ランキング枠を節約するために
+        # 1件へ畳んでいるので、畳んだ事実と件数を通知に残す（2026-09-02 ユーザー判断）
+        fields.append(
+            {
+                "name": "同一条件の掲載",
+                "value": f"{prop.member_count}件（{' / '.join(prop.listing_sites)}）",
+                "inline": False,
+            }
         )
 
     if hits := score.top_hits(3):
@@ -172,11 +248,13 @@ def _digest_line(entry: DigestEntry) -> str:
     unknown = entry.score.unknown_count
     unknown_note = f" ⚠︎未確認{unknown}" if unknown else ""
     title = (prop.title or "（物件名なし）")[:34]
+    others = len(prop.listing_sites) - 1
+    site_note = f"{prop.site_code} ほか{others}サイト" if others > 0 else prop.site_code
     return (
         f"**{entry.rank}. [{title}]({prop.url})**\n"
         f"　`{entry.score.score:5.1f}点` {_yen(prop.rent_total)} / "
         f"{_summary_line(prop)}\n"
-        f"　{prop.address or '住所不明'} ({prop.site_code}){unknown_note}"
+        f"　{prop.address or '住所不明'} ({site_note}){unknown_note}"
     )
 
 

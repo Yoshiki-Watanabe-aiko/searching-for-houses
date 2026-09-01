@@ -69,6 +69,10 @@ class ScrapedDetail:
     """
 
     raw_features_text: str | None = None
+    # 未知表記の収集だけに使うテキスト。None なら raw_features_text をそのまま使う。
+    # 宣伝の生成文を設備の照合には使いたいが辞書育成の材料にはしたくない
+    # サイト（賃貸EX）のための逃げ道（→ 課題#19）。
+    unknown_token_text: str | None = None
     built_on: dt.date | None = None
     floor_num: int | None = None
     total_floors: int | None = None

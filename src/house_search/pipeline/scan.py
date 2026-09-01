@@ -14,13 +14,14 @@ from dataclasses import dataclass, field
 
 from sqlalchemy import text
 
+from house_search import dedup
 from house_search.extract.extractor import (
     SOURCE_DETAIL,
     derive_features,
     extract_from_text,
     merge_features,
 )
-from house_search.notify.format import NotifiableProperty, build_property_message
+from house_search.notify.format import build_property_message, notifiable_from
 from house_search.pipeline import persist
 from house_search.pipeline.runtime import Runtime
 from house_search.scoring.must import evaluate_must
@@ -62,6 +63,7 @@ class ScanSummary:
     must_pass: int = 0
     notified: int = 0
     notify_failed: int = 0
+    groups_changed: int = 0
 
     @property
     def listings_seen(self) -> int:
@@ -211,6 +213,7 @@ def _fetch_details(
                 family=family,
                 site_code=scraper.site_code,
                 source=SOURCE_DETAIL,
+                unknown_text=detail.unknown_token_text,
             )
             # 型付き列からの導出を先に渡して、辞書照合より優先させる。
             derived = derive_features(
@@ -235,6 +238,9 @@ def _fetch_details(
                 property_family=family,
                 sample_url=url,
             )
+            # 詳細で階数・住所が埋まると、一覧の時点では作れなかった名寄せキーが
+            # 作れるようになる。ここで呼ばないとキー充足率が上がらない
+            dedup.refresh_dedup_keys(conn, [property_id])
         outcome.details_fetched += 1
         outcome.features_extracted += saved
 
@@ -269,14 +275,99 @@ def _score_pattern(runtime: Runtime, pattern, summary: ScanSummary) -> dict[int,
     return views
 
 
+def _group_rank(
+    ranks: dict[int, int], property_id: int, membership: dedup.GroupMembership
+) -> int | None:
+    """順位を引く。非代表メンバーには代表の順位を見せる。
+
+    順位はグループ代表にしか振らないので、非代表の掲載を新着通知するときに
+    そのまま引くと「順位未確定」になってしまう。
+    """
+    if (rank := ranks.get(property_id)) is not None:
+        return rank
+    if membership.representative_property_id is not None:
+        return ranks.get(membership.representative_property_id)
+    return None
+
+
+def _notify_cheaper_listings(
+    runtime: Runtime,
+    pattern,
+    views: dict[int, PropertyView],
+    group_changes: list[dedup.GroupChange],
+    ranks: dict[int, int],
+    webhook_url: str,
+    summary: ScanSummary,
+) -> None:
+    """同一住戸がより安い掲載で見つかったグループを通知する。
+
+    代表の交代（＝グループ内の最安が入れ替わった）を検出したものだけが対象。
+    金額まで見て重複を避けるので、さらに安くなれば再通知され、
+    同額の再検出（グループの作り直しなど）では送らない。
+    """
+    for change in group_changes:
+        if not change.is_cheaper or change.current_property_id is None:
+            continue
+        view = views.get(change.current_property_id)
+        if view is None:
+            continue
+        if not evaluate_must(view, pattern.must).passes(pattern.must.unknown_policy):
+            continue
+
+        with runtime.engine.connect() as conn:
+            if persist.cheaper_listing_notified_at(
+                conn,
+                group_id=change.group_id,
+                pattern_name=pattern.name,
+                price=view.price,
+            ):
+                continue
+            membership = dedup.group_membership(conn, [change.current_property_id])[
+                change.current_property_id
+            ]
+
+        previous = views.get(change.previous_property_id or -1)
+        score = calculate_score(view, pattern.want)
+        message = build_property_message(
+            notifiable_from(
+                view,
+                member_count=membership.member_count,
+                other_site_codes=membership.other_site_codes,
+                previous_total=change.previous_cost,
+                previous_site_code=previous.site_code if previous else None,
+            ),
+            score,
+            notification_type=persist.CHEAPER_LISTING,
+            pattern_name=pattern.name,
+            rank_in_pattern=_group_rank(ranks, view.property_id or 0, membership),
+        )
+        sent = runtime.sender.send(webhook_url, message)
+        with runtime.engine.begin() as conn:
+            persist.record_notification(
+                conn,
+                property_id=change.current_property_id,
+                group_id=change.group_id,
+                pattern_name=pattern.name,
+                notification_type=persist.CHEAPER_LISTING,
+                price_at_notify=view.price,
+                score_at_notify=score.score,
+                status="sent" if sent else "failed",
+            )
+        if sent:
+            summary.notified += 1
+        else:
+            summary.notify_failed += 1
+
+
 def _notify(
     runtime: Runtime,
     pattern,
     views: dict[int, PropertyView],
     outcomes: list[persist.UpsertOutcome],
+    group_changes: list[dedup.GroupChange],
     summary: ScanSummary,
 ) -> None:
-    """新着・価格変動の個別通知を送る。"""
+    """新着・価格変動・他サイト安値の個別通知を送る。"""
     webhook_url = runtime.settings.webhook_url(pattern.webhook_ref)
 
     with runtime.engine.connect() as conn:
@@ -290,6 +381,7 @@ def _notify(
                 {"name": pattern.name},
             )
         }
+        memberships = dedup.group_membership(conn, [o.property_id for o in outcomes])
 
     for outcome in outcomes:
         notification_type = outcome.notification_type
@@ -303,43 +395,38 @@ def _notify(
         if not must.passes(pattern.must.unknown_policy):
             continue
 
+        membership = memberships.get(outcome.property_id, dedup.NO_GROUP)
         with runtime.engine.connect() as conn:
+            # グループ単位で抑制する。同一住戸の別サイト掲載を
+            # それぞれ「新着」として二重に送らないため
             if persist.already_notified(
                 conn,
                 property_id=outcome.property_id,
                 pattern_name=pattern.name,
                 notification_type=notification_type,
+                group_id=membership.group_id,
             ):
                 continue
 
         score = calculate_score(view, pattern.want)
-        prop = NotifiableProperty(
-            property_id=view.property_id,
-            site_code=view.site_code or "",
-            url=view.url or "",
-            title=view.title,
-            price=view.price,
-            mgmt_fee_monthly=view.mgmt_fee_monthly,
-            rent_total=view.rent_total,
-            layout=view.layout,
-            area_sqm=view.area_sqm,
-            age_years=view.age_years,
-            walk_minutes=view.walk_minutes,
-            address=view.address,
-            price_prev=outcome.price_prev,
-        )
         message = build_property_message(
-            prop,
+            notifiable_from(
+                view,
+                member_count=membership.member_count,
+                other_site_codes=membership.other_site_codes,
+                price_prev=outcome.price_prev,
+            ),
             score,
             notification_type=notification_type,
             pattern_name=pattern.name,
-            rank_in_pattern=ranks.get(view.property_id),
+            rank_in_pattern=_group_rank(ranks, outcome.property_id, membership),
         )
         sent = runtime.sender.send(webhook_url, message)
         with runtime.engine.begin() as conn:
             persist.record_notification(
                 conn,
                 property_id=outcome.property_id,
+                group_id=membership.group_id,
                 pattern_name=pattern.name,
                 notification_type=notification_type,
                 price_at_notify=view.price,
@@ -350,6 +437,10 @@ def _notify(
             summary.notified += 1
         else:
             summary.notify_failed += 1
+
+    _notify_cheaper_listings(
+        runtime, pattern, views, group_changes, ranks, webhook_url, summary
+    )
 
 
 def scan_pattern(
@@ -439,6 +530,7 @@ def scan_pattern(
                     property_type_id=property_type_id,
                     city_index=runtime.city_index,
                 )
+                dedup.refresh_dedup_keys(conn, [o.property_id for o in outcomes])
             outcome.properties_new = sum(1 for o in outcomes if o.is_new)
             all_outcomes.extend(outcomes)
 
@@ -480,6 +572,12 @@ def scan_pattern(
                     )
         summary.sites.append(outcome)
 
+    # 名寄せは採点の前に済ませる。設備の和集合も「順位は代表にだけ振る」も、
+    # 採点の時点でグループが確定していることを前提にしているため。
+    with runtime.engine.begin() as conn:
+        group_changes = dedup.sync_groups(conn)
+    summary.groups_changed = len(group_changes)
+
     views = _score_pattern(runtime, pattern, summary)
 
     if seed_mode:
@@ -487,5 +585,5 @@ def scan_pattern(
         # 「再掲載が全部新着として再通知される」問題が構造的に起きなくなる（→ ADR 0006）
         return summary
 
-    _notify(runtime, pattern, views, all_outcomes, summary)
+    _notify(runtime, pattern, views, all_outcomes, group_changes, summary)
     return summary

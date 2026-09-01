@@ -73,8 +73,15 @@ def extract_from_text(
     family: str,
     site_code: str | None = None,
     source: str = SOURCE_DETAIL,
+    unknown_text: str | None = None,
 ) -> ExtractionResult:
-    """設備ブロック原文から条件コードを抽出し、未知表記を拾う。"""
+    """設備ブロック原文から条件コードを抽出し、未知表記を拾う。
+
+    ``unknown_text`` を渡すと**未知表記だけ**をそちらから拾う。設備の照合は
+    本文全体への部分一致なので宣伝の生成文からも正しく拾えるが、
+    未知表記の収集にかけると文断片が混じって辞書育成の一覧が埋まってしまう
+    （賃貸EX の「本物件について」で実測 → 課題#19）。
+    """
     normalized = normalize_text(raw_text)
     if not normalized:
         return ExtractionResult(features=(), unknown_tokens=())
@@ -88,7 +95,7 @@ def extract_from_text(
     known_patterns = dictionary.all_patterns
     unknown = [
         token
-        for token in tokenize(raw_text)
+        for token in tokenize(raw_text if unknown_text is None else unknown_text)
         if is_recordable_token(token)
         and not any(pattern in token or token in pattern for pattern in known_patterns)
     ]

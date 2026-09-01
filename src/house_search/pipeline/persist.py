@@ -24,6 +24,7 @@ NEW = "new"
 SOLD = "sold"
 PRICE_UP = "price_up"
 PRICE_DOWN = "price_down"
+CHEAPER_LISTING = "cheaper_listing"
 
 
 @dataclass(frozen=True, slots=True)
@@ -390,15 +391,33 @@ def update_ranks(conn: Connection, pattern_name: str) -> int:
     """パターン内のスコア降順順位を振り直す。
 
     同点は物件IDの昇順で決めて、実行ごとに順位が揺れないようにする。
+
+    **順位が付くのはグループ代表と未グループ物件だけ。** 非代表メンバーの
+    ``rank_in_pattern`` は NULL に落とす。``digest`` は ``rank_in_pattern`` を
+    起点に引くので、この一手だけでランキングがグループ単位になる。
     """
+    # いったん全て外してから振り直す。代表が交代したときに古い順位が
+    # 残らないようにするため（部分更新だと非代表に順位が残る）。
+    conn.execute(
+        text(
+            "UPDATE t_property_scores SET rank_in_pattern = NULL, updated_at = now() "
+            "WHERE pattern_name = :pattern_name AND rank_in_pattern IS NOT NULL"
+        ),
+        {"pattern_name": pattern_name},
+    )
     result = conn.execute(
         text(
             """
             UPDATE t_property_scores s SET rank_in_pattern = r.rn, updated_at = now()
             FROM (
-                SELECT id, ROW_NUMBER() OVER (ORDER BY score DESC, property_id ASC) AS rn
-                FROM t_property_scores
-                WHERE pattern_name = :pattern_name AND must_result <> 'fail' AND score IS NOT NULL
+                SELECT sc.id,
+                       ROW_NUMBER() OVER (ORDER BY sc.score DESC, sc.property_id ASC) AS rn
+                FROM t_property_scores sc
+                JOIN t_properties p ON p.id = sc.property_id
+                LEFT JOIN t_property_groups g ON g.id = p.group_id
+                WHERE sc.pattern_name = :pattern_name AND sc.must_result <> 'fail'
+                  AND sc.score IS NOT NULL
+                  AND (p.group_id IS NULL OR g.representative_property_id = p.id)
             ) r
             WHERE s.id = r.id
             """
@@ -417,18 +436,20 @@ def record_notification(
     price_at_notify: int | None,
     score_at_notify: float | None,
     status: str,
+    group_id: int | None = None,
 ) -> None:
     """通知履歴を追記する。"""
     conn.execute(
         text(
             "INSERT INTO t_notifications ("
-            " property_id, pattern_name, notification_type, price_at_notify,"
+            " property_id, group_id, pattern_name, notification_type, price_at_notify,"
             " score_at_notify, status, notified_at, created_at) "
-            "VALUES (:property_id, :pattern_name, :notification_type, :price_at_notify,"
-            " :score_at_notify, :status, now(), now())"
+            "VALUES (:property_id, :group_id, :pattern_name, :notification_type,"
+            " :price_at_notify, :score_at_notify, :status, now(), now())"
         ),
         {
             "property_id": property_id,
+            "group_id": group_id,
             "pattern_name": pattern_name,
             "notification_type": notification_type,
             "price_at_notify": price_at_notify,
@@ -438,22 +459,65 @@ def record_notification(
     )
 
 
+# 通知済み判定はグループ単位で行う。履歴テーブルは追記専用のままにしたいので、
+# 過去行の group_id を書き換えるのではなく **現在の所属を JOIN で見る**。
+# こうするとグループ構成が後から変わっても、常に「いまの構成」で判定される。
+_ALREADY_NOTIFIED = text(
+    """
+    SELECT 1 FROM t_notifications n
+    JOIN t_properties p ON p.id = n.property_id
+    WHERE n.pattern_name = :pattern_name
+      AND n.notification_type = :notification_type
+      AND n.status = 'sent'
+      AND (n.property_id = :property_id
+           OR (CAST(:group_id AS bigint) IS NOT NULL AND p.group_id = :group_id))
+    LIMIT 1
+    """
+)
+
+
 def already_notified(
-    conn: Connection, *, property_id: int, pattern_name: str, notification_type: str
+    conn: Connection,
+    *,
+    property_id: int,
+    pattern_name: str,
+    notification_type: str,
+    group_id: int | None = None,
 ) -> bool:
-    """同じ物件・同じ種別の通知を既に送っていないか。"""
+    """同じ物件（または同じグループ）・同じ種別の通知を既に送っていないか。
+
+    ``group_id`` を渡すと、同一住戸の別サイト掲載が新着として二重通知されない。
+    """
+    return bool(
+        conn.execute(
+            _ALREADY_NOTIFIED,
+            {
+                "property_id": property_id,
+                "group_id": group_id,
+                "pattern_name": pattern_name,
+                "notification_type": notification_type,
+            },
+        ).first()
+    )
+
+
+def cheaper_listing_notified_at(
+    conn: Connection, *, group_id: int, pattern_name: str, price: int | None
+) -> bool:
+    """同じグループで同じ金額の「他サイト安値掲載」を既に送っていないか。
+
+    金額まで見るのは、**さらに安い掲載が出たときは再通知したい**ため。
+    同額の再検出（グループの作り直しなど）では送らない。
+    """
     return bool(
         conn.execute(
             text(
                 "SELECT 1 FROM t_notifications "
-                "WHERE property_id = :property_id AND pattern_name = :pattern_name "
-                "AND notification_type = :notification_type AND status = 'sent' LIMIT 1"
+                "WHERE pattern_name = :pattern_name AND group_id = :group_id "
+                "AND notification_type = 'cheaper_listing' AND status = 'sent' "
+                "AND price_at_notify IS NOT DISTINCT FROM :price LIMIT 1"
             ),
-            {
-                "property_id": property_id,
-                "pattern_name": pattern_name,
-                "notification_type": notification_type,
-            },
+            {"group_id": group_id, "pattern_name": pattern_name, "price": price},
         ).first()
     )
 
@@ -464,8 +528,33 @@ _PROPERTY_COLUMNS = """
     p.area_sqm, p.land_area_sqm, p.building_area_sqm, p.layout,
     p.floor_num, p.total_floors, p.age_years, p.walk_minutes,
     p.prefecture, p.address, p.image_url,
-    (p.detail_fetched_at IS NOT NULL) AS detail_fetched
+    (
+        p.detail_fetched_at IS NOT NULL
+        OR EXISTS (
+            SELECT 1 FROM t_properties m
+            WHERE p.group_id IS NOT NULL AND m.group_id = p.group_id
+              AND m.detail_fetched_at IS NOT NULL
+        )
+    ) AS detail_fetched
 """
+
+
+# 設備はグループ内の和集合で引く。サイトAでしか判らない設備とサイトBでしか
+# 判らない設備をマージしないと、名寄せで代表を1件に絞った時点で情報が減る
+# （再設計計画 §6「スコアはグループ内の抽出情報の和集合で計算」）。
+_GROUP_FEATURES = text(
+    """
+    SELECT target.id AS property_id, c.code
+    FROM t_properties target
+    JOIN t_properties member
+      ON (target.group_id IS NULL AND member.id = target.id)
+      OR (target.group_id IS NOT NULL AND member.group_id = target.group_id)
+    JOIN t_property_features f ON f.property_id = member.id
+    JOIN m_conditions c ON c.id = f.condition_id
+    WHERE target.id = ANY(:ids)
+    GROUP BY target.id, c.code
+    """
+)
 
 
 def _to_view(row: Any, feature_codes: frozenset[str]) -> PropertyView:
@@ -538,14 +627,7 @@ def load_property_views(
 
     ids = [row.id for row in rows]
     features: dict[int, set[str]] = {}
-    for property_id, code in conn.execute(
-        text(
-            "SELECT f.property_id, c.code FROM t_property_features f "
-            "JOIN m_conditions c ON c.id = f.condition_id "
-            "WHERE f.property_id = ANY(:ids)"
-        ),
-        {"ids": ids},
-    ):
+    for property_id, code in conn.execute(_GROUP_FEATURES, {"ids": ids}):
         features.setdefault(property_id, set()).add(code)
 
     return {row.id: _to_view(row, frozenset(features.get(row.id, ()))) for row in rows}
