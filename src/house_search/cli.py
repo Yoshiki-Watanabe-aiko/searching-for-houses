@@ -15,10 +15,8 @@ from pathlib import Path
 
 from house_search import __version__
 
-# 未実装サブコマンドと、実装予定の Phase。
-PLANNED: dict[str, str] = {
-    "coverage": "Phase 2（サイト別の設備抽出数分布・数値カラム非NULL率の実測）",
-}
+# 未実装サブコマンドと、実装予定の Phase。Phase 2 ですべて実装済みになった。
+PLANNED: dict[str, str] = {}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -79,7 +77,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_unknown = sub.add_parser("report-unknown", help="辞書未登録の表記を出現回数順に一覧")
     p_unknown.add_argument("--limit", type=int, default=50, help="表示件数（既定50）")
 
-    sub.add_parser("coverage", help=f"{PLANNED['coverage']} で実装")
+    sub.add_parser(
+        "coverage", help="サイト別の設備抽出数分布・数値カラム非NULL率を実測する"
+    )
     return parser
 
 
@@ -324,6 +324,44 @@ def _cmd_report_unknown(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_coverage(args: argparse.Namespace) -> int:
+    from house_search.pipeline.runtime import build_runtime
+    from house_search.pipeline.tasks import COVERAGE_COLUMNS, measure_coverage
+
+    rows = measure_coverage(build_runtime())
+    if not rows:
+        print("計測対象の物件がありません。先に scan を実行してください。")
+        return 0
+
+    print(f"{'サイト':<12}{'物件':>7}{'詳細済':>7}{'設備有':>7}{'平均':>7}{'最小':>5}{'最大':>5}")
+    print("-" * 52)
+    for row in rows:
+        print(
+            f"{row.site_code:<12}{row.properties:>7}{row.detail_fetched:>7}"
+            f"{row.with_features:>7}{row.features_avg:>7.1f}"
+            f"{row.features_min:>5}{row.features_max:>5}"
+        )
+
+    print()
+    print("列の非NULL率（%）")
+    header = "".join(f"{c[:9]:>10}" for c in COVERAGE_COLUMNS)
+    print(f"{'サイト':<12}{header}")
+    print("-" * (12 + 10 * len(COVERAGE_COLUMNS)))
+    for row in rows:
+        cells = "".join(
+            f"{(100 * row.column_filled[c] / row.properties if row.properties else 0):>10.0f}"
+            for c in COVERAGE_COLUMNS
+        )
+        print(f"{row.site_code:<12}{cells}")
+
+    stalled = [r.site_code for r in rows if r.detail_fetched and not r.with_features]
+    if stalled:
+        # 「アダプタは足したが抽出が動いていない」を検出するための警告
+        print()
+        print(f"⚠ 詳細取得済みなのに設備が1件も抽出できていないサイト: {', '.join(stalled)}")
+    return 0
+
+
 _COMMANDS = {
     "db-seed": _cmd_db_seed,
     "validate-config": _cmd_validate_config,
@@ -334,6 +372,7 @@ _COMMANDS = {
     "sync-dict": _cmd_sync_dict,
     "re-extract": _cmd_re_extract,
     "report-unknown": _cmd_report_unknown,
+    "coverage": _cmd_coverage,
 }
 
 

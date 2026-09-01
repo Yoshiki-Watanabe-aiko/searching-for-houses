@@ -5,7 +5,7 @@
 MUST（未充足なら除外）＋WANT（重み付き加点）のスコアでランク付けして
 新着・成約・価格変動・日次ランキングをDiscordへ通知するシステム。
 
-**v2（Python）へ全面再設計中。Phase 1（SUUMO賃貸の縦切り）まで完了。**
+**v2（Python）へ全面再設計中。Phase 2（HTTP取得サイトの展開）まで完了。**
 進捗と残作業は `docs/再設計計画.md` を参照。
 v1（Go）の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全済み。
 
@@ -28,7 +28,7 @@ uv run alembic -x test=true upgrade head
 uv run house-search db-seed
 uv run house-search validate-config
 
-# Phase 1 で実働するもの
+# 実働するもの（Phase 2 で全コマンド実装済み）
 uv run house-search sync-dict              # 辞書YAML → DB（scan の前に必要）
 uv run house-search scan --seed            # 通知なしの記録専用モード
 uv run house-search scan --site SUUMO
@@ -36,6 +36,8 @@ uv run house-search digest --dry-run       # 送信せず件数確認
 uv run house-search rescore                # 再採点（ネットワーク不要）
 uv run house-search re-extract             # 設備の再抽出（ネットワーク不要）
 uv run house-search report-unknown         # 辞書未登録の表記
+uv run house-search coverage               # サイト別の抽出充足率（ネットワーク不要）
+uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観測モード
 ```
 
 ## 参照ファイル
@@ -61,6 +63,16 @@ uv run house-search report-unknown         # 辞書未登録の表記
 - SUUMO の管理費・敷金・礼金欄の「-」は**0円**の意味。`None` にすると
   `rent_total` が「管理費不明」になり MUST 判定が `unknown` に落ちる
 - `scan` の前に `sync-dict` が要る（辞書が空だとエラー終了する）
+- **市区の検索値が JIS5桁のサイト（SUUMO/GOO/ABLE/賃貸EX）は `m_cities.jis_code` から導く。**
+  `m_city_site_values` に縛ると対象4都県で 67/253市区しか指定できない（東京は23区のみ）
+- **詳細ページに「非該当」条件を並べるサイトがある**（HOMES の `sr-only`、goo の `td` が `-`）。
+  そのまま `raw_features_text` に載せると辞書が非該当の条件を拾う
+- **`m_sites.is_active = false` のサイトは通常の `scan` では取りに行かない。**
+  `--site` で名指ししたときだけ動く（賃貸EX の観測モードの入口）
+- **能動的なボット検知は突破しない。** MINIMINI は reCAPTCHA（課題#18）、
+  HOME'S は AWS WAF のチャレンジ（課題#17）で取得できないことがある
+- 面積の単位は ㎡（U+33A1）・m²・`m<sup>2</sup>` とばらつく。
+  `parse_area_sqm` は NFKC 正規化してから読む
 
 ## AI回答方針
 - 複数実装がある場合はトレードオフを説明してから推奨案を提示する

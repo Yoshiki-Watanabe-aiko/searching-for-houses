@@ -23,19 +23,23 @@ name: "東京賃貸一人暮らし"
 property_type: "CHINTAI"
 webhook_ref: "CHINTAI_ALONE"
 
-# Phase 1 で実装済みなのは SUUMO のみ。未実装サイトは scan が明示的に
-# スキップを報告する（黙って無視すると「実装済みだが未配線」を見逃すため）。
+# Phase 2 時点で実装済みは SUUMO / HOMES / GOO / ABLE / CHINTAI_EX。
+# 未実装サイトは scan が明示的にスキップを報告する
+# （黙って無視すると「実装済みだが未配線」を見逃すため）。
+# CHINTAI_EX は m_sites.is_active=false のため通常の scan では取りに行かず、
+# `scan --site CHINTAI_EX --seed` で名指ししたときだけ観測用に動く。
 sites:
   - "SUUMO"
   - "HOMES"
-  - "ATHOME"
   - "GOO"
   - "ABLE"
-  - "MINIMINI"
-  - "EHEYA"
-  - "NIFTY"
-  - "APAMAN"
-  - "SMOCCA"
+  - "CHINTAI_EX"
+  - "ATHOME"     # Phase 3（Playwright）
+  - "MINIMINI"   # Phase 3（一覧が reCAPTCHA のボット判定下）
+  - "EHEYA"      # Phase 3（Playwright）
+  - "NIFTY"      # Phase 3（Playwright）
+  - "APAMAN"     # Phase 3（Playwright）
+  - "SMOCCA"     # Phase 3（Playwright）
 
 # ---- サイト側へ渡す唯一の条件（エリア＋種別＋価格上限）----
 search:

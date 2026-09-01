@@ -3,7 +3,7 @@
 **作成日**: 2026-06-16（v1）/ **v2改訂**: 2026-09-01
 **言語/スタック**: Python 3.12+ / PostgreSQL 18 / Discord Webhook
 
-> **本書の状態**: Phase 1（賃貸SUUMOの縦切り）完了時点。
+> **本書の状態**: Phase 2（HTTP取得サイトの展開）完了時点。
 > Phase 2 以降で確定した仕様を各Phase完了時に本書へ反映していく。
 > 移行の全体像・Phase構成・未確定事項は [`再設計計画.md`](./再設計計画.md) を参照。
 > **未確定の節には「Phase N で確定」と明記している。**
@@ -41,20 +41,24 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 
 | サイトコード | サイト名 | 取得方式 | 状態 |
 |---|---|---|---|
-| SUUMO | SUUMO | HTTP | 有効 |
-| HOMES | LIFULL HOME'S | HTTP | 有効 |
+| SUUMO | SUUMO | HTTP | ✅ 実装済み |
+| HOMES | LIFULL HOME'S | HTTP | ✅ 実装済み（**AWS WAFに阻まれ取得不安定** → 課題#17） |
 | ATHOME | アットホーム | **Playwright** | 有効 |
 | NIFTY | ニフティ不動産 | Playwright | 有効 |
-| GOO | goo不動産 | HTTP | 有効 |
-| CHINTAI_EX | 賃貸EX | HTTP | **Phase 2 で base_url 確定後に有効化** |
-| ABLE | エイブル | HTTP | 有効（市区指定必須） |
-| MINIMINI | minimini | HTTP | 有効 |
+| GOO | goo不動産 | HTTP | ✅ 実装済み（市区指定必須） |
+| CHINTAI_EX | 賃貸EX | HTTP | ✅ 実装済み（**観測モード**。`is_active=false`） |
+| ABLE | エイブル | HTTP | ✅ 実装済み（市区指定必須・価格上限が効かない） |
+| MINIMINI | minimini | HTTP | **一覧がreCAPTCHA下で取得不可** → 課題#18 |
 | APAMAN | アパマンショップ | Playwright | 有効 |
 | EHEYA | いい部屋ネット | Playwright | 有効 |
 | SMOCCA | スモッカ | Playwright | 有効（市区指定必須） |
 | SHAMAISON | シャーメゾン | — | 無効（v1から未実装。自社物件のみのため対象外） |
 
 - **賃貸のスクレイピング対象は11サイト**（SHAMAISON を除く）。マスタ行数は12。
+- Phase 2 時点でアダプタ実装済みは **SUUMO / HOMES / GOO / ABLE / CHINTAI_EX** の5サイト。
+  未実装サイトは `scan` が「スキップ（アダプタ未実装）」と明示的に報告する。
+- `m_sites.is_active = false` のサイトは通常の `scan` では取りに行かない。
+  `--site` で名指ししたときだけ動く（観測モードの入口）。
 - **Playwright 必須は ATHOME / EHEYA / NIFTY / APAMAN / SMOCCA の5サイト。**
   v1 の本書は ATHOME を「HTTP + goquery」と記載していたが誤り
   （`cmd/main.go:82` で go-rod を使っていた）。Phase 3 で HTTP 降格可否を再検証する。
@@ -106,10 +110,11 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 | `sync-dict` | `data/feature_dictionary.yaml` → `m_condition_synonyms` | ✅ Phase 1 |
 | `re-extract` | `raw_features_text` から全件再抽出（ネットワーク不要） | ✅ Phase 1 |
 | `report-unknown` | 辞書未登録の表記を出現回数順に一覧 | ✅ Phase 1 |
-| `coverage` | サイト別の設備抽出数分布・数値カラム非NULL率の実測 | Phase 2 |
+| `coverage` | サイト別の設備抽出数分布・数値カラム非NULL率の実測 | ✅ Phase 2 |
 
-未実装コマンド（`coverage`）は呼ばれると「どのPhaseで実装するか」を告げて終了コード 2 で
-終わる（黙って何もしないと「実装済みだが未配線」を見逃すため）。
+**Phase 2 で全コマンドが実装済みになった。**
+`scan` はアダプタ未実装のサイトと無効化されたサイトを「スキップ」として明示的に報告する
+（黙って無視すると「実装済みだが未配線」を見逃すため）。
 `scan` は**アダプタ未実装のサイトを「スキップ」として明示的に報告する**。
 
 ### 4.3 シードモード
@@ -326,7 +331,7 @@ DDLは Alembic（`migrations/`）、マスタデータは `db/seed/*.sql`（冪�
 | `m_condition_property_types` | 条件×物件種別（487行） |
 | `m_condition_synonyms` | **設備抽出辞書**（条件コード → 表記パターン） |
 | `m_cities` | 市区町村（947行。`canonical_name` がYAML指定値の正典） |
-| `m_city_site_values` | 市区町村×サイトの検索値（**縦持ち**・1181行） |
+| `m_city_site_values` | 市区町村×サイトの検索値（**縦持ち**・1181行。JIS系サイトは `m_cities.jis_code` を優先） |
 | `t_properties` | 物件（1行=1サイト掲載） |
 | `t_property_features` | 設備・特性の抽出結果 |
 | `t_property_scores` | パターン別スコア（内訳JSONB・`config_hash`） |
@@ -344,26 +349,36 @@ DB規約準拠: `m_`/`t_` 接頭辞、全テーブル・全カラムに日本語
 v1 の11テーブルは pg_dump アーカイブ（`F:\backups\searching-for-houses-legacy\db_20260901.dump`）
 の後に drop 済み。旧データは移行していない（→ ADR 0006）。
 
-### 11.2 `m_city_site_values`（縦持ち）
+### 11.2 市区町村の検索値
 
 v1 はサイトごとに列を持つワイドテーブルだった（ADR 0001）が、賃貸EX追加で
 「サイトを増やすたびに DDL 変更（監査カラム末尾維持のためテーブル再作成）が要る」問題が
 顕在化したため縦持ちへ転換した（→ ADR 0009）。以後のサイト追加は行の挿入だけで済む。
 
-**行が存在しない = そのサイトでは当該市区の検索値が未登録 → 都道府県レベル検索へフォールバック。**
+**Phase 2 で、市区の検索値には2系統あることが判明した。**
 
-サイトごとの値のフォーマット（**実データで確認して v1 の記述を訂正**）:
-
-| サイト | 値の種類 | 例 |
+| 系統 | サイト | 値の出どころ |
 |---|---|---|
-| SUUMO | パスセグメント | `sc_chiyoda` |
-| HOMES | スラグ | `tokyo/chiyoda-city` |
-| NIFTY | スラグ | `tokyo/chiyoda` |
-| MINIMINI | スラグ | `chiyodaku` |
-| ATHOME / GOO / ABLE / APAMAN / **EHEYA** / **SMOCCA** | JIS5桁コード | `13101` |
+| JIS5桁 | SUUMO / GOO / ABLE / CHINTAI_EX（実測で確認） | `m_cities.jis_code` から導出 |
+| サイト固有スラグ | HOMES（`tokyo/chiyoda-city`）/ MINIMINI（`chiyodaku`）| `m_city_site_values` |
 
-> v1 の本書は EHEYA・SMOCCA を「URLスラグ」、MINIMINI を「JIS5桁コード」と記載していたが
-> いずれも誤り。上表が実データに基づく正しい対応。
+JIS系は `m_city_site_values` に行が無くても値を作れる。マッピング表に縛ると
+対象4都県253市区のうち **67市区しか指定できず**、東京都は23区だけで多摩地域が
+丸ごと落ちていた。そのため JIS系は `m_cities.jis_code` から導出する方式に変えた。
+
+`m_cities.jis_code` 自体も初版は947件中789件が NULL だったため、Phase 2 で
+エイブルのエリア索引から実測して473件を補完し、26件（大阪市・福岡市の区で
+コードがずれていた）を訂正した。対象4都県で **216/253市区**が指定できる。
+残りの未登録分は課題#16。
+
+**`m_city_site_values` に行が存在しない = そのサイトでは当該市区の検索値が未登録。**
+市区が必須でないサイトは都道府県レベル検索へフォールバックし、
+必須のサイト（ABLE / GOO / CHINTAI_EX / SMOCCA）はその市区を対象から外す。
+
+> v1 の本書は EHEYA・SMOCCA を「JIS5桁」、MINIMINI を「URLスラグ」と記載していたが、
+> `m_city_site_values` の実データはブロックごとに矛盾している（東京23区の行と
+> それ以外の行で形式が逆）。Phase 2 で実測して確定したのは
+> **MINIMINI がスラグ**であることまで。EHEYA・SMOCCA は Phase 3 で確定する。
 
 ### 11.3 `t_properties` の主要カラム
 
@@ -436,6 +451,9 @@ uv run house-search db-seed --test-db
   `max_pages_per_run`・`daily_request_cap`
 - 429/5xx は指数バックオフ、連続失敗でサイト打ち切り＋エラー通知
 - robots.txt はオリジンごとに起動時1回だけ取得し Disallow ならスキップ
+- User-Agent は既定で `.env` の `USER_AGENT`。アダプタが宣言したサイトだけ差し替える
+  （LIFULL HOME'S は自己申告UAを 403 で拒否するため）
+- **能動的なボット検知（reCAPTCHA・WAFチャレンジ）は突破しない**（→ 課題#17・#18）
 - 詳細取得は1回の実行あたりサイト単位で上限（既定40件 / `--full` は400件）。
   取り残しは `detail_fetched_at IS NULL` のキューに残り次回実行で拾われる
 
@@ -469,7 +487,9 @@ f:\searching-for-houses\
 │   ├── scrape/
 │   │   ├── fetch.py            # レート制御・リトライ・robots.txt
 │   │   ├── base.py             # 共通型とパース補助
-│   │   └── suumo.py            # SUUMO賃貸（Phase 2〜3で他サイトを追加）
+│   │   ├── area.py             # 検索対象エリア（都道府県・市区）の解決
+│   │   ├── prefectures.py      # 都道府県名 → URLスラグ
+│   │   ├── suumo.py / homes.py / goo.py / able.py / chintai_ex.py
 │   ├── extract/
 │   │   ├── normalize.py        # NFKC正規化・トークン化
 │   │   ├── dictionary.py       # 辞書のロードとDB同期
@@ -497,8 +517,9 @@ f:\searching-for-houses\
 │   ├── test_settings.py
 │   ├── test_schema_conventions.py   # DB規約の回帰テスト
 │   ├── test_extract.py / test_scoring.py / test_notify.py / test_fetch.py
-│   ├── test_scrape_suumo.py    # 実HTMLフィクスチャによる回帰テスト
-│   └── fixtures/suumo/         # 実HTML（一覧・詳細）
+│   ├── test_area.py / test_persist.py
+│   ├── test_scrape_{suumo,homes,goo,able,chintai_ex}.py  # 実HTMLフィクスチャ
+│   └── fixtures/{suumo,homes,goo,able,chintai_ex}/       # 実HTML（一覧・詳細）
 ├── docs/
 ├── alembic.ini                 # ASCIIのみ（cp932環境で落ちるため）
 ├── pyproject.toml

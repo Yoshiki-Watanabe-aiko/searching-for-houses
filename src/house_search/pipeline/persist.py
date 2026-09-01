@@ -68,7 +68,12 @@ def load_city_index(conn: Connection) -> list[tuple[str, str, int]]:
 def resolve_city(
     address: str | None, index: list[tuple[str, str, int]]
 ) -> tuple[str | None, int | None]:
-    """住所から都道府県名と市区町村IDを解決する。"""
+    """住所から都道府県名と市区町村IDを解決する。
+
+    都道府県から始まらない住所（賃貸EX は「足立区竹の塚６」と書く）にも効くよう、
+    前置の都道府県が無いときは**市区名が全国で一意なものだけ**を引き当てる。
+    「北区」「西区」のように複数県にある名前は取り違えるので解決しない。
+    """
     if not address:
         return None, None
     for prefecture, canonical, city_id in index:
@@ -77,7 +82,20 @@ def resolve_city(
     for prefecture, _canonical, _city_id in index:
         if address.startswith(prefecture):
             return prefecture, None
+
+    unique = _unique_city_names(index)
+    for prefecture, canonical, city_id in index:
+        if canonical in unique and canonical in address:
+            return prefecture, city_id
     return None, None
+
+
+def _unique_city_names(index: list[tuple[str, str, int]]) -> frozenset[str]:
+    """全国で1つしか存在しない市区町村名の集合。"""
+    counts: dict[str, int] = {}
+    for _prefecture, canonical, _city_id in index:
+        counts[canonical] = counts.get(canonical, 0) + 1
+    return frozenset(name for name, count in counts.items() if count == 1)
 
 
 _SELECT_EXISTING = text(
