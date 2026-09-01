@@ -79,6 +79,10 @@ class ChintaiExScraper:
 
     site_code = SITE_CODE
     requires_city = True
+    # 再抽出（re-extract）は保存済みの raw_features_text しか持たず、
+    # 生成文だけを取り除いて数え直すことができない。scan では
+    # unknown_token_text で分離できるので、再抽出のときだけ収集を止める
+    mine_unknown_tokens = False
     city_value_source = CITY_VALUE_JIS
     user_agent = None
     ignore_robots = False
@@ -227,9 +231,13 @@ class ChintaiExScraper:
         blocks: list[str] = []
         if features := fields.get("features"):
             blocks.append(features)
-        # 「本物件について」は設備を説明する生成文。このサイトで最も語彙が多い一方、
-        # 文章なので誤検出の温床にもなる。観測モードのうちに未知表記と
-        # 抽出数を実測して採否を判断する（→ 課題#11）
+        # 「本物件について」は設備を説明する生成文。このサイトで最も語彙が多く
+        # （設備の抽出数が平均4件→12.9件になる）設備の照合には残す。
+        # ただし**未知表記の収集からは外す**。文章なので
+        # 「おしゃれなお家に憧れている方にぴったりです!キッチンには」のような
+        # 文断片が t_unknown_tokens に入り、辞書へ追記すべき語を探せなくなる
+        # （実測30種・延べ108件 → 課題#19。2026-09-02 ユーザー判断）
+        tagged_blocks = list(blocks)
         if description := fields.get("description"):
             blocks.append(description)
 
@@ -246,12 +254,14 @@ class ChintaiExScraper:
             derived.append(facing if facing.endswith("向き") else f"{facing}向き")
         if derived:
             blocks.append("、".join(derived))
+            tagged_blocks.append("、".join(derived))
 
         floor_part = (floors_facing or "").split("/")
         rent = parse_yen(fields.get("rent"))
         deposit, key_money = _split_pair(fields.get("deposit_key"))
         return ScrapedDetail(
             raw_features_text="\n".join(blocks) or None,
+            unknown_token_text="\n".join(tagged_blocks) or None,
             built_on=parse_built_on(fields.get("built")),
             floor_num=parse_floor(floor_part[0] if floor_part else None),
             total_floors=parse_total_floors(floors_facing),

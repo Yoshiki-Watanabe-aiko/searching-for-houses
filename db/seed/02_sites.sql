@@ -17,6 +17,9 @@
 -- is_active=false のまま観測モードで運用し、Phase 4 の名寄せで
 -- ユニーク物件率を実測してから有効化する（scan --site CHINTAI_EX --seed）。
 --
+-- MINIMINI は取得手段が無いと確定したため is_active=false にしてある（Phase 4）。
+-- 通常の scan の対象一覧から外れるが、`scan --site MINIMINI` で名指しすれば
+-- 将来の回復を観測できる（→ 課題#18）。
 -- MINIMINI は一覧ページが reCAPTCHA のボット判定下にあり、HTTP でも
 -- **素の Chromium（Playwright）でも**取得できない（Phase 3 で実測。
 -- タイトルが「ブラウザをチェックしています - reCAPTCHA」で掲載0件）。
@@ -39,7 +42,7 @@ INSERT INTO m_sites (
     ('GOO',        'goo不動産',        'https://house.goo.ne.jp',   'HTTP',       TRUE,  2.5, 5, NULL,  50, '掲載重複が多い'),
     ('CHINTAI_EX', '賃貸EX',          'https://chintai-ex.jp',     'HTTP',       FALSE, 2.5, 50, NULL, 60, 'robots.txtがクエリ付きURLを全面禁止。価格上限を渡せず市区の全掲載を取る。観測モード中'),
     ('ABLE',       'エイブル',         'https://www.able.co.jp',    'HTTP',       TRUE,  2.5, 5, NULL,  70, '市区指定が必須。都道府県のみだと0件になるため市区へ自動展開する'),
-    ('MINIMINI',   'minimini',        'https://minimini.jp',       'HTTP',       TRUE,  2.5, 5, NULL,  80, '一覧ページがreCAPTCHAのボット判定下。HTTPでも素のブラウザでも取得不可（Phase 3 で実測）。アダプタ未実装'),
+    ('MINIMINI',   'minimini',        'https://minimini.jp',       'HTTP',       FALSE, 2.5, 5, NULL,  80, '一覧ページがreCAPTCHAのボット判定下。HTTPでも素のブラウザでも取得不可（Phase 3 で実測）。取得手段が無いと確定したため Phase 4 で is_active=false（--site で名指しすれば回復の観測はできる）'),
     ('APAMAN',     'アパマンショップ', 'https://www.apamanshop.com','HTTP',       TRUE,  4.0, 5, NULL,  90, 'robots.txtが全パスを禁止（Disallow: /）。ユーザーの明示的判断で取得する（ADR 0011）。市区指定が必須'),
     ('EHEYA',      'いい部屋ネット',   'https://www.eheya.net',     'HTTP',       TRUE,  3.0, 5, NULL, 100, '大東建託グループ・自社物件中心。掲載データは __NEXT_DATA__ のJSONから読む。賃料上限をクエリで渡せない'),
     ('SMOCCA',     'スモッカ',         'https://smocca.jp',         'HTTP',       TRUE,  3.0, 5, NULL, 110, '市区指定が必須。robots.txtがページ送り(/*/page/)を禁止しているため1ページ目90件のみ取得する'),

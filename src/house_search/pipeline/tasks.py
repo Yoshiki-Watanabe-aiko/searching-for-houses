@@ -11,13 +11,14 @@ from dataclasses import dataclass, field
 
 from sqlalchemy import text
 
+from house_search import dedup
 from house_search.extract.extractor import (
     SOURCE_DETAIL,
     derive_features,
     extract_from_text,
     merge_features,
 )
-from house_search.notify.format import DigestEntry, NotifiableProperty, build_digest_message
+from house_search.notify.format import DigestEntry, build_digest_message, notifiable_from
 from house_search.pipeline import persist
 from house_search.pipeline.runtime import Runtime
 from house_search.scoring.must import evaluate_must
@@ -62,23 +63,6 @@ class CheckSoldResult:
     sold: int = 0
     notified: int = 0
     errors: list[str] = field(default_factory=list)
-
-
-def _notifiable(view) -> NotifiableProperty:
-    return NotifiableProperty(
-        property_id=view.property_id,
-        site_code=view.site_code or "",
-        url=view.url or "",
-        title=view.title,
-        price=view.price,
-        mgmt_fee_monthly=view.mgmt_fee_monthly,
-        rent_total=view.rent_total,
-        layout=view.layout,
-        area_sqm=view.area_sqm,
-        age_years=view.age_years,
-        walk_minutes=view.walk_minutes,
-        address=view.address,
-    )
 
 
 def rescore(runtime: Runtime, pattern) -> RescoreResult:
@@ -147,11 +131,18 @@ def digest(runtime: Runtime, pattern, *, dry_run: bool = False) -> DigestResult:
         ).all()
         property_ids = [row.property_id for row in rows]
         views = persist.load_property_views(conn, property_ids=property_ids)
+        # 順位はグループ代表にしか振っていないので、ここに並ぶのは
+        # 「代表 ＋ 未グループ物件」だけになる（= ランキングがグループ単位）
+        memberships = dedup.group_membership(conn, property_ids)
 
     entries = [
         DigestEntry(
             rank=row.rank_in_pattern or index,
-            prop=_notifiable(views[row.property_id]),
+            prop=notifiable_from(
+                views[row.property_id],
+                member_count=memberships[row.property_id].member_count,
+                other_site_codes=memberships[row.property_id].other_site_codes,
+            ),
             score=calculate_score(views[row.property_id], pattern.want),
         )
         for index, row in enumerate(rows, start=1)
@@ -211,18 +202,24 @@ def re_extract(
             floor_num=row.floor_num, total_floors=row.total_floors, age_years=None
         )
         features = merge_features(derived, extraction.features)
+        # 保存済み原文に宣伝の生成文が混ざるサイトは未知表記を数え直さない。
+        # scan では設備タグの部分だけを収集元にできるが、再抽出では
+        # 分割し直せないため文断片で一覧が埋まる（→ 課題#19）
+        scraper = get_scraper(row.site_code)
+        mine_unknown = getattr(scraper, "mine_unknown_tokens", True) if scraper else True
+        unknown = extraction.unknown_tokens if mine_unknown else ()
         with runtime.engine.begin() as conn:
             saved = persist.save_features(conn, row.id, features, runtime.condition_ids)
             persist.save_unknown_tokens(
                 conn,
-                extraction.unknown_tokens,
+                unknown,
                 site_id=row.site_id,
                 property_family=family,
                 sample_url=row.url,
             )
         result.properties += 1
         result.features += saved
-        result.unknown_tokens += len(extraction.unknown_tokens)
+        result.unknown_tokens += len(unknown)
     return result
 
 
@@ -289,6 +286,9 @@ def check_sold(runtime: Runtime, pattern, *, limit: int = 100) -> CheckSoldResul
     if sold_ids:
         with runtime.engine.begin() as conn:
             persist.mark_status(conn, sold_ids, "sold")
+            # 代表が成約したグループは代表を選び直す。集合演算なので
+            # 「誰が代表だったか」を覚えておく必要がない
+            dedup.sync_groups(conn)
     result.sold = len(sold_ids)
     return result
 
@@ -374,3 +374,47 @@ def measure_coverage(runtime: Runtime) -> list[SiteCoverage]:
         )
         for row in rows
     ]
+
+
+@dataclass(slots=True)
+class RegroupResult:
+    """名寄せの再構築結果。"""
+
+    keys_refreshed: int
+    groups: int
+    grouped_properties: int
+    representative_changes: int
+    cheaper_candidates: int
+
+
+def regroup(runtime: Runtime) -> RegroupResult:
+    """名寄せキーを全件作り直してグループを同期する（ネットワーク不要）。
+
+    正規化ルールを変えたあとのバックフィルはこれ1本で済む。
+    **通知は送らない。** 既存データへ初めて適用したときに
+    ``cheaper_listing`` が大量発火するのを避けるため、
+    候補の件数だけを返して実際の通知は次回の ``scan`` の差分に任せる。
+    """
+    with runtime.engine.begin() as conn:
+        refreshed = dedup.refresh_dedup_keys(conn)
+        changes = dedup.sync_groups(conn)
+        groups = conn.execute(text("SELECT count(*) FROM t_property_groups")).scalar_one()
+        grouped = conn.execute(
+            text("SELECT count(*) FROM t_properties WHERE group_id IS NOT NULL")
+        ).scalar_one()
+    return RegroupResult(
+        keys_refreshed=refreshed,
+        groups=int(groups),
+        grouped_properties=int(grouped),
+        representative_changes=len(changes),
+        cheaper_candidates=sum(1 for change in changes if change.is_cheaper),
+    )
+
+
+def measure_dedup(runtime: Runtime) -> list[dedup.SiteDedupStats]:
+    """サイト別の名寄せ実測（``dedup-stats``）。
+
+    ``coverage``（設備抽出の充足）とは測るものが違うので別コマンドにしてある。
+    """
+    with runtime.engine.connect() as conn:
+        return dedup.dedup_stats(conn)

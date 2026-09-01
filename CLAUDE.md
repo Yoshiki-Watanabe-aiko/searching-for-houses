@@ -5,7 +5,7 @@
 MUST（未充足なら除外）＋WANT（重み付き加点）のスコアでランク付けして
 新着・成約・価格変動・日次ランキングをDiscordへ通知するシステム。
 
-**v2（Python）へ全面再設計中。Phase 3（取得サイトの展開）まで完了。**
+**v2（Python）へ全面再設計中。Phase 4（クロスサイト名寄せ）まで完了。**
 進捗と残作業は `docs/再設計計画.md` を参照。
 v1（Go）の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全済み。
 
@@ -37,6 +37,8 @@ uv run house-search rescore                # 再採点（ネットワーク不�
 uv run house-search re-extract             # 設備の再抽出（ネットワーク不要）
 uv run house-search report-unknown         # 辞書未登録の表記
 uv run house-search coverage               # サイト別の抽出充足率（ネットワーク不要）
+uv run house-search regroup                # 名寄せの再構築（ネットワーク不要・通知なし）
+uv run house-search dedup-stats            # サイト別の重複率・ユニーク率（ネットワーク不要）
 uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観測モード
 ```
 
@@ -44,7 +46,7 @@ uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観�
 - 再設計計画（Phase構成・未確定事項） → @docs/再設計計画.md
 - 要件定義書          → @docs/requirements.md
 - 詳細設計書          → @docs/詳細設計書/
-  （`01_サイト取得設計.md` / `02_設備抽出辞書設計.md` / `03_スコアリング設計.md`）
+  （`01_サイト取得設計.md` / `02_設備抽出辞書設計.md` / `03_スコアリング設計.md` / `04_名寄せ設計.md`）
 - 課題管理表          → @docs/課題管理表.md
 - 設計判断の記録      → @docs/adr/
 
@@ -80,6 +82,20 @@ uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観�
   スラグ系だけが `m_city_site_values` を引く
 - 面積の単位は ㎡（U+33A1）・m²・`m<sup>2</sup>` とばらつく。
   `parse_area_sqm` は NFKC 正規化してから読む
+- **名寄せの住所は「丁目まで」で打ち切る。** サイトによって粒度が
+  「番地まで（HOME'S）／丁目まで（多数）／町名まで（SUUMO）」とばらつき、
+  番地を残すとクロスサイトの名寄せが原理的に成立しない（→ ADR 0012）
+- **名寄せキーに建物名・築年月・総階数・賃料を入れてはいけない。** 匿名掲載
+  （`ＪＲ相模線 上溝駅 2階建 築41年`）が実在し、入れると真の一致が分断される。
+  面積も丸めない（丸めても一致は増えず隣接住戸を余分に潰すだけ）
+- **`refresh_dedup_keys` は一覧の upsert 直後と詳細の保存後の両方で呼ぶ。**
+  階数・住所は詳細ページで初めて埋まる掲載があり、片方だけだとキー充足率が上がらない
+- `sync_groups` は差分管理をしない**冪等な集合演算**。代表の交代・掲載の消失は
+  「次の同期で自然に直る」ので、イベント駆動の張り替えを足さないこと
+- **`regroup` は通知を送らない。** 既存データへの初回適用で `cheaper_listing` が
+  大量発火するのを避けるため。通知は次回の `scan` の差分に任せる
+- **順位はグループ代表と未グループ物件にだけ振る**（`update_ranks`）。
+  `digest` は `rank_in_pattern` 起点なので、ここを崩すとランキングに重複が戻る
 
 ## AI回答方針
 - 複数実装がある場合はトレードオフを説明してから推奨案を提示する
