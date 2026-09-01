@@ -11,11 +11,20 @@
 #   LogonType が S4U（＝ログオフ中も実行・パスワード保存なし）のタスクを作るには
 #   管理者権限（SeTcbPrivilege）が要る。標準ユーザーで実行すると schtasks が
 #   「エラー: アクセスが拒否されました。」で失敗する。
-#   ⚠ このPCの通常アカウント wy469 は BUILTIN\Administrators に入っていないため、
-#     管理者アカウントで「管理者として実行」した PowerShell から登録すること。
-#   ⚠ -DryRun（XML生成と整形式検査だけ）は標準ユーザーでも通る。
+#   ⚠ このPCの通常アカウント wy469 は BUILTIN\Administrators に入っていない。
+#   → **本スクリプトは自動で昇格する。** 標準ユーザーのまま実行すると UAC の画面が出るので、
+#     管理者アカウントの資格情報を入力する。昇格したウィンドウで登録が続行される。
+#   ⚠ -DryRun（XML生成と整形式検査だけ）は権限が要らないので昇格しない。
 #   同じXMLで LogonType を InteractiveToken にすれば標準ユーザーでも登録できるが、
 #   ログオフ中にタスクが動かなくなる（03:30 の pg_dump が走らない）ため採らない。
+#
+# ★ 自己昇格の落とし穴（この対策が本スクリプトの肝）:
+#   標準ユーザーが UAC で管理者の資格情報を入力すると、**昇格後のプロセスは
+#   その管理者アカウントとして動く**。素朴に自己昇格して
+#   WindowsIdentity::GetCurrent() を読むと、タスクが「管理者アカウントとして実行」で
+#   登録されてしまい、意図した利用者の環境で動かなくなる。
+#   そのため昇格前の利用者名を -TaskUser で子プロセスへ引き継いでいる。
+#   登録後は必ず schtasks /query /fo LIST /v の「実行ユーザー」を確認すること。
 #
 # 登録されるタスク:
 #   HouseSearch-Scan       2時間ごと 01:15起点  増分スキャン（一覧1ページ＋詳細40件/サイト）
@@ -52,17 +61,80 @@ param(
     [switch]$Unregister,
     # 取得を伴う2本（Scan / CheckSold）を有効化する。
     # 初回全件スキャンが終わってから実行すること（並走すると実効間隔が半分になる）
-    [switch]$EnableScraping
+    [switch]$EnableScraping,
+
+    # タスクを「実行するアカウント」。省略時は現在のログオンユーザー。
+    # ⚠ 自己昇格すると実行者が管理者アカウントに変わるため、
+    #   昇格前の利用者をここで引き継ぐ（引き継がないとタスクが管理者として登録される）
+    [string]$TaskUser,
+
+    # 自己昇格した子プロセス側であることを示す内部用フラグ。手で指定しない
+    [switch]$Elevated
 )
 
 $ErrorActionPreference = "Stop"
 
 $RepoRoot   = Split-Path -Parent $PSScriptRoot
 $TaskRunner = Join-Path $PSScriptRoot "task_runner.ps1"
-$UserId     = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 
 if (-not (Test-Path $TaskRunner)) {
     throw "task_runner.ps1 が見つかりません: $TaskRunner"
+}
+
+function Test-Elevated {
+    <#
+        管理者として実行されているか。UACフィルタ済みの管理者トークンでは false になる。
+    #>
+    $identity  = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object System.Security.Principal.WindowsPrincipal($identity)
+    return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+# タスクの実行アカウントは「昇格前の利用者」でなければならない。
+# 自己昇格した子プロセスでは GetCurrent() が管理者アカウントを返すので、
+# 親から -TaskUser で渡された値を優先する
+if (-not $TaskUser) {
+    $TaskUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+}
+$UserId = $TaskUser
+
+# ---- 自己昇格 -------------------------------------------------------------
+# -DryRun（XML生成と整形式検査だけ）は権限が要らないので昇格しない
+if (-not $DryRun -and -not (Test-Elevated)) {
+    if ($Elevated) {
+        # 昇格したはずなのに管理者でない＝管理者以外の資格情報が入力された
+        throw "昇格しましたが管理者権限がありません。管理者アカウントの資格情報で実行してください。"
+    }
+
+    Write-Host ""
+    Write-Host "タスクの登録には管理者権限が必要です。UAC の画面で" -ForegroundColor Yellow
+    Write-Host "管理者アカウントの資格情報を入力してください。" -ForegroundColor Yellow
+    Write-Host "  タスクの実行アカウント: $TaskUser （昇格しても変わりません）" -ForegroundColor Cyan
+    Write-Host ""
+
+    $childArgs = @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit",
+        "-File", "`"$PSCommandPath`"",
+        "-Elevated", "-TaskUser", "`"$TaskUser`""
+    )
+    if ($Unregister)     { $childArgs += "-Unregister" }
+    if ($EnableScraping) { $childArgs += "-EnableScraping" }
+
+    try {
+        # -NoExit で昇格した窓を開いたままにする（結果を読めるようにするため）
+        Start-Process -FilePath "powershell.exe" -ArgumentList $childArgs -Verb RunAs | Out-Null
+    }
+    catch {
+        Write-Error @"
+昇格に失敗しました（UACをキャンセルした可能性があります）。
+管理者アカウントで「管理者として実行」した PowerShell から、次を直接実行してください:
+  .\scripts\register_tasks.ps1 -TaskUser "$TaskUser"
+"@
+        exit 1
+    }
+
+    Write-Host "昇格したウィンドウで登録を続行します。結果はそちらに表示されます。" -ForegroundColor Green
+    exit 0
 }
 
 # ---- タスク定義 -----------------------------------------------------------
@@ -117,7 +189,7 @@ if ($Unregister) {
 
 # ---- 既存タスクの有効化だけを行う ----------------------------------------
 if ($EnableScraping -and -not $DryRun) {
-    $existing = & schtasks.exe /query /tn "HouseSearch-Scan" 2>&1 | Out-String
+    & schtasks.exe /query /tn "HouseSearch-Scan" 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) {
         foreach ($task in ($Tasks | Where-Object { $_.Scraping })) {
             & schtasks.exe /change /tn $task.Name /enable 2>&1 | Out-String | Write-Output
