@@ -259,7 +259,10 @@ class PropertyFeature(TimestampMixin, Base):
         nullable=False,
         default="DETAIL",
         server_default=text("'DETAIL'"),
-        comment="抽出元。LIST=一覧ページ / DETAIL=詳細ページ / SITE_TAG=サイトの構造化タグ",
+        comment=(
+            "抽出元。LIST=一覧ページ / DETAIL=詳細ページ / SITE_TAG=サイトの構造化タグ / "
+            "DERIVED=型付き列からの導出（2階以上・最上階など閾値条件）"
+        ),
     )
     matched_text: Mapped[str | None] = mapped_column(
         Text, comment="マッチした原文の断片。辞書の誤爆調査に使う"

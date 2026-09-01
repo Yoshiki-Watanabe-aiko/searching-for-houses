@@ -1,0 +1,106 @@
+# ============================================================
+# 東京賃貸一人暮らし（v1 の chintai_alone.yaml を v2 形式へ変換したもの）
+#
+# v1 からの変更点:
+#   - discord_webhook（実URL）→ webhook_ref。実URLは .env に集約したため
+#     このファイルは Git 管理できる（検索条件の変更履歴が残る）
+#   - conditions（全条件AND絞り込み）→ search / must / want の3層
+#   - v1 で features に挙げていた25条件のうち、
+#       * STRUCT_RC / STRUCT_SRC は排他選択のため any_of で1項目に統合
+#       * FEAT_WITH_PHOTO / FEAT_WITH_LAYOUT は WANT から除外
+#         （掲載の充実度であって物件の質ではない。加点すると写真の無い
+#           優良物件が平凡だが写真付きの物件の下に沈む）
+#     を除いた22項目を want.features に配分した
+#
+# 重み配分は「案A バランス型」（2026-09-01 ユーザー確定）:
+#   設備 weight 合計 110 / 数値 weight 合計 90（数値の比率 45%）
+# 重みは rescore コマンド（ネットワーク不要のDBバッチ）でいつでも振り直せる。
+#
+# 検証: uv run house-search validate-config
+# ============================================================
+
+name: "東京賃貸一人暮らし"
+property_type: "CHINTAI"
+webhook_ref: "CHINTAI_ALONE"
+
+# Phase 1 で実装済みなのは SUUMO のみ。未実装サイトは scan が明示的に
+# スキップを報告する（黙って無視すると「実装済みだが未配線」を見逃すため）。
+sites:
+  - "SUUMO"
+  - "HOMES"
+  - "ATHOME"
+  - "GOO"
+  - "ABLE"
+  - "MINIMINI"
+  - "EHEYA"
+  - "NIFTY"
+  - "APAMAN"
+  - "SMOCCA"
+
+# ---- サイト側へ渡す唯一の条件（エリア＋種別＋価格上限）----
+search:
+  prefectures:
+    - "東京都"
+    - "千葉県"
+    - "埼玉県"
+    - "神奈川県"
+  cities: []
+  # MUST上限 70,000円 の約1.3倍。管理費が別計上のサイトで
+  # 「賃料は上限内だが管理費込みだと超える」物件を取りこぼさないためのバッファ
+  price_max_hint: 90000
+
+# ---- MUST: 未充足なら除外 ----
+must:
+  rent_total_max: 70000
+  layouts: ["1LDK", "2K", "2DK", "2LDK", "3LDK"]
+  area_min: 30.0
+  walk_minutes_max: 20
+  features: []
+  # 判定不能なMUSTは通す。詳細ページを見るまで確定しない項目で
+  # 取りこぼすより、いったん残して採点で沈める方が損失が小さい
+  unknown_policy: keep
+
+# ---- WANT: 重み付き加点（設備 110 / 数値 90）----
+want:
+  features:
+    # 生活の質に直結し、無いと日常的に困るもの
+    - { code: INT_LAUNDRY,          weight: 10 }   # 室内洗濯機置場
+    - { code: BATH_SEPARATE,        weight: 9 }    # バス・トイレ別
+    - { code: KITCHEN_2BURNER,      weight: 9 }    # コンロ2口以上
+    # 後から追加できないもの・強く欲しいもの
+    - { code: SEC_AUTOLOCK,         weight: 8 }    # オートロック
+    - { code: INT_WASHROOM,         weight: 7 }    # 洗面所独立
+    - { code: EQUIP_DELIVERY_BOX,   weight: 7 }    # 宅配ボックス
+    # あると嬉しいもの
+    - { code: HVAC_AC,              weight: 6 }    # エアコン付き
+    # RC と SRC は同時に満たしえない排他選択。別々に weight を振ると
+    # 片方が必ず miss になるのに分母には両方が乗り、スコア上限が構造的に下がる
+    - { any_of: [STRUCT_RC, STRUCT_SRC], weight: 6 }
+    - { code: KITCHEN_GAS,          weight: 5 }    # ガスコンロ対応
+    - { code: SEC_MONITOR_INTERCOM, weight: 5 }    # TVモニタ付きインターホン
+    - { code: COMM_NET_FREE,        weight: 5 }    # インターネット無料
+    - { code: LOC_FLOOR_2UP,        weight: 5 }    # 2階以上
+    # 小さな加点
+    - { code: EQUIP_TRASH_24H,      weight: 4 }    # 24時間ゴミ出し可
+    - { code: INT_FLOORING,         weight: 4 }    # フローリング
+    - { code: EQUIP_CITY_GAS,       weight: 4 }    # 都市ガス（プロパンとの月額差）
+    - { code: COMM_FIBER,           weight: 3 }    # 光ファイバー
+    - { code: STORAGE_SHOE,         weight: 3 }    # シューズボックス
+    - { code: EQUIP_BICYCLE,        weight: 3 }    # 駐輪場あり
+    # 誤差程度
+    - { code: MOVEIN_IMMEDIATE,     weight: 2 }    # 即入居可
+    - { code: FEAT_RENOVATED,       weight: 2 }    # リノベーション物件
+    - { code: MOVEIN_INSTRUMENT,    weight: 2 }    # 楽器相談可
+    - { code: EQUIP_PARKING,        weight: 1 }    # 駐車場あり
+
+  # worst は MUST の上限／下限に一致させてある。
+  # MUST ぎりぎりの物件は該当metricが0点になり、余裕のある物件ほど加点される
+  numeric:
+    - { metric: rent_total,   weight: 40, best: 50000, worst: 70000 }
+    - { metric: area_sqm,     weight: 20, best: 45,    worst: 30 }
+    - { metric: age_years,    weight: 15, best: 0,     worst: 30 }
+    - { metric: walk_minutes, weight: 15, best: 3,     worst: 20 }
+
+ranking:
+  top_n: 15
+  digest_group: null

@@ -106,10 +106,40 @@ class KodateBuyMust(MustBase):
 
 
 class FeatureWant(Strict):
-    """WANT の設備条件。該当すれば weight 満点を加点する。"""
+    """WANT の設備条件。該当すれば weight 満点を加点する。
 
-    code: str = Field(description="条件コード（m_conditions.code）")
+    ``code`` で単一条件を、``any_of`` で「どれか1つ満たせば満点」の排他グループを表す。
+
+    ``any_of`` が要る理由: ``STRUCT_RC`` と ``STRUCT_SRC`` のように同時に満たしえない
+    条件へ別々に weight を振ると、片方は必ず miss になるのに分母には両方が乗る。
+    結果として全物件のスコア上限が構造的に下がり、weight 予算が無駄になる
+    （順位は壊れないが 0〜100 点という数字の意味が濁る）。
+    """
+
+    code: str | None = Field(default=None, description="条件コード（m_conditions.code）")
+    any_of: list[str] = Field(
+        default_factory=list,
+        description="排他グループ。いずれか1つでも該当すれば weight 満点を加点する",
+    )
     weight: float = Field(gt=0, description="重み。大きいほど優先度が高い")
+
+    @model_validator(mode="after")
+    def _exactly_one_form(self) -> FeatureWant:
+        if bool(self.code) == bool(self.any_of):
+            raise ValueError("WANT の設備条件は code か any_of のどちらか一方を指定してください")
+        if self.any_of and len(set(self.any_of)) < 2:
+            raise ValueError("any_of には異なる条件コードを2つ以上指定してください")
+        return self
+
+    @property
+    def codes(self) -> tuple[str, ...]:
+        """この項目が参照する条件コード（昇順＝決定的）。"""
+        return (self.code,) if self.code else tuple(sorted(self.any_of))
+
+    @property
+    def key(self) -> str:
+        """内訳・ソートで使う安定した識別子。"""
+        return self.code if self.code else "|".join(self.codes)
 
 
 class NumericWant(Strict):
@@ -186,9 +216,10 @@ class PatternBase(Strict):
 
         seen_features: set[str] = set()
         for feat in self.want.features:
-            if feat.code in seen_features:
-                raise ValueError(f"WANT の条件コード '{feat.code}' が重複しています")
-            seen_features.add(feat.code)
+            for code in feat.codes:
+                if code in seen_features:
+                    raise ValueError(f"WANT の条件コード '{code}' が重複しています")
+                seen_features.add(code)
 
         must_fields = type(self.must).model_fields  # type: ignore[attr-defined]
         for field_name in must_fields:

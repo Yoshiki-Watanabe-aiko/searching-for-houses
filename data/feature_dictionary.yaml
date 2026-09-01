@@ -1,0 +1,253 @@
+# ============================================================
+# 設備抽出辞書（正典）
+#
+# ここが正典で、`house-search sync-dict` が m_condition_synonyms へ upsert する。
+# Git管理YAMLを正にするのは、辞書の変更をdiffレビューできるようにするため。
+#
+# 照合の仕組み（src/house_search/extract/ を参照）:
+#   1. 詳細ページの設備ブロック原文を t_properties.raw_features_text に保存
+#   2. NFKC正規化 → 小文字化 → 「、」「/」「・」「改行」でトークン化
+#   3. 各トークンに対し patterns を部分一致で照合。
+#      同じトークンが negative_patterns にも当たったらその条件は不成立にする
+#   4. どの条件にも当たらなかったトークンを t_unknown_tokens へ記録し、
+#      report-unknown → 本ファイルへ追記 → sync-dict → re-extract で育てる
+#
+# patterns は読み込み時に照合と同じ正規化を通すため、
+# 全角/半角・大文字小文字は気にせず自然な表記で書いてよい。
+#
+# 【本辞書で扱わない条件】
+#   - LOC_FLOOR_1 / LOC_FLOOR_2UP / LOC_TOP_FLOOR / FEAT_NEW
+#     → 所在階・階建・築年数の型付き列から導出する（DERIVED）。
+#        「2階以上」は文字列照合では表現できないため
+#   - FEAT_WITH_PHOTO / FEAT_WITH_LAYOUT / FEAT_TODAY_NEW
+#     → 掲載メタ情報であり本文に現れない
+#   - NEARBY_*（コンビニ400m以内 等）
+#     → 距離計算が要る。Phase 1 では対象外
+# ============================================================
+
+version: 1
+
+# ------------------------------------------------------------
+# 賃貸ブロック
+# 売買の証明書・性能評価系は語彙体系が別のため buy ブロックへ分ける
+# （Phase 6 で追加する）
+# ------------------------------------------------------------
+chintai:
+
+  # ---- 初期費用 ----
+  PRICE_NO_REIKIN:
+    patterns: ["礼金不要", "礼金なし", "礼金0", "礼金ゼロ", "敷金・礼金不要", "敷金礼金不要"]
+  PRICE_NO_SHIKIKIN:
+    patterns: ["敷金不要", "敷金なし", "敷金0", "敷金ゼロ", "敷金・礼金不要", "敷金礼金不要"]
+  PRICE_NO_HOSHOKIN:
+    patterns: ["保証金不要", "保証金なし", "保証金0"]
+  PRICE_FREE_RENT:
+    patterns: ["フリーレント"]
+  PRICE_INITIAL_CARD:
+    patterns: ["初期費用カード決済可", "初期費用クレジット"]
+  PRICE_RENT_CARD:
+    patterns: ["家賃カード決済可", "賃料カード決済可", "家賃クレジット"]
+  PRICE_NO_GUARANTOR:
+    patterns: ["保証人不要", "連帯保証人不要"]
+
+  # ---- 構造 ----
+  # 「src造」は「rc造」を部分文字列として含むため、negative で打ち消す。
+  # これを怠るとSRC物件がRCとしても抽出され、any_of の判定が濁る
+  STRUCT_RC:
+    patterns: ["鉄筋コンクリート", "鉄筋コン", "rc造"]
+    negative_patterns: ["鉄骨鉄筋コンクリート", "鉄骨鉄筋コン", "src造"]
+  STRUCT_SRC:
+    patterns: ["鉄骨鉄筋コンクリート", "鉄骨鉄筋コン", "src造"]
+  STRUCT_STEEL:
+    patterns: ["鉄骨造", "軽量鉄骨", "重量鉄骨"]
+    negative_patterns: ["鉄骨鉄筋"]
+  STRUCT_WOOD:
+    patterns: ["木造"]
+  STRUCT_BLOCK:
+    patterns: ["ブロック造", "alc造", "その他構造"]
+
+  # ---- 位置・向き ----
+  # 「2階以上」は閾値条件のため所在階の列から導出する（DERIVED）。
+  # 「最上階」は掲載本文にタグとして現れるので、導出と併用して取りこぼしを減らす
+  LOC_TOP_FLOOR:
+    patterns: ["最上階"]
+  LOC_CORNER:
+    patterns: ["角部屋", "角住戸"]
+  LOC_SOUTH_FACING:
+    patterns: ["南向き", "南面", "南東向き", "南西向き"]
+
+  # ---- 室内設備 ----
+  INT_LAUNDRY:
+    patterns: ["室内洗濯機置場", "室内洗濯機置き場", "洗濯機置場室内", "室内洗濯置場"]
+    negative_patterns: ["室外洗濯機置場", "屋外洗濯機置場", "洗濯機置場なし"]
+  INT_WASHROOM:
+    patterns: ["洗面所独立", "独立洗面台", "独立洗面所", "洗面台独立"]
+  INT_FLOORING:
+    patterns: ["フローリング"]
+  INT_LOFT:
+    patterns: ["ロフト"]
+  INT_SOUNDPROOF:
+    patterns: ["防音室", "楽器可防音"]
+  INT_FURNISHED:
+    patterns: ["家具付", "家電付", "家具家電付", "家具・家電付"]
+
+  # ---- 冷暖房 ----
+  HVAC_AC:
+    patterns: ["エアコン", "冷暖房"]
+    negative_patterns: ["エアコンなし", "エアコン無", "エアコン別途"]
+  HVAC_FLOOR_HEAT:
+    patterns: ["床暖房"]
+  HVAC_KEROSENE:
+    patterns: ["灯油暖房", "石油暖房", "ffヒーター"]
+  HVAC_GAS_HEAT:
+    patterns: ["ガス暖房", "都市ガス暖房", "ガスヒーター"]
+
+  # ---- バス・トイレ ----
+  BATH_SEPARATE:
+    patterns: ["バス・トイレ別", "バストイレ別", "バス、トイレ別", "浴室独立"]
+    negative_patterns: ["バス・トイレ同室", "バストイレ同室", "3点ユニット", "三点ユニット"]
+  BATH_WASHLET:
+    patterns: ["温水洗浄便座", "ウォシュレット", "シャワートイレ"]
+  BATH_DRY:
+    patterns: ["浴室乾燥", "バス乾燥"]
+  BATH_REHEATING:
+    patterns: ["追焚", "追い焚き", "追い炊き", "追焚き"]
+  BATH_SHOWER:
+    patterns: ["シャワールーム", "独立シャワー"]
+
+  # ---- キッチン ----
+  # 「ガスコンロ」は「ガスコンロ対応」「ガスコンロ設置済」いずれにも当たる。
+  # 「ihコンロ」は別条件なので negative で分離する
+  KITCHEN_GAS:
+    patterns: ["ガスコンロ", "ガス台"]
+    negative_patterns: ["ガスコンロ不可", "ガスコンロ設置不可"]
+  KITCHEN_IH:
+    patterns: ["ihコンロ", "ihクッキング", "ihヒーター"]
+  KITCHEN_2BURNER:
+    patterns: ["コンロ2口", "2口コンロ", "コンロ3口", "3口コンロ", "コンロ4口", "2口以上", "コンロ二口"]
+  KITCHEN_ALL_ELEC:
+    patterns: ["オール電化"]
+  KITCHEN_SYSTEM:
+    patterns: ["システムキッチン"]
+  KITCHEN_COUNTER:
+    patterns: ["カウンターキッチン", "対面キッチン"]
+
+  # ---- 建物設備 ----
+  # SUUMO の「駐車場」欄は「-」なら無し、値があれば有り。
+  # サイトアダプタ側で「駐車場あり」「敷地内駐車場」という派生トークンへ
+  # 正規化してから raw_features_text に載せる（欄の意味づけはサイト固有のため）
+  EQUIP_PARKING:
+    patterns: ["駐車場あり", "駐車場有", "駐車場付", "空車有", "平面駐車場", "駐車場2台以上"]
+    negative_patterns: ["駐車場なし", "駐車場無", "空車なし"]
+  EQUIP_PARKING_ONSITE:
+    patterns: ["敷地内駐車場", "駐車場敷地内"]
+  EQUIP_BICYCLE:
+    patterns: ["駐輪場", "サイクルポート"]
+    negative_patterns: ["駐輪場なし", "駐輪場無"]
+  EQUIP_BIKE:
+    patterns: ["バイク置場", "バイク置き場", "バイク駐車"]
+  EQUIP_ELEVATOR:
+    patterns: ["エレベーター", "エレベータ"]
+  EQUIP_DELIVERY_BOX:
+    patterns: ["宅配ボックス", "宅配box", "宅配ロッカー"]
+  EQUIP_TRASH:
+    patterns: ["敷地内ごみ置場", "敷地内ゴミ置場", "ゴミ置場", "ごみ置場", "ダストボックス"]
+  EQUIP_BALCONY:
+    patterns: ["バルコニー", "ベランダ"]
+    negative_patterns: ["バルコニーなし", "ベランダなし"]
+  EQUIP_ROOF_BALCONY:
+    patterns: ["ルーフバルコニー", "ルーフテラス"]
+  EQUIP_PRIVATE_GARDEN:
+    patterns: ["専用庭"]
+  EQUIP_CITY_GAS:
+    patterns: ["都市ガス"]
+  EQUIP_LPG:
+    patterns: ["プロパンガス", "lpガス", "lpg"]
+  EQUIP_BARRIER_FREE:
+    patterns: ["バリアフリー", "手すり付", "段差なし"]
+
+  # ---- セキュリティ ----
+  SEC_AUTOLOCK:
+    patterns: ["オートロック"]
+    negative_patterns: ["オートロックなし", "オートロック無"]
+  SEC_CONCIERGE:
+    patterns: ["管理人", "管理員", "コンシェルジュ"]
+    negative_patterns: ["管理人なし", "管理員なし"]
+  SEC_MONITOR_INTERCOM:
+    patterns: ["tvモニタ付", "tvモニター付", "モニタ付インターホン", "モニター付インターホン", "tvインターホン", "テレビモニタ"]
+  SEC_CAMERA:
+    patterns: ["防犯カメラ", "監視カメラ"]
+  SEC_SECURITY_CO:
+    patterns: ["セキュリティ会社", "警備会社", "ホームセキュリティ", "セコム", "alsok"]
+
+  # ---- テレビ・通信 ----
+  COMM_NET_AVAILABLE:
+    patterns: ["インターネット", "高速ネット対応", "ネット対応", "wi-fi", "wifi"]
+    negative_patterns: ["インターネット不可"]
+  COMM_NET_FREE:
+    patterns: ["インターネット無料", "ネット無料", "wi-fi無料", "インターネット使用料無料"]
+  COMM_FIBER:
+    patterns: ["光ファイバー", "光回線", "光インターネット"]
+  COMM_BS:
+    patterns: ["bsアンテナ", "bs対応", "bs・cs"]
+  COMM_CS:
+    patterns: ["csアンテナ", "cs対応", "bs・cs"]
+  COMM_CABLE_TV:
+    patterns: ["ケーブルテレビ", "catv"]
+
+  # ---- 収納 ----
+  STORAGE_WIC:
+    patterns: ["ウォークインクローゼット", "ウォークイン", "wic"]
+  STORAGE_SHOE:
+    patterns: ["シューズボックス", "下駄箱", "シューズインクローゼット", "sic"]
+  STORAGE_TRUNK:
+    patterns: ["トランクルーム"]
+
+  # ---- 入居条件 ----
+  # SUUMO の「入居」欄が「即」なら、アダプタが「即入居可」へ正規化して載せる
+  MOVEIN_IMMEDIATE:
+    patterns: ["即入居可", "即入居", "すぐ入居可"]
+  MOVEIN_FEMALE_ONLY:
+    patterns: ["女性限定", "女性専用", "女性向"]
+  MOVEIN_PET:
+    patterns: ["ペット相談", "ペット可", "ペット飼育可"]
+    negative_patterns: ["ペット不可", "ペット相談不可"]
+  MOVEIN_INSTRUMENT:
+    patterns: ["楽器相談", "楽器可", "楽器演奏可"]
+    negative_patterns: ["楽器不可"]
+  MOVEIN_OFFICE_USE:
+    patterns: ["事務所利用可", "事務所可", "sohoo可", "soho可"]
+  MOVEIN_ROOMSHARE:
+    patterns: ["ルームシェア可", "ルームシェア相談", "二人入居可", "2人入居可", "二人入居相談"]
+  MOVEIN_SENIOR:
+    patterns: ["高齢者歓迎", "高齢者相談", "シニア歓迎"]
+  MOVEIN_LGBT:
+    patterns: ["lgbt", "同性カップル可"]
+  MOVEIN_CUSTOMIZE:
+    patterns: ["カスタマイズ可", "カスタマイズ賃貸"]
+  MOVEIN_DIY:
+    patterns: ["diy可", "diy相談"]
+  MOVEIN_NO_FIXED_TERM:
+    patterns: ["普通借家"]
+    negative_patterns: ["定期借家"]
+
+  # ---- 物件特性 ----
+  FEAT_RENOVATED:
+    patterns: ["リノベーション", "リノベ済", "フルリノベ"]
+  FEAT_DESIGNER:
+    patterns: ["デザイナーズ"]
+  FEAT_SUBLEASE:
+    patterns: ["分譲賃貸", "分譲マンション賃貸"]
+  FEAT_TOWER:
+    patterns: ["タワーマンション", "タワマン", "超高層"]
+  FEAT_IT_CONTRACT:
+    patterns: ["it重説", "オンライン重説", "it重要事項説明"]
+  FEAT_ONLINE_CONSULT:
+    patterns: ["オンライン相談", "オンライン内見", "リモート内見"]
+
+# ------------------------------------------------------------
+# 売買ブロック（Phase 6 で追加する）
+# 証明書・性能評価系（既存不適合、住宅性能評価、フラット35適合 等）は
+# 賃貸と語彙体系が別のためここに分ける。賃貸辞書には手を入れない
+# ------------------------------------------------------------
+buy: {}
