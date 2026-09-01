@@ -1,47 +1,84 @@
-# 物件検索通知システム 要件定義書
+# 物件検索通知システム v2 要件定義書
 
-**作成日**: 2026-06-16  
-**言語/スタック**: Go / PostgreSQL / Discord Webhook
+**作成日**: 2026-06-16（v1）/ **v2改訂**: 2026-09-01
+**言語/スタック**: Python 3.12+ / PostgreSQL 18 / Discord Webhook
 
-最終更新: 2026-07-10（project-scaffold雛形への整理。docs/詳細設計書・docs/課題管理表.mdを新設し、調査資料と未解決課題を本書から切り出した）
+> **本書の状態**: Phase 0（土台）完了時点の骨子。
+> Phase 1 以降で確定した仕様を各Phase完了時に本書へ反映していく。
+> 移行の全体像・Phase構成・未確定事項は [`再設計計画.md`](./再設計計画.md) を参照。
+> **未確定の節には「Phase N で確定」と明記している。**
 
 ---
 
 ## 1. システム概要
 
-指定した検索条件に合致する物件を日本の不動産サイトから自動取得し、新着・成約・価格変動をDiscordへ通知するシステム。
+指定した条件に合致する物件を日本の不動産サイトから自動取得し、
+**MUST（未充足なら除外）＋ WANT（重み付き加点）のスコアでランク付けして**
+Discordへ通知するシステム。
+
+### 1.1 v1 からの本質的な変更
+
+| 観点 | v1（Go） | v2（Python） |
+|---|---|---|
+| 条件モデル | 全条件AND絞り込み | MUST＋WANTのスコアリング |
+| 絞り込み位置 | サイトの検索フォーム | **エリア・種別・価格上限のみサイト側。判定と採点はローカル** |
+| 設備条件 | サイトのURLパラメータ（10サイト中6サイトが非対応で素通り） | 詳細ページ本文からの辞書マッチング（全サイト同一の判定器） |
+| 通知 | 新着・成約・価格変動 | 左記＋日次ランキングダイジェスト |
+| 名寄せ | 将来課題 | 本体要件（グループ単位で重複抑制） |
+| 対象種別 | 賃貸のみ実装 | 賃貸＋売買4種別（Phase 6〜8） |
+
+**この転換はランキング導入と論理的に不可分**である。WANT条件（オートロック無しでも
+減点で残ってほしい）をサイト側フィルタに渡すと、対応サイトでは物件が除外されて
+順位に現れず、非対応サイトでは素通りする。→ ADR 0003
+
+v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全している。
 
 ---
 
 ## 2. 対応サイト
 
-| サイトコード | サイト名 | スクレイピング方式 |
-|---|---|---|
-| SUUMO | SUUMO | HTTP + goquery |
-| HOMES | LIFULL HOME'S | HTTP + goquery |
-| ATHOME | athome | HTTP + goquery |
-| GOO | goo不動産 | HTTP + goquery |
-| EHEYA | いい部屋ネット | Playwright (go-rod) |
-| ABLE | エイブル | HTTP + goquery |
-| MINIMINI | minimini | HTTP + goquery |
-| NIFTY | ニフティ不動産 | Playwright (go-rod) |
-| APAMAN | アパマンショップ | Playwright (go-rod) |
-| SMOCCA | スモッカ | Playwright (go-rod) |
+`m_sites` が正典。実データは [`db/seed/02_sites.sql`](../db/seed/02_sites.sql)。
 
-> LIFULL HOME'S と ホームズは同一サイト (HOMES)。合計 10 サイト。  
-> go-rod 利用サイトは Chrome のインストールが前提。
+| サイトコード | サイト名 | 取得方式 | 状態 |
+|---|---|---|---|
+| SUUMO | SUUMO | HTTP | 有効 |
+| HOMES | LIFULL HOME'S | HTTP | 有効 |
+| ATHOME | アットホーム | **Playwright** | 有効 |
+| NIFTY | ニフティ不動産 | Playwright | 有効 |
+| GOO | goo不動産 | HTTP | 有効 |
+| CHINTAI_EX | 賃貸EX | HTTP | **Phase 2 で base_url 確定後に有効化** |
+| ABLE | エイブル | HTTP | 有効（市区指定必須） |
+| MINIMINI | minimini | HTTP | 有効 |
+| APAMAN | アパマンショップ | Playwright | 有効 |
+| EHEYA | いい部屋ネット | Playwright | 有効 |
+| SMOCCA | スモッカ | Playwright | 有効（市区指定必須） |
+| SHAMAISON | シャーメゾン | — | 無効（v1から未実装。自社物件のみのため対象外） |
+
+- **賃貸のスクレイピング対象は11サイト**（SHAMAISON を除く）。マスタ行数は12。
+- **Playwright 必須は ATHOME / EHEYA / NIFTY / APAMAN / SMOCCA の5サイト。**
+  v1 の本書は ATHOME を「HTTP + goquery」と記載していたが誤り
+  （`cmd/main.go:82` で go-rod を使っていた）。Phase 3 で HTTP 降格可否を再検証する。
+- Playwright 利用サイトはブラウザのインストール（`playwright install chromium`）が前提。
 
 ---
 
 ## 3. 対応物件種別
 
-| コード | 名称 |
-|---|---|
-| CHINTAI | 賃貸 |
-| SHINCHIKU_MANSION | 新築マンション |
-| CHUKO_MANSION | 中古マンション |
-| SHINCHIKU_KODATE | 新築一戸建て |
-| CHUKO_KODATE | 中古一戸建て |
+| コード | 名称 | ファミリ |
+|---|---|---|
+| CHINTAI | 賃貸 | CHINTAI |
+| SHINCHIKU_MANSION | 新築マンション | MANSION_BUY |
+| CHUKO_MANSION | 中古マンション | MANSION_BUY |
+| SHINCHIKU_KODATE | 新築一戸建て | KODATE_BUY |
+| CHUKO_KODATE | 中古一戸建て | KODATE_BUY |
+
+**ファミリ**は metric体系・dedup_key の構成要素・YAMLスキーマの分岐単位。
+新築/中古の差は築年数・価格未定・リノベ関連の数項目だけなので、5種別を5クラスに割らない。
+
+### 3.1 サイト×種別の実装対象
+
+実装対象は 55セル中 **31セル**（賃貸11サイト ＋ 売買4種別×5サイト）。
+詳細マトリクスは [`再設計計画.md` §11.1](./再設計計画.md)。
 
 ---
 
@@ -49,336 +86,411 @@
 
 ### 4.1 プロセスモデル
 
-- **毎回起動 → 実行 → 終了**モデル（常駐プロセスではない）
-- Windows タスクスケジューラーによる定期実行・クラッシュ時自動再起動
+毎回起動 → 実行 → 終了。Windows タスクスケジューラーで定期実行（常駐しない）。
 
-### 4.2 CLI フラグ
+### 4.2 CLI
 
-| フラグ | 動作 |
-|---|---|
-| (なし) | 通常実行 — 各サイト最新1ページのみスクレイプ |
-| `--full-scan` | 全量スキャン — 各サイト最大 `FULL_SCAN_MAX_PAGES` ページ |
-| `--check-sold` | 成約確認 — DB内の全アクティブ物件の詳細URLへ直接アクセスして成約/削除を確認 |
+エントリポイント: `house-search`（`uv run house-search ...`）
 
-### 4.3 推奨タスクスケジューラー設定
-
-| タスク | コマンド | 頻度 |
+| コマンド | 動作 | 実装 |
 |---|---|---|
-| 通常スクレイプ | `house-notifier.exe` | 毎時 |
-| 成約確認 | `house-notifier.exe --check-sold` | 1日1回（例: 毎朝9時） |
-| 初回 / 手動 | `house-notifier.exe --full-scan` | 手動 |
+| `db-seed` | マスタデータ（`db/seed/*.sql`）を投入する。`--test-db` でテストDBへ | ✅ Phase 0 |
+| `validate-config` | 検索パターンYAMLと `webhook_ref` の参照を検証する | ✅ Phase 0 |
+| `scan` | 一覧取得 → MUST判定 → 詳細 → 抽出 → スコア → 通知 | Phase 1 |
+| `scan --seed` | **シードモード**。通知を送らず記録だけ行う | Phase 1 |
+| `scan --full` | 全量スキャン（`m_sites.max_pages_per_run` まで） | Phase 1 |
+| `check-sold` | 成約/掲載終了の確認 | Phase 1 |
+| `digest` | 日次ランキングダイジェストの送信 | Phase 1 |
+| `rescore` | DB内の物件属性から再採点（ネットワーク不要） | Phase 1 |
+| `sync-dict` | `data/feature_dictionary.yaml` → `m_condition_synonyms` | Phase 1 |
+| `re-extract` | `raw_features_text` から全件再抽出 | Phase 1 |
+| `report-unknown` | 辞書未登録の表記を出現回数順に一覧 | Phase 1 |
+| `coverage` | サイト別の設備抽出数分布・数値カラム非NULL率の実測 | Phase 2 |
+
+未実装コマンドは呼ばれると「どのPhaseで実装するか」を告げて終了コード 2 で終わる
+（黙って何もしないと「実装済みだが未配線」を見逃すため）。
+
+### 4.3 シードモード
+
+**初回全件取得を通知なしの記録専用モードで走らせる**ことで、旧通知履歴を捨てても
+「再掲載が全部新着として再通知される」問題が構造的に発生しなくなる。
+パターン新規追加時・長期停止からの再開時にも使う汎用機能。→ ADR 0006
+
+### 4.4 タスクスケジューラー構成
+
+**Phase 5 で確定・登録する。** 予定は毎時スキャン／毎日9:00成約確認／
+毎日20:00ダイジェスト／毎日3:30 pg_dump の4本。
 
 ---
 
-## 5. 検索パターン設定（YAML）
+## 5. 検索パターン設定（YAML v2）
 
 ### 5.1 ファイル配置
 
-- デフォルト: 実行ファイルと同じディレクトリの `configs/*.yaml`
-- 環境変数 `CONFIGS_DIR` でパスをオーバーライド可能
-- 複数 YAML ファイルを直列実行
+- 既定: リポジトリ直下の `configs/*.yaml`（環境変数 `CONFIGS_DIR` で変更可）
+- 雛形: [`configs/example_chintai_v2.yaml`](../configs/example_chintai_v2.yaml)
+- v1形式の設定は `configs/_v1/` へ退避してある（**Phase 1 で v2 形式へ変換する**）
 
-### 5.2 YAML スキーマ
+### 5.2 スキーマ
+
+型定義は `src/house_search/config/pattern.py`。`property_type` を discriminator にした
+discriminated union で3ファミリへ分岐する。未知のキーはエラーにする（綴り間違いを黙って無視しない）。
 
 ```yaml
-name: "東京1LDK賃貸"              # パターン名（DB・通知ログで使用）
-property_type: "CHINTAI"          # 物件種別コード
-site_ids:                         # スクレイプ対象サイト
-  - "SUUMO"
-  - "HOMES"
-  - "ATHOME"
-discord_webhook: "https://discord.com/api/webhooks/xxx/yyy"
-conditions:
-  area:
-    prefectures: ["東京都"]
-    cities: []                    # 区市町村（空=都道府県全体）
-                                  # 値は cities テーブルの canonical_name を指定
-                                  # 例: ["新宿区", "横浜市西区", "大阪市北区"]
-                                  # 政令指定都市の区は「横浜市西区」のように市名を prefix
-    stations: []                  # 最寄り駅名
-    walk_minutes_max: 10          # 徒歩分数上限
-  price:
-    rent_max: 200000              # 賃料上限（円）
-    price_max:                    # 売買価格上限（円）
-    include_mgmt_fee: true        # 管理費込みで上限判定
-    no_reikin: false              # 礼金なし限定
-    no_shikikin: false            # 敷金なし限定
-  building:
-    layouts: ["1LDK", "2K", "2DK"]
-    area_min: 40.0                # 面積下限（㎡）
-    area_max:                     # 面積上限（㎡）
-    age_max: 15                   # 築年数上限
-    floor_min:                    # 階数下限
-  features:                       # 設備・条件コード
-    - MOVEIN_PET
-    - SEC_AUTOLOCK
-    - BATH_SEPARATE
+name: "東京賃貸一人暮らし"
+property_type: "CHINTAI"
+webhook_ref: "CHINTAI_ALONE"       # .env の DISCORD_WEBHOOK_CHINTAI_ALONE を参照
+sites: [SUUMO, HOMES, ATHOME, GOO, ABLE, MINIMINI, EHEYA, NIFTY, APAMAN, SMOCCA]
+
+search:                             # サイト側へ渡す唯一の条件
+  prefectures: ["東京都", "千葉県", "埼玉県", "神奈川県"]
+  cities: []                        # 空ならABLE/SMOCCAは都道府県内全市区へ自動展開
+  price_max_hint: 90000             # MUST上限の2〜3割増し（管理費別計上サイト対策のバッファ）
+
+must:                               # 未充足なら除外
+  rent_total_max: 70000
+  layouts: ["1LDK", "2K", "2DK", "2LDK", "3LDK"]
+  area_min: 30.0
+  walk_minutes_max: 20
+  features: []
+  unknown_policy: keep              # 判定不能なMUSTを keep=通す / drop=除外
+
+want:
+  features:                         # 該当なら weight 満点を加点
+    - { code: INT_LAUNDRY,   weight: 10 }
+    - { code: BATH_SEPARATE, weight: 9 }
+  numeric:                          # best〜worst で線形正規化
+    - { metric: rent_total, weight: 10, best: 50000, worst: 70000 }
+    - { metric: area_sqm,   weight: 6,  best: 45,    worst: 30 }
+
+ranking:
+  top_n: 15
+  digest_group: null                # 同一グループをダイジェストに並記（スコアは混ぜない）
 ```
+
+### 5.3 種別ごとに使える metric
+
+レジストリは `src/house_search/config/metrics.py`。
+YAMLは読み込み時にこのレジストリと突き合わせて検証される。
+
+| metric | 方向 | 賃貸 | 新築M | 中古M | 新築K | 中古K |
+|---|---|:---:|:---:|:---:|:---:|:---:|
+| `rent_total`（賃料＋管理費） | 低いほど良 | ○ | - | - | - | - |
+| `price` | 低いほど良 | - | ○ | ○ | ○ | ○ |
+| `monthly_cost`（管理費+修繕積立金） | 低いほど良 | - | ○ | ○ | - | - |
+| `area_sqm`（専有面積） | 高いほど良 | ○ | ○ | ○ | - | - |
+| `building_area_sqm` | 高いほど良 | - | - | - | ○ | ○ |
+| `land_area_sqm` | 高いほど良 | - | - | - | ○ | ○ |
+| `age_years` | 低いほど良 | ○ | - | ○ | - | ○ |
+| `walk_minutes` | 低いほど良 | ○ | ○ | ○ | ○ | ○ |
+
+- **戸建てに `area_sqm` を流用しない。** 専有面積が存在せず土地面積・建物面積の2軸になるため
+- **坪単価・㎡単価は metric にしない。** price と area に既に weight を配れる以上、
+  二重に重みが掛かって解釈が濁る（`price_per_sqm` は表示用の派生カラムとしてのみ保持）
+
+### 5.4 MUST判定の3値化
+
+MUST判定は `pass` / `fail` / `unknown` の3値。**詳細ページの取得をスキップするのは `fail` のみ。**
+一覧ページだけで判定できない項目（`monthly_cost_max` / `floor_min` / `features`）は
+レジストリの `available_on_list=False` で明示している。
 
 ---
 
-## 6. 通知仕様
+## 6. スコアリング
 
-### 6.1 通知タイプ
+**Phase 1 で実装・確定する。** モデルは [`再設計計画.md` §4](./再設計計画.md) に確定済み。
+
+- 正規化: `s = clamp((worst - x) / (worst - best), 0, 1)`
+- 合計: `score = 100 × Σ(wᵢ × sᵢ) / Σ(wᵢ)` の0〜100点
+- **欠損metricは分子・分母の双方から除外して再正規化**し、内訳に `"missing": true` を記録
+- WANTの判定不能は0点＋「未確認」表示。中間値補完はしない
+- 決定性: 条件コード順にソートしてから加算する
+- 内訳は `t_property_scores.score_breakdown`(JSONB) に全項目を保存する
+- **WANTの重み初期値と数値条件の best/worst はユーザー確認事項**（再設計計画 §15）
+
+### 6.1 再スコアリング
+
+スコアは「DB保存済みの物件属性＋抽出済みfeatures」からの純関数のため、
+再計算はネットワーク不要のDBバッチになる。YAMLのスコア関連部分（`property_type` と `want`）の
+SHA256 を `config_hash` として保存し、不一致なら自動再スコアする。
+検索範囲や通知先の変更ではハッシュは変わらない。
+
+---
+
+## 7. 設備情報のローカル抽出
+
+**Phase 1 で実装する。**
+
+1. **原文保存**: 詳細ページの設備ブロックを**テキストのまま** `t_properties.raw_features_text` へ
+   （詳細HTML全体は保存しない）
+2. **辞書マッチング**: NFKC正規化 → 小文字化 → トークン化 → 辞書照合 → `t_property_features` 生成
+
+原文保存が要。辞書を改善したら再スクレイピングせずDB内の原文から全件再抽出できる（`re-extract`）。
+
+辞書は **Git管理YAML（`data/feature_dictionary.yaml`）が正 → `sync-dict` で `m_condition_synonyms` へ同期**。
+賃貸ブロックと売買ブロックの2部構成にする（証明書・性能評価系の語彙は賃貸と別体系のため）。
+
+マッチしなかったトークンは `t_unknown_tokens` へ記録し、`report-unknown` → 辞書追記 →
+`sync-dict` → `re-extract` で反映する運用ループを回す。
+
+---
+
+## 8. クロスサイト名寄せ
+
+**Phase 4 で実装する。** 設計は [`再設計計画.md` §6](./再設計計画.md)。
+
+- **キー**: ファミリ識別子＋正規化住所＋種別ごとの構成要素 の SHA256（`dedup_key`）
+  - 賃貸/マンション: 住所＋間取り＋専有面積＋階数
+  - 戸建て: 住所＋土地面積＋建物面積＋間取り
+- **完全一致のみ自動グループ化。** 曖昧一致は候補フラグ止まり
+- **建物名はキーに含めない**（賃貸では非公開・伏字が多く偽陰性の主因）
+- **代表選定**: 月額/価格が最安 → 設備抽出数が最多 → サイト優先順（`m_sites.representative_priority`）
+- スコアはグループ内の抽出情報の和集合で計算する
+
+---
+
+## 9. 通知仕様
+
+**Phase 1 で実装・確定する。**
 
 | タイプ | トリガー | Discord Embed カラー |
 |---|---|---|
-| `new` | 新着物件を初めて検出、または再掲載 | 🟢 緑 (#57F287) |
+| `new` | 新着物件を初めて検出、または再掲載（グループ単位で重複抑制） | 🟢 緑 (#57F287) |
 | `sold` | 詳細URLが成約/削除ページに遷移 | 🔴 赤 (#ED4245) |
-| `price_down` | 前回価格より1円以上値下がり | 🔵 青 (#5865F2) |
-| `price_up` | 前回価格より1円以上値上がり | 🟡 黄 (#FEE75C) |
+| `price_down` | 前回価格より値下がり | 🔵 青 (#5865F2) |
+| `price_up` | 前回価格より値上がり | 🟡 黄 (#FEE75C) |
+| `cheaper_listing` | 同一物件の他サイトで代表より安い掲載 | 未定 |
+| ランキングダイジェスト | 日次 | 1メッセージにスコア上位N件 |
 
-### 6.2 通知フォーマット
-
-- Discord **Rich Embed**、**1件ずつ個別送信**
-- Embed 内容: タイトル、価格（変動時は変動額も）、間取り、面積、住所、最寄り駅、築年数、サムネイル画像、物件URL
-
-### 6.3 重複通知防止ルール
-
-- **`new`**: 初回登録時、または `removed`/`sold` → `active` に再掲載された時のみ通知
-- **`sold`**: 同パターン・同物件で `sold` 通知済みであればスキップ
-- **`price_up`/`price_down`**: 直近の同タイプ通知の `price_at_notify` と現在価格が同じであればスキップ（価格が変わるたびに通知）
-
-### 6.4 送信レート制限
-
-- 送信間隔: **2秒/件**
-- 1ポーリングの通知件数上限: **なし**
-
-### 6.5 チャンネル構成
-
-| 用途 | 設定箇所 |
-|---|---|
-| 各検索パターンの通知 | YAML の `discord_webhook` |
-| グローバルエラー通知 | `.env` の `ERROR_DISCORD_WEBHOOK` |
+- 即時通知はスコア・パターン内順位・得点上位3項目・未確認項目数を載せる
+- Discord制約: description 4096字/1embed、6000字/1メッセージ、10embed/1メッセージ
+- **種別横断ランキングは作らない。** 正規化基準が異なるスコアを混ぜると数字が意味を失う。
+  「中古Mと中古Kを並べて見たい」は `digest_group` によるセクション並記で応える
+- 送信間隔・件数上限は Phase 1 で確定（v1 は2秒/件・上限なし）
+- エラー通知は `.env` の `DISCORD_WEBHOOK_ERRORS`
 
 ---
 
-## 7. 物件ステータス管理
+## 10. 物件ステータス管理
 
 | ステータス | 意味 | 遷移条件 |
 |---|---|---|
 | `active` | 掲載中 | 初回取得時・再掲載時 |
-| `sold` | 成約済み | `--check-sold` で成約ページ検出 |
-| `removed` | 掲載終了 | `--check-sold` で404/削除ページ検出 |
+| `sold` | 成約済み | `check-sold` で成約ページ検出 |
+| `removed` | 掲載終了 | `check-sold` で404/削除ページ検出 |
 
-**再掲載処理**: `sold`/`removed` の物件がスクレイピングで再び取得 → `active` に戻し `new` 通知
+**再掲載処理**: `sold`/`removed` の物件が再取得されたら `active` に戻し `new` 通知。
 
 ---
 
-## 8. データベース
+## 11. データベース
 
-### 8.1 DB 構成
+DB名は `searching_for_houses`、テストDBは `searching_for_houses_test`。
+DDLは Alembic（`migrations/`）、マスタデータは `db/seed/*.sql`（冪等）。
 
-| ファイル | 内容 |
+### 11.1 テーブル一覧（マスタ8＋トランザクション9）
+
+| テーブル | 内容 |
 |---|---|
-| `db/01_schema.sql` | マスタテーブル（物件種別・サイト・条件等） |
-| `db/02_master_data.sql` | マスタデータ（10サイト・5物件種別・128条件等） |
-| `db/03_app_tables.sql` | アプリテーブル（properties・notifications・scrape_logs） |
-| `db/04_cities.sql` | 市区町村テーブル（cities・city_site_mappings） |
-| `db/05_city_data.sql` | 市区町村マスタデータ（全国主要都市の区情報） |
-| `db/06_site_mappings.sql` | サイト別URLマッピングデータ（city_site_mappings 行データ） |
+| `m_property_types` | 物件種別（5種別・ファミリ付き） |
+| `m_sites` | サイト（12行。取得方式・レート制御・代表選定優先順） |
+| `m_condition_categories` | 条件カテゴリ（19。売買用に CERT・LAND を追加） |
+| `m_conditions` | 条件（148。`is_extractable` でローカル抽出対象かを持つ） |
+| `m_condition_property_types` | 条件×物件種別（487行） |
+| `m_condition_synonyms` | **設備抽出辞書**（条件コード → 表記パターン） |
+| `m_cities` | 市区町村（947行。`canonical_name` がYAML指定値の正典） |
+| `m_city_site_values` | 市区町村×サイトの検索値（**縦持ち**・1181行） |
+| `t_properties` | 物件（1行=1サイト掲載） |
+| `t_property_features` | 設備・特性の抽出結果 |
+| `t_property_scores` | パターン別スコア（内訳JSONB・`config_hash`） |
+| `t_property_groups` | クロスサイト名寄せグループ |
+| `t_notifications` | 個別通知の送信履歴（追記専用） |
+| `t_ranking_digests` | ダイジェスト送信履歴（追記専用） |
+| `t_scrape_runs` | 実行チェックポイント（中断・再開用） |
+| `t_scrape_logs` | 実行ログ（全件永久保持・追記専用） |
+| `t_unknown_tokens` | 辞書未登録の設備表記 |
 
-### 8.2 主要テーブル
+DB規約準拠: `m_`/`t_` 接頭辞、全テーブル・全カラムに日本語コメント、
+監査カラム（`created_at`/`updated_at`）を最終列。
+いずれも `tests/test_schema_conventions.py` の回帰テストで担保している。
 
-#### properties
+v1 の11テーブルは pg_dump アーカイブ（`F:\backups\searching-for-houses-legacy\db_20260901.dump`）
+の後に drop 済み。旧データは移行していない（→ ADR 0006）。
 
-| カラム | 型 | 説明 |
+### 11.2 `m_city_site_values`（縦持ち）
+
+v1 はサイトごとに列を持つワイドテーブルだった（ADR 0001）が、賃貸EX追加で
+「サイトを増やすたびに DDL 変更（監査カラム末尾維持のためテーブル再作成）が要る」問題が
+顕在化したため縦持ちへ転換した（→ ADR 0009）。以後のサイト追加は行の挿入だけで済む。
+
+**行が存在しない = そのサイトでは当該市区の検索値が未登録 → 都道府県レベル検索へフォールバック。**
+
+サイトごとの値のフォーマット（**実データで確認して v1 の記述を訂正**）:
+
+| サイト | 値の種類 | 例 |
 |---|---|---|
-| `external_id` | VARCHAR(500) | サイト固有の物件ID |
-| `price` | BIGINT | 現在価格（円） |
-| `price_prev` | BIGINT | 価格変動前の価格 |
-| `address_hash` | VARCHAR(64) | SHA256（将来の重複検知用、現時点は未使用） |
-| `status` | VARCHAR(20) | active / sold / removed |
-| `last_seen_at` | TIMESTAMPTZ | 最終スクレイプ確認日時 |
+| SUUMO | パスセグメント | `sc_chiyoda` |
+| HOMES | スラグ | `tokyo/chiyoda-city` |
+| NIFTY | スラグ | `tokyo/chiyoda` |
+| MINIMINI | スラグ | `chiyodaku` |
+| ATHOME / GOO / ABLE / APAMAN / **EHEYA** / **SMOCCA** | JIS5桁コード | `13101` |
 
-#### notifications
+> v1 の本書は EHEYA・SMOCCA を「URLスラグ」、MINIMINI を「JIS5桁コード」と記載していたが
+> いずれも誤り。上表が実データに基づく正しい対応。
 
-UNIQUE 制約なし。重複防止はアプリケーションコードで制御。
+### 11.3 `t_properties` の主要カラム
 
-| カラム | 型 | 説明 |
-|---|---|---|
-| `notification_type` | VARCHAR(20) | new / sold / price_up / price_down |
-| `price_at_notify` | BIGINT | 通知時の価格（重複チェック用） |
+metric・MUST判定の入力になる数値は型付き列、正規化が未確立の文字列系は JSONB
+（`type_specific_attrs`）に置くハイブリッド方式。
 
-#### scrape_logs
+| カラム | 用途 |
+|---|---|
+| `price` / `price_prev` | 現在価格・直前価格（円）。賃貸=月額賃料、売買=物件価格 |
+| `price_min` / `price_max` | 価格レンジ（新築の棟単位掲載） |
+| `mgmt_fee_monthly` | 管理費・共益費（円/月）。賃貸・マンション売買の双方 |
+| `repair_reserve_monthly` | 修繕積立金（円/月）。マンション売買 |
+| `rent_total` | **生成列**。`price + COALESCE(mgmt_fee_monthly, 0)`（`price` が NULL なら NULL） |
+| `area_sqm` / `land_area_sqm` / `building_area_sqm` | 専有面積 / 土地面積 / 建物面積（㎡） |
+| `raw_features_text` | 設備ブロック原文（再抽出の入力） |
+| `type_specific_attrs` | 接道・建ぺい率/容積率・権利形態・引渡時期・`price_undecided` 等 |
+| `dedup_key` / `group_id` | 名寄せ |
+| `detail_fetched_at` | 詳細取得済み判定。NULL が詳細取得キューになる |
 
-全件永久保持（自動削除なし）。
+### 11.4 新築物件の掲載粒度
 
-#### cities
+新築マンション・新築分譲戸建ては**1物件=1棟/1プロジェクト**で価格がレンジ表示になる。
 
-市区町村マスタ。YAML の `cities` フィールドに指定する名称の正規テーブル。
+- `price` にレンジ下限、`price_min`/`price_max` にレンジを入れる
+- 価格未定は `price NULL` ＋ `type_specific_attrs.price_undecided = true`
+- スコアはレンジ下限で計算し内訳に `"range": true` を記録。価格未定は price metric 欠損として再正規化
+- 通知は棟単位。住戸タイプ別の追跡はしない
 
-| カラム | 型 | 説明 |
-|---|---|---|
-| `id` | SERIAL PK | 内部ID |
-| `prefecture` | VARCHAR(20) | 都道府県名 |
-| `parent_city` | VARCHAR(50) | 政令指定都市名（例: 横浜市）。23区・市区の場合は NULL |
-| `city_name` | VARCHAR(50) | 区名・市名（例: 新宿区） |
-| `canonical_name` | VARCHAR(100) | YAML 指定用の正規名。同一都道府県内で一意。<br>政令市の区は「横浜市西区」のように市名を prefix |
-
-UNIQUE 制約: `(prefecture, canonical_name)`
-
-#### city_site_mappings
-
-city_id を主キーとするワイドテーブル。各サイトの URL 値を 1 行に格納。
-
-| カラム | 型 | 説明 |
-|---|---|---|
-| `city_id` | INTEGER PK (FK → cities.id) | 都市ID |
-| `suumo` | VARCHAR(100) | SUUMO の URL パスセグメント（例: `sc_shinjuku`） |
-| `homes` | VARCHAR(100) | HOMES の URL パスセグメント（例: `tokyo/shinjuku-city`） |
-| `athome` | VARCHAR(100) | athome の JIS 5桁コード（例: `13104`） |
-| `goo` | VARCHAR(100) | goo の JIS 5桁コード（例: `13104`） |
-| `able` | VARCHAR(100) | エイブルの JIS 5桁コード（例: `13104`） |
-| `minimini` | VARCHAR(100) | minimini の JIS 5桁コード（例: `13104`） |
-| `eheya` | VARCHAR(100) | いい部屋ネットの URL スラグ（例: `tokyo/shinjuku`） |
-| `nifty` | VARCHAR(100) | ニフティの URL スラグ（例: `tokyo/shinjuku`） |
-| `apaman` | VARCHAR(100) | アパマンの JIS 5桁コード（例: `13104`） |
-| `smocca` | VARCHAR(100) | スモッカの URL スラグ（例: `tokyo/shinjuku`） |
-
-NULL のカラムはそのサイトで当該市区のURL値が不明または非対応を意味し、都道府県レベル検索にフォールバックする。
-
-**サイト別URLパターン**
-
-| サイト | URL値の種類 | 使用箇所 |
-|---|---|---|
-| SUUMO | `sc_{ward}` スラグ | パスセグメント `/chintai/{slug}/` |
-| HOMES | `{pref}/{city}-city` スラグ | パスセグメント `/chintai/{slug}/` |
-| ATHOME | JIS 5桁コード | パスセグメント `/chintai/{code}/list/` |
-| GOO | JIS 5桁コード | クエリ `g=city&v={code}`（都道府県は `g=pref&v={code}`） |
-| ABLE | JIS 5桁コード | クエリ `city={code}` |
-| MINIMINI | JIS 5桁コード | クエリ `city={code}` |
-| EHEYA | `{pref}/{ward}` スラグ | パスセグメント `/chintai/{slug}/list/` |
-| NIFTY | `{pref}/{ward}` スラグ | パスセグメント `/rent/{slug}/list/` |
-| APAMAN | JIS 5桁コード | クエリ `city={code}` |
-| SMOCCA | `{pref}/{ward}` スラグ | パスセグメント `/chintai/{slug}/list/` |
-
-**対応済み都市（06_site_mappings.sql）**
-
-| 都道府県 | 対応区 | 対応サイト数 |
-|---|---|---|
-| 東京都 | 23区 | 10サイト（全サイト） |
-| 神奈川県 | 横浜市18区・川崎市7区・相模原市3区 | 9サイト（SUUMO除く） |
-| 大阪府 | 大阪市24区 | 9サイト（SUUMO除く） |
-| 埼玉県 | さいたま市10区 | 5サイト（HOMES/ATHOME/GOO/ABLE/MINIMINI） |
-| 千葉県 | 千葉市6区 | 5サイト |
-| 愛知県 | 名古屋市16区 | 5サイト |
-| 京都府 | 京都市11区 | 5サイト |
-| 北海道 | 札幌市10区 | 9サイト（SUUMO除く） |
-| 福岡県 | 福岡市7区 | 9サイト（SUUMO除く） |
-| 兵庫県 | 神戸市9区 | 5サイト |
-| 静岡県 | 静岡市3区・浜松市3区 | 5サイト |
-| 新潟県 | 新潟市8区 | 5サイト |
-
-> 滋賀県・宮崎県・長野県は政令指定都市なし。都道府県レベル検索のみ対応。
-
-### 8.3 セットアップコマンド
+### 11.5 セットアップ
 
 ```powershell
-.\db\setup.ps1
+.\scripts\setup_db.ps1
+uv run alembic upgrade head
+uv run alembic -x test=true upgrade head
+uv run house-search db-seed
+uv run house-search db-seed --test-db
 ```
+
+`scripts/setup_db.ps1` は `~/.claude/.env` の管理者資格情報を読んでロールとDBを冪等に作る。
 
 ---
 
-## 9. 環境変数（.env）
+## 12. 環境変数（.env）
 
 | キー | 必須 | 説明 |
 |---|---|---|
-| `DATABASE_URL` | ✅ | PostgreSQL 接続URL (`postgres://user:pass@host:port/dbname`) |
-| `ERROR_DISCORD_WEBHOOK` | ✅ | グローバルエラー通知チャンネルの Webhook URL |
-| `FULL_SCAN_MAX_PAGES` | — | `--full-scan` 時の最大ページ数（デフォルト: 5） |
-| `CONFIGS_DIR` | — | configs/ ディレクトリのパス（省略時: 実行ファイルと同じディレクトリ） |
+| `DATABASE_URL` | ✅ | 本番DB接続URL（`postgresql+psycopg://user:pass@host:port/dbname`） |
+| `DATABASE_TEST_URL` | — | テストDB接続URL。未設定時はDB統合テストをスキップ |
+| `DISCORD_WEBHOOK_ERRORS` | ✅ | グローバルエラー通知チャンネル |
+| `DISCORD_WEBHOOK_{論理名}` | ✅ | 検索パターンの `webhook_ref` が参照する通知先 |
+| `CONFIGS_DIR` | — | 検索パターンYAMLのディレクトリ |
+| `DATA_DIR` | — | 設備抽出辞書などGit管理データのディレクトリ |
+| `LOG_DIR` | — | 実行ログの出力先 |
+| `DEFAULT_MIN_INTERVAL_SEC` | — | サイト個別設定が無い場合のリクエスト間隔（秒） |
+| `REQUEST_TIMEOUT_SEC` | — | HTTPリクエストのタイムアウト（秒） |
+| `USER_AGENT` | — | スクレイピング時に名乗る User-Agent |
+
+- **Webhook URL は全て `.env` に集約する。** YAMLは `webhook_ref` で論理名を参照し、
+  未定義参照は `validate-config` と起動時バリデーションでエラーにする
+- 空値項目にインラインコメントを書かない（python-dotenv が `# コメント` を値として読む）
 
 ---
 
-## 10. エラーハンドリング
+## 13. レート制御・robots.txt
 
-- **1サイトがエラー**: 処理継続 + DB ログ記録 + グローバルエラーチャンネルへ通知
-- **YAML 読み込み失敗**: そのパターンをスキップ + グローバルエラーチャンネルへ通知
-- **Discord API 失敗**: DB ログ記録のみ（リトライなし）
+**Phase 1 で実装する。**
+
+- サイトごとに `m_sites.min_interval_sec`（既定2.5秒＋±30%ジッタ）・
+  `max_pages_per_run`・`daily_request_cap`
+- 429/5xx は指数バックオフ、連続失敗でサイト打ち切り＋エラー通知
+- robots.txt は起動時に取得し Disallow ならスキップ
 
 ---
 
-## 11. プロジェクト構成
+## 14. エラーハンドリング
+
+- **1サイトがエラー**: 処理継続 ＋ `t_scrape_logs` 記録 ＋ エラーチャンネルへ通知
+- **YAML 読み込み失敗**: そのパターンをスキップ ＋ エラーチャンネルへ通知
+- **Discord API 失敗**: `t_notifications.status='failed'` で記録（リトライは Phase 1 で判断）
+
+---
+
+## 15. プロジェクト構成
 
 ```
 f:\searching-for-houses\
-├── cmd/
-│   └── main.go
-├── internal/
+├── src/house_search/
+│   ├── cli.py                  # サブコマンド
 │   ├── config/
-│   │   ├── app.go
-│   │   └── search.go
+│   │   ├── settings.py         # .env 読み込み（pydantic-settings）
+│   │   ├── metrics.py          # MetricRegistry（metric・MUST項目の一元管理）
+│   │   └── pattern.py          # 検索パターンYAML v2 の型定義
 │   ├── db/
-│   │   ├── client.go
-│   │   ├── property_repo.go
-│   │   ├── notification_repo.go
-│   │   ├── log_repo.go
-│   │   └── city_repo.go
-│   ├── model/
-│   │   └── property.go
-│   ├── scraper/
-│   │   ├── interface.go
-│   │   ├── http_base.go
-│   │   ├── rod_base.go
-│   │   ├── suumo/scraper.go
-│   │   ├── homes/scraper.go
-│   │   ├── athome/scraper.go
-│   │   ├── goo/scraper.go
-│   │   ├── eheya/scraper.go        # Playwright
-│   │   ├── able/scraper.go
-│   │   ├── minimini/scraper.go
-│   │   ├── nifty/scraper.go        # Playwright
-│   │   ├── apaman/scraper.go       # Playwright
-│   │   └── smocca/scraper.go       # Playwright
-│   ├── notifier/
-│   │   └── discord.go
-│   └── runner/
-│       └── runner.go
-├── configs/
-│   └── example_chintai_tokyo.yaml
-├── db/
-│   ├── 01_schema.sql
-│   ├── 02_master_data.sql
-│   ├── 03_app_tables.sql
-│   ├── 04_cities.sql
-│   ├── 05_city_data.sql
-│   ├── 06_site_mappings.sql
-│   └── setup.ps1
+│   │   ├── base.py             # DeclarativeBase・監査カラムMixin
+│   │   ├── session.py          # エンジン・セッション
+│   │   ├── seed.py             # マスタデータ投入
+│   │   └── models/
+│   │       ├── masters.py      # m_* 8テーブル
+│   │       └── transactions.py # t_* 9テーブル
+│   ├── scrape/                 # Phase 1〜3
+│   ├── extract/                # Phase 1（設備抽出）
+│   ├── scoring/                # Phase 1（スコアリング）
+│   └── notify/                 # Phase 1（Discord）
+├── migrations/                 # Alembic
+├── db/seed/                    # マスタデータSQL（冪等）
+├── configs/                    # 検索パターンYAML
+├── data/                       # 設備抽出辞書（Phase 1）
+├── scripts/setup_db.ps1        # DB・ロール作成（冪等）
+├── tests/
+│   ├── test_metrics.py
+│   ├── test_pattern.py
+│   ├── test_settings.py
+│   ├── test_schema_conventions.py   # DB規約の回帰テスト
+│   └── fixtures/               # 実HTMLフィクスチャ（Phase 2〜）
 ├── docs/
-│   ├── requirements.md
-│   ├── 課題管理表.md
-│   └── 詳細設計書/
-│       ├── 01_検索条件マッピング設計.md
-│       └── 資料_サイト別検索条件一覧.md
-├── .env                    # Git管理外（.env.example を参照して作成）
-├── .env.example
-├── .gitignore
-├── go.mod
-└── go.sum
+├── alembic.ini                 # ASCIIのみ（cp932環境で落ちるため）
+├── pyproject.toml
+└── .env / .env.example
 ```
 
 ---
 
-## 12. 依存ライブラリ
+## 16. 依存ライブラリ
 
 | ライブラリ | 用途 |
 |---|---|
-| `github.com/jackc/pgx/v5` | PostgreSQL ドライバー |
-| `github.com/PuerkitoBio/goquery` | HTML パース |
-| `github.com/go-rod/rod` | ブラウザ自動化（Playwright相当） |
-| `gopkg.in/yaml.v3` | YAML 設定ファイル読み込み |
-| `github.com/joho/godotenv` | .env ファイルロード |
+| `sqlalchemy` 2.x | ORM・スキーマ定義 |
+| `alembic` | マイグレーション |
+| `psycopg[binary]` 3.x | PostgreSQL ドライバー |
+| `pydantic` / `pydantic-settings` | 設定・YAMLスキーマ検証 |
+| `httpx` | HTTP取得 |
+| `lxml` | HTMLパース |
+| `playwright` | ブラウザ自動化（5サイト） |
+| `pyyaml` | YAML読み込み |
+| 開発: `pytest` / `pytest-cov` / `ruff` | テスト・lint |
+
+パッケージ管理は `uv`（`uv sync` / `uv run`）。
 
 ---
 
-## 13. 将来の拡張予定
+## 17. テスト方針
 
-- **クロスサイト重複検知**: `address_hash` を使って異なるサイトの同一物件を名寄せし、最初の1回のみ通知
+- **HTMLフィクスチャ方式**: 各サイトの一覧・詳細ページの実HTMLを `tests/fixtures/{site}/` に保存し、
+  パーサ・抽出・スコアリングをネットワークなしでユニットテストする（Phase 2〜）
+- **DB統合テスト**は `DATABASE_TEST_URL` 設定時のみ実行（未設定ならスキップ）
+- **DB規約の回帰テスト**: 列順・コメント・テーブル集合を `information_schema` / `pg_description` で固定
+- **実データ充足率の実測**（`coverage` コマンド）を各Phaseの完了条件に組み込み、
+  「実装済みだが未配線」を防ぐ
 
 ---
 
-## 14. 参考
+## 18. 参考
 
-- 各サイトの検索条件対応状況・スクレイパー実装方針の詳細 → `docs/詳細設計書/01_検索条件マッピング設計.md`
-- 未解決の課題・残作業一覧 → `docs/課題管理表.md`
+- 移行の全体像・Phase構成・リスク → [`再設計計画.md`](./再設計計画.md)
+- 設計判断の記録 → [`adr/`](./adr/)
+- 未解決の課題 → [`課題管理表.md`](./課題管理表.md)
+- サイト別の検索フォーム調査資料 → [`詳細設計書/資料_サイト別検索条件一覧.md`](./詳細設計書/資料_サイト別検索条件一覧.md)
