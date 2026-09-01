@@ -189,8 +189,74 @@ def test_config_hashはPYTHONHASHSEEDに依存しない() -> None:
 
 
 def test_同梱の雛形YAMLが読める() -> None:
-    pattern = load_pattern_file(REPO_ROOT / "configs" / "example_chintai_v2.yaml")
+    pattern = load_pattern_file(REPO_ROOT / "configs" / "examples" / "chintai_v2.yaml")
     assert isinstance(pattern, ChintaiPattern)
     assert pattern.webhook_ref == "CHINTAI_ALONE"
     assert len(pattern.want.features) == 8
     assert len(pattern.want.numeric) == 4
+
+
+def test_実運用の検索パターンが読める() -> None:
+    """v1 から変換した chintai_alone.yaml が v2 スキーマを満たすこと（課題#9）。"""
+    pattern = load_pattern_file(REPO_ROOT / "configs" / "chintai_alone.yaml")
+    assert pattern.property_type == "CHINTAI"
+    assert pattern.webhook_ref == "CHINTAI_ALONE"
+    # RC / SRC は排他なので any_of で1項目にまとめてある
+    any_of_items = [f for f in pattern.want.features if f.any_of]
+    assert [f.codes for f in any_of_items] == [("STRUCT_RC", "STRUCT_SRC")]
+
+
+def test_codeとany_ofの同時指定はエラーになる() -> None:
+    with pytest.raises(ValidationError, match="code か any_of"):
+        parse_pattern(
+            _chintai(want={"features": [{"code": "A", "any_of": ["B", "C"], "weight": 1}]})
+        )
+
+
+def test_codeもany_ofも無いとエラーになる() -> None:
+    with pytest.raises(ValidationError, match="code か any_of"):
+        parse_pattern(_chintai(want={"features": [{"weight": 1}]}))
+
+
+def test_any_ofが1件だけならエラーになる() -> None:
+    with pytest.raises(ValidationError, match="2つ以上"):
+        parse_pattern(_chintai(want={"features": [{"any_of": ["STRUCT_RC"], "weight": 1}]}))
+
+
+def test_any_of内の条件コードも重複検査の対象になる() -> None:
+    with pytest.raises(ValidationError, match="重複"):
+        parse_pattern(
+            _chintai(
+                want={
+                    "features": [
+                        {"code": "STRUCT_RC", "weight": 1},
+                        {"any_of": ["STRUCT_RC", "STRUCT_SRC"], "weight": 1},
+                    ]
+                }
+            )
+        )
+
+
+def test_any_ofのキーは条件コードの昇順で安定する() -> None:
+    pattern = parse_pattern(
+        _chintai(want={"features": [{"any_of": ["STRUCT_SRC", "STRUCT_RC"], "weight": 1}]})
+    )
+    assert pattern.want.features[0].key == "STRUCT_RC|STRUCT_SRC"
+
+
+def test_config_hashはany_ofの記法を区別する() -> None:
+    merged = parse_pattern(
+        _chintai(want={"features": [{"any_of": ["STRUCT_RC", "STRUCT_SRC"], "weight": 6}]})
+    )
+    split = parse_pattern(
+        _chintai(
+            want={
+                "features": [
+                    {"code": "STRUCT_RC", "weight": 6},
+                    {"code": "STRUCT_SRC", "weight": 6},
+                ]
+            }
+        )
+    )
+    # スコアの出方が変わる以上、自動再スコアが走るようハッシュも変わるべき
+    assert merged.config_hash() != split.config_hash()

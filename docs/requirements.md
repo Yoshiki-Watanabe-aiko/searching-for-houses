@@ -3,8 +3,8 @@
 **作成日**: 2026-06-16（v1）/ **v2改訂**: 2026-09-01
 **言語/スタック**: Python 3.12+ / PostgreSQL 18 / Discord Webhook
 
-> **本書の状態**: Phase 0（土台）完了時点の骨子。
-> Phase 1 以降で確定した仕様を各Phase完了時に本書へ反映していく。
+> **本書の状態**: Phase 1（賃貸SUUMOの縦切り）完了時点。
+> Phase 2 以降で確定した仕様を各Phase完了時に本書へ反映していく。
 > 移行の全体像・Phase構成・未確定事項は [`再設計計画.md`](./再設計計画.md) を参照。
 > **未確定の節には「Phase N で確定」と明記している。**
 
@@ -96,19 +96,21 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 |---|---|---|
 | `db-seed` | マスタデータ（`db/seed/*.sql`）を投入する。`--test-db` でテストDBへ | ✅ Phase 0 |
 | `validate-config` | 検索パターンYAMLと `webhook_ref` の参照を検証する | ✅ Phase 0 |
-| `scan` | 一覧取得 → MUST判定 → 詳細 → 抽出 → スコア → 通知 | Phase 1 |
-| `scan --seed` | **シードモード**。通知を送らず記録だけ行う | Phase 1 |
-| `scan --full` | 全量スキャン（`m_sites.max_pages_per_run` まで） | Phase 1 |
-| `check-sold` | 成約/掲載終了の確認 | Phase 1 |
-| `digest` | 日次ランキングダイジェストの送信 | Phase 1 |
-| `rescore` | DB内の物件属性から再採点（ネットワーク不要） | Phase 1 |
-| `sync-dict` | `data/feature_dictionary.yaml` → `m_condition_synonyms` | Phase 1 |
-| `re-extract` | `raw_features_text` から全件再抽出 | Phase 1 |
-| `report-unknown` | 辞書未登録の表記を出現回数順に一覧 | Phase 1 |
+| `scan` | 一覧取得 → MUST判定 → 詳細 → 抽出 → スコア → 通知 | ✅ Phase 1 |
+| `scan --seed` | **シードモード**。通知を送らず記録だけ行う | ✅ Phase 1 |
+| `scan --full` | 全量スキャン（`m_sites.max_pages_per_run` まで） | ✅ Phase 1 |
+| `scan --site` | 対象サイトを1つに絞る | ✅ Phase 1 |
+| `check-sold` | 成約/掲載終了の確認 | ✅ Phase 1 |
+| `digest` | 日次ランキングダイジェストの送信（`--dry-run` で件数確認） | ✅ Phase 1 |
+| `rescore` | DB内の物件属性から再採点（ネットワーク不要） | ✅ Phase 1 |
+| `sync-dict` | `data/feature_dictionary.yaml` → `m_condition_synonyms` | ✅ Phase 1 |
+| `re-extract` | `raw_features_text` から全件再抽出（ネットワーク不要） | ✅ Phase 1 |
+| `report-unknown` | 辞書未登録の表記を出現回数順に一覧 | ✅ Phase 1 |
 | `coverage` | サイト別の設備抽出数分布・数値カラム非NULL率の実測 | Phase 2 |
 
-未実装コマンドは呼ばれると「どのPhaseで実装するか」を告げて終了コード 2 で終わる
-（黙って何もしないと「実装済みだが未配線」を見逃すため）。
+未実装コマンド（`coverage`）は呼ばれると「どのPhaseで実装するか」を告げて終了コード 2 で
+終わる（黙って何もしないと「実装済みだが未配線」を見逃すため）。
+`scan` は**アダプタ未実装のサイトを「スキップ」として明示的に報告する**。
 
 ### 4.3 シードモード
 
@@ -127,9 +129,12 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 
 ### 5.1 ファイル配置
 
-- 既定: リポジトリ直下の `configs/*.yaml`（環境変数 `CONFIGS_DIR` で変更可）
-- 雛形: [`configs/example_chintai_v2.yaml`](../configs/example_chintai_v2.yaml)
-- v1形式の設定は `configs/_v1/` へ退避してある（**Phase 1 で v2 形式へ変換する**）
+- 既定: リポジトリ直下の `configs/*.yaml`（環境変数 `CONFIGS_DIR` で変更可）。
+  **サブディレクトリは読まない**（`glob("*.yaml")` は非再帰）
+- 実運用: [`configs/chintai_alone.yaml`](../configs/chintai_alone.yaml)（Git管理下。課題#9 解消）
+- 雛形: [`configs/examples/chintai_v2.yaml`](../configs/examples/chintai_v2.yaml)
+  — **`configs/` 直下に置くと実パターンとして走ってしまう**ため `examples/` に置く
+- v1形式の設定は `configs/_v1/`（Git管理外）へ退避してある
 
 ### 5.2 スキーマ
 
@@ -159,6 +164,9 @@ want:
   features:                         # 該当なら weight 満点を加点
     - { code: INT_LAUNDRY,   weight: 10 }
     - { code: BATH_SEPARATE, weight: 9 }
+    # 排他グループ。いずれか1つ満たせば満点（別々に weight を振ると
+    # 片方が必ず miss になり、スコア上限が構造的に下がる）
+    - { any_of: [STRUCT_RC, STRUCT_SRC], weight: 6 }
   numeric:                          # best〜worst で線形正規化
     - { metric: rent_total, weight: 10, best: 50000, worst: 70000 }
     - { metric: area_sqm,   weight: 6,  best: 45,    worst: 30 }
@@ -198,7 +206,8 @@ MUST判定は `pass` / `fail` / `unknown` の3値。**詳細ページの取得�
 
 ## 6. スコアリング
 
-**Phase 1 で実装・確定する。** モデルは [`再設計計画.md` §4](./再設計計画.md) に確定済み。
+**✅ Phase 1 で実装済み。** 実装は `src/house_search/scoring/`、
+詳細は [`詳細設計書/03_スコアリング設計.md`](./詳細設計書/03_スコアリング設計.md)。
 
 - 正規化: `s = clamp((worst - x) / (worst - best), 0, 1)`
 - 合計: `score = 100 × Σ(wᵢ × sᵢ) / Σ(wᵢ)` の0〜100点
@@ -206,7 +215,11 @@ MUST判定は `pass` / `fail` / `unknown` の3値。**詳細ページの取得�
 - WANTの判定不能は0点＋「未確認」表示。中間値補完はしない
 - 決定性: 条件コード順にソートしてから加算する
 - 内訳は `t_property_scores.score_breakdown`(JSONB) に全項目を保存する
-- **WANTの重み初期値と数値条件の best/worst はユーザー確認事項**（再設計計画 §15）
+- **`any_of`**: 同時に満たしえない条件（RC / SRC）は排他グループで1項目にまとめる。
+  別々に weight を振ると片方が必ず miss になるのに分母には両方が乗り、
+  全物件のスコア上限が構造的に下がる
+- **重みの初期値は確定済み**（2026-09-01・案A バランス型 / 数値45%）。
+  設備22項目=110、数値4 metric=90。詳細は詳細設計書 §8
 
 ### 6.1 再スコアリング
 
@@ -219,7 +232,9 @@ SHA256 を `config_hash` として保存し、不一致なら自動再スコア�
 
 ## 7. 設備情報のローカル抽出
 
-**Phase 1 で実装する。**
+**✅ Phase 1 で実装済み。** 実装は `src/house_search/extract/`、
+詳細は [`詳細設計書/02_設備抽出辞書設計.md`](./詳細設計書/02_設備抽出辞書設計.md)。
+辞書初版は賃貸 **80条件 / 257パターン**。
 
 1. **原文保存**: 詳細ページの設備ブロックを**テキストのまま** `t_properties.raw_features_text` へ
    （詳細HTML全体は保存しない）
@@ -232,6 +247,13 @@ SHA256 を `config_hash` として保存し、不一致なら自動再スコア�
 
 マッチしなかったトークンは `t_unknown_tokens` へ記録し、`report-unknown` → 辞書追記 →
 `sync-dict` → `re-extract` で反映する運用ループを回す。
+
+**照合は正規化済み本文全体への部分一致**で行う（トークンに切ってから照合しない）。
+サイトによって区切りが「、」「／」「・」とばらつき、中黒で切ると
+「バス・トイレ別」のように語中に区切り文字を含む条件を取りこぼすため。
+
+**閾値条件は型付き列から導出する**（`source='DERIVED'`）。
+「2階以上」「最上階」「築浅」は文字列照合では表現できない。
 
 ---
 
@@ -251,7 +273,7 @@ SHA256 を `config_hash` として保存し、不一致なら自動再スコア�
 
 ## 9. 通知仕様
 
-**Phase 1 で実装・確定する。**
+**✅ Phase 1 で実装済み。** 実装は `src/house_search/notify/`。
 
 | タイプ | トリガー | Discord Embed カラー |
 |---|---|---|
@@ -266,7 +288,12 @@ SHA256 を `config_hash` として保存し、不一致なら自動再スコア�
 - Discord制約: description 4096字/1embed、6000字/1メッセージ、10embed/1メッセージ
 - **種別横断ランキングは作らない。** 正規化基準が異なるスコアを混ぜると数字が意味を失う。
   「中古Mと中古Kを並べて見たい」は `digest_group` によるセクション並記で応える
-- 送信間隔・件数上限は Phase 1 で確定（v1 は2秒/件・上限なし）
+- 送信間隔は **2秒/件**。429 は `retry_after` に従って最大3回まで再送する
+- **ダイジェストは1メッセージ1embedのテキスト表**にする。上位15件は
+  embed 10個/メッセージの上限を超えるため。4096字を超える分は打ち切って明示する
+- 送信失敗は例外にせず `t_notifications.status='failed'` として記録する
+  （1件の失敗で実行全体を止めないため）
+- **送信タイミング**: ダイジェストは毎日20:00・上位15件（2026-09-01 確定）
 - エラー通知は `.env` の `DISCORD_WEBHOOK_ERRORS`
 
 ---
@@ -402,12 +429,15 @@ uv run house-search db-seed --test-db
 
 ## 13. レート制御・robots.txt
 
-**Phase 1 で実装する。**
+**✅ Phase 1 で実装済み。** 実装は `src/house_search/scrape/fetch.py`、
+詳細は [`詳細設計書/01_サイト取得設計.md`](./詳細設計書/01_サイト取得設計.md) §5。
 
 - サイトごとに `m_sites.min_interval_sec`（既定2.5秒＋±30%ジッタ）・
   `max_pages_per_run`・`daily_request_cap`
 - 429/5xx は指数バックオフ、連続失敗でサイト打ち切り＋エラー通知
-- robots.txt は起動時に取得し Disallow ならスキップ
+- robots.txt はオリジンごとに起動時1回だけ取得し Disallow ならスキップ
+- 詳細取得は1回の実行あたりサイト単位で上限（既定40件 / `--full` は400件）。
+  取り残しは `detail_fetched_at IS NULL` のキューに残り次回実行で拾われる
 
 ---
 
@@ -436,21 +466,39 @@ f:\searching-for-houses\
 │   │   └── models/
 │   │       ├── masters.py      # m_* 8テーブル
 │   │       └── transactions.py # t_* 9テーブル
-│   ├── scrape/                 # Phase 1〜3
-│   ├── extract/                # Phase 1（設備抽出）
-│   ├── scoring/                # Phase 1（スコアリング）
-│   └── notify/                 # Phase 1（Discord）
+│   ├── scrape/
+│   │   ├── fetch.py            # レート制御・リトライ・robots.txt
+│   │   ├── base.py             # 共通型とパース補助
+│   │   └── suumo.py            # SUUMO賃貸（Phase 2〜3で他サイトを追加）
+│   ├── extract/
+│   │   ├── normalize.py        # NFKC正規化・トークン化
+│   │   ├── dictionary.py       # 辞書のロードとDB同期
+│   │   └── extractor.py        # 辞書照合・導出・未知表記
+│   ├── scoring/
+│   │   ├── property_view.py    # 採点の入力（不変オブジェクト）
+│   │   ├── must.py             # MUST 3値判定
+│   │   └── score.py            # WANTスコア
+│   ├── notify/
+│   │   ├── discord.py          # Webhook送信
+│   │   └── format.py           # Embed・ダイジェスト整形
+│   └── pipeline/
+│       ├── runtime.py          # 実行時オブジェクト一式
+│       ├── persist.py          # upsert・キュー・ログ
+│       ├── scan.py             # scan の本体
+│       └── tasks.py            # digest / rescore / check-sold / re-extract
 ├── migrations/                 # Alembic
 ├── db/seed/                    # マスタデータSQL（冪等）
-├── configs/                    # 検索パターンYAML
-├── data/                       # 設備抽出辞書（Phase 1）
+├── configs/                    # 検索パターンYAML（examples/ は読み込み対象外）
+├── data/feature_dictionary.yaml # 設備抽出辞書（正典）
 ├── scripts/setup_db.ps1        # DB・ロール作成（冪等）
 ├── tests/
 │   ├── test_metrics.py
 │   ├── test_pattern.py
 │   ├── test_settings.py
 │   ├── test_schema_conventions.py   # DB規約の回帰テスト
-│   └── fixtures/               # 実HTMLフィクスチャ（Phase 2〜）
+│   ├── test_extract.py / test_scoring.py / test_notify.py / test_fetch.py
+│   ├── test_scrape_suumo.py    # 実HTMLフィクスチャによる回帰テスト
+│   └── fixtures/suumo/         # 実HTML（一覧・詳細）
 ├── docs/
 ├── alembic.ini                 # ASCIIのみ（cp932環境で落ちるため）
 ├── pyproject.toml
@@ -468,7 +516,7 @@ f:\searching-for-houses\
 | `psycopg[binary]` 3.x | PostgreSQL ドライバー |
 | `pydantic` / `pydantic-settings` | 設定・YAMLスキーマ検証 |
 | `httpx` | HTTP取得 |
-| `lxml` | HTMLパース |
+| `lxml` + `cssselect` | HTMLパース（CSSセレクタ） |
 | `playwright` | ブラウザ自動化（5サイト） |
 | `pyyaml` | YAML読み込み |
 | 開発: `pytest` / `pytest-cov` / `ruff` | テスト・lint |
