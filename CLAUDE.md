@@ -6,6 +6,7 @@ MUST（未充足なら除外）＋WANT（重み付き加点）のスコアでラ
 新着・成約・価格変動・日次ランキングをDiscordへ通知するシステム。
 
 **v2（Python）へ全面再設計中。Phase 5（賃貸の本運用）を再設計中。**
+Phase 5C で**通勤時間**をランキングへ組み込んだ（→ ADR 0016）。
 初回全件スキャンの実測でランキング上位が群馬/栃木県境と外房で埋まったため、
 **エリア帯**（23区／近郊45分圏）で検索パターンを2つに分割した（→ ADR 0013・課題#24）。
 進捗と残作業は `docs/再設計計画.md` を参照。
@@ -42,6 +43,10 @@ uv run house-search coverage               # サイト別の抽出充足率（�
 uv run house-search regroup                # 名寄せの再構築（ネットワーク不要・通知なし）
 uv run house-search resolve-cities         # 市区町村IDの引き直し（マスタ入替後・ネットワーク不要）
 uv run house-search sync-site-params       # サイト側フィルタ定義の同期（scan の前に必要）
+uv run house-search sync-stations          # 駅マスタ（data/train_master/*.csv）→ DB
+uv run house-search resolve-stations       # 掲載の駅表記を駅マスタと突き合わせる（ネットワーク不要）
+uv run house-search resolve-commutes       # 駅ペアの通勤所要時間を算出しキャッシュ（ネットワーク不要）
+uv run house-search commute-stats          # 通勤時間の分布（best/worst を決める材料）
 uv run house-search dedup-stats            # サイト別の重複率・ユニーク率（ネットワーク不要）
 uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観測モード
 uv run house-search scan --detail-limit 800         # 詳細取得の上限を上書き（既定40 / --full時400）
@@ -158,6 +163,21 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
 - **`price_max_hint` を変えたら、それを使う全サイトのURLを実測で確かめる。**
   運用中の 90,000 円は偶然どのサイトでも有効な値だったため、
   156,000 円にした瞬間に SUUMO と HOME'S が0件になった
+
+- **Google Maps は日本の公共交通経路を返さない。** Routes API に TRANSIT を投げると
+  **HTTP 200 のまま本文が `{}`** になる（同じ呼び出しが米国では経路を返し、日本でも DRIVE なら返る）。
+  Directions API も日本は ZERO_RESULTS。通勤時間は駅データ.jp の接続情報から
+  自前でダイクストラする（→ ADR 0016）
+- **所要時間を一律の表定速度で出すと長距離が大きく過大になる**（実測で平均18.2分・最大72分のずれ）。
+  優等列車を表現できないため。距離＋乗換＋定数の回帰式で平均5.6分まで縮む
+- **駅データ.jp 無料版に新幹線の駅は1件も無い**（路線は存在するが駅が0件）。
+  本庄早稲田のような新幹線専用駅は同定できない
+- **`best`/`worst` は母集団の分布を見てから決める**（→ 課題#31）。MUST の上限に
+  機械的に合わせると、母集団がその範囲の内側に固まっていたとき配点が死ぬ。
+  `commute-stats` が分布と0点張り付き率を出す
+- **通勤時間はグループ内の最短を採る**（設備の和集合と同じ）。サイトによって挙げる駅が違う
+- **NAVITIME の月指定は `2026/09` 形式。** `202609` を渡すと**黙って無視され現在時刻**になる
+  （深夜に実行すると始発帯の値が返り、朝の通勤時間だと思い込む）
 
 ## AI回答方針
 - 複数実装がある場合はトレードオフを説明してから推奨案を提示する

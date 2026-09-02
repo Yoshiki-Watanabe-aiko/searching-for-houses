@@ -54,6 +54,10 @@ class ListingView:
     total_floors: int | None = None
     age_years: int | None = None
     walk_minutes: int | None = None
+    commute_minutes: int | None = None
+    """勤務先の最寄り駅までの所要時間（分）。t_listing_stations × t_station_commutes
+    からの導出値で、``t_listings`` の列ではない。駅を同定できないか目的地が
+    未設定なら None（= MUST は unknown）。"""
 
     prefecture: str | None = None
     address: str | None = None

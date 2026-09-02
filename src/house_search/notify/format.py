@@ -54,6 +54,9 @@ class NotifiableListing:
     address: str | None
     image_url: str | None = None
     price_prev: int | None = None
+    # 通勤時間は目的地（commute セクション）を設定したパターンでだけ付く任意の属性。
+    # 既定値付きにして、設定していない呼び出しをこれまでどおり動かす。
+    commute_minutes: int | None = None
     # --- 名寄せグループの情報（Phase 4） ---
     # 同一住戸の別掲載を1グループに畳んだ結果を通知に出すためのもの。
     # 既定値付きなので、グループを持たない呼び出しはこれまでどおり動く。
@@ -98,6 +101,7 @@ def notifiable_from(
         area_sqm=view.area_sqm,
         age_years=view.age_years,
         walk_minutes=view.walk_minutes,
+        commute_minutes=view.commute_minutes,
         address=view.address,
         price_prev=price_prev,
         member_count=member_count,
@@ -112,13 +116,19 @@ def _yen(value: int | None) -> str:
 
 
 def _summary_line(prop: NotifiableListing) -> str:
-    """間取り・面積・築年・徒歩を1行にまとめる。"""
+    """間取り・面積・築年・徒歩・通勤を1行にまとめる。
+
+    通勤時間は目的地を設定したパターンでだけ出る。駅を同定できなかった掲載は
+    「通勤不明」と明示する（黙って省くと、条件が効いているのか分からない）。
+    """
     parts = [
         prop.layout or "—",
         f"{prop.area_sqm:.1f}㎡" if prop.area_sqm is not None else "—",
         f"築{prop.age_years}年" if prop.age_years is not None else "築年不明",
         f"徒歩{prop.walk_minutes}分" if prop.walk_minutes is not None else "徒歩不明",
     ]
+    if prop.commute_minutes is not None:
+        parts.append(f"通勤{prop.commute_minutes}分")
     return " / ".join(parts)
 
 

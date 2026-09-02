@@ -390,3 +390,20 @@ def commute_distribution(
     if row is None or row[0] is None:
         return None
     return int(row[0]), int(row[1]), int(row[2]), int(row[3])
+
+
+def resolve_destination_group(conn: Connection, commute: object | None) -> int | None:
+    """検索パターンの ``commute`` セクションから目的地の駅グループを引く。
+
+    ⚠ **解決できないときは None を返す。** 呼び出し側は必ず警告を出すこと。
+    黙って None にすると通勤時間が全件 unknown になり、条件を書いたのに
+    効いていない状態に気づけない（課題#29 と同じ形の事故）。
+    """
+    from house_search.commute.stations import resolve_station_group
+
+    if commute is None:
+        return None
+    prefecture = getattr(commute, "destination_prefecture", None)
+    pref_cd = prefecture_code_of(conn, prefecture) if prefecture else None
+    found = resolve_station_group(conn, commute.destination_station, pref_cd)
+    return found[0] if found else None

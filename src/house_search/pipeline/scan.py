@@ -82,6 +82,9 @@ class ScanSummary:
     notified: int = 0
     notify_failed: int = 0
     groups_changed: int = 0
+    # サイトに属さないエラー（通勤時間の目的地が引けない等）。
+    # errors は property なので、ここに入れないと append しても消える
+    pattern_errors: list[str] = field(default_factory=list)
 
     @property
     def listings_seen(self) -> int:
@@ -101,7 +104,10 @@ class ScanSummary:
 
     @property
     def errors(self) -> list[str]:
-        return [error for site in self.sites for error in site.errors]
+        return [
+            *self.pattern_errors,
+            *(error for site in self.sites for error in site.errors),
+        ]
 
 
 def _listing_view(listing: ScrapedListing) -> ListingView:
@@ -301,10 +307,102 @@ def _fetch_details(
         outcome.features_extracted += saved
 
 
+def _refresh_commute(
+    runtime: Runtime, pattern, listing_ids: list[int], summary: ScanSummary
+) -> None:
+    """新着掲載の駅を同定し、通勤時間のキャッシュを更新する。
+
+    駅表記は一覧ページにしか出ない（``ScrapedDetail`` は持たない）ので、
+    ``refresh_dedup_keys`` と違って**一覧の upsert 後に1回**呼べば足りる。
+
+    ⚠ 駅の接続情報CSVは再配布不可でGit管理外なので、無い環境もありうる。
+    その場合でも ``scan`` は止めず、エラーとして記録して通勤時間を unknown のままにする。
+    """
+    from house_search.commute.graph import estimate_from, load_links, station_nodes
+    from house_search.commute.resolve import (
+        STATUS_NO_ROUTE,
+        STATUS_OK,
+        listing_prefecture_codes,
+        load_station_index,
+        load_station_nodes,
+        referenced_station_groups,
+        resolve_destination_group,
+        resolve_listing_stations,
+        save_commutes,
+    )
+
+    if pattern.commute is None or not listing_ids:
+        return
+    try:
+        with runtime.engine.begin() as conn:
+            index = load_station_index(conn, listing_prefecture_codes(conn))
+            if not index.by_key:
+                raise ValueError("駅マスタが空です。sync-stations を実行してください")
+            resolve_listing_stations(conn, index, listing_ids=listing_ids)
+
+        with runtime.engine.connect() as conn:
+            destination = resolve_destination_group(conn, pattern.commute)
+            nodes = load_station_nodes(conn)
+            groups = referenced_station_groups(conn)
+        if destination is None:
+            return  # 目的地の解決失敗は _commute_destination 側で記録する
+
+        estimates = estimate_from(
+            station_nodes(nodes), load_links(runtime.settings.data_dir), destination
+        )
+        rows = [
+            (
+                group_code,
+                STATUS_OK if group_code in estimates else STATUS_NO_ROUTE,
+                estimates[group_code].minutes if group_code in estimates else None,
+                estimates[group_code].transfers if group_code in estimates else None,
+                estimates[group_code].distance_km if group_code in estimates else None,
+            )
+            for group_code in groups
+        ]
+        with runtime.engine.begin() as conn:
+            save_commutes(conn, destination_g_cd=destination, rows=rows)
+    except Exception as exc:  # noqa: BLE001 - 通勤時間の失敗で scan 全体を止めない
+        message = f"通勤時間の更新に失敗しました: {exc}"
+        summary.pattern_errors.append(message)
+        with runtime.engine.begin() as conn:
+            persist.log(
+                conn,
+                run_id=runtime.run_id,
+                level="ERROR",
+                message=message,
+                pattern_name=pattern.name,
+            )
+
+
+def _commute_destination(runtime: Runtime, pattern, conn, summary) -> int | None:
+    """勤務先の最寄り駅を駅グループコードへ解決する。
+
+    ⚠ 解決できないまま進むと通勤時間が全件 unknown になり、条件を書いたのに
+    効いていない状態になる。**エラーとして記録して気づけるようにする。**
+    """
+    from house_search.commute.resolve import resolve_destination_group
+
+    if pattern.commute is None:
+        return None
+    destination = resolve_destination_group(conn, pattern.commute)
+    if destination is None:
+        message = (
+            f"通勤時間の目的地 '{pattern.commute.destination_station}' を"
+            "駅マスタから一意に解決できません（通勤時間は unknown になります）"
+        )
+        summary.pattern_errors.append(message)
+        persist.log(
+            conn, level="ERROR", message=message, pattern_name=pattern.name, run_id=runtime.run_id
+        )
+    return destination
+
+
 def _score_pattern(runtime: Runtime, pattern, summary: ScanSummary) -> dict[int, ListingView]:
     """パターン対象の物件を採点して保存する。"""
     config_hash = pattern.config_hash()
     with runtime.engine.connect() as conn:
+        destination = _commute_destination(runtime, pattern, conn, summary)
         views = persist.load_listing_views(
             conn,
             property_type_code=pattern.property_type,
@@ -312,6 +410,7 @@ def _score_pattern(runtime: Runtime, pattern, summary: ScanSummary) -> dict[int,
             # 採点をエリア帯に閉じる。帯は取得URLを絞るだけなので、
             # これが無いと帯外の既存データにも帯のスコアが付いてしまう
             city_names=list(pattern.search.cities) or None,
+            commute_destination_g_cd=destination,
         )
 
     with runtime.engine.begin() as conn:
@@ -649,6 +748,8 @@ def scan_pattern(
     with runtime.engine.begin() as conn:
         group_changes = dedup.sync_groups(conn)
     summary.groups_changed = len(group_changes)
+
+    _refresh_commute(runtime, pattern, [o.listing_id for o in all_outcomes], summary)
 
     views = _score_pattern(runtime, pattern, summary)
 

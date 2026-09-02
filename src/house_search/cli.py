@@ -125,6 +125,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_commutes.add_argument("--pattern", help="対象を1つの検索パターンに絞る")
     p_commutes.add_argument("--destination", help="目的地の駅名（既定はパターンの commute）")
     p_commutes.add_argument("--destination-prefecture", help="目的地の都道府県名")
+
+    p_cstats = sub.add_parser(
+        "commute-stats",
+        help="通勤時間の分布を実測する（best/worst と MUST を決める材料・ネットワーク不要）",
+    )
+    p_cstats.add_argument("--pattern", help="対象を1つの検索パターンに絞る")
     return parser
 
 
@@ -654,6 +660,71 @@ def _cmd_resolve_commutes(args: argparse.Namespace) -> int:
     return 0
 
 
+def _percentile(values: list[int], ratio: float) -> int:
+    """整列済みの列から百分位を取る（線形補間はしない）。"""
+    if not values:
+        return 0
+    index = min(int(len(values) * ratio), len(values) - 1)
+    return values[index]
+
+
+def _cmd_commute_stats(args: argparse.Namespace) -> int:
+    from house_search.commute.resolve import resolve_destination_group
+    from house_search.db.session import get_engine
+    from house_search.pipeline import persist
+    from house_search.scoring.must import evaluate_must
+
+    engine = get_engine()
+    for pattern in _load_patterns(args.pattern):
+        print(f"=== {pattern.name} ===")
+        if pattern.commute is None:
+            print("  commute セクションがありません")
+            continue
+        with engine.connect() as conn:
+            destination = resolve_destination_group(conn, pattern.commute)
+            if destination is None:
+                print(f"  目的地 '{pattern.commute.destination_station}' を解決できません")
+                continue
+            views = persist.load_listing_views(
+                conn,
+                property_type_code=pattern.property_type,
+                site_codes=list(pattern.sites),
+                city_names=list(pattern.search.cities) or None,
+                commute_destination_g_cd=destination,
+            )
+
+        # MUST を通る掲載だけを母集団にする。落ちる掲載の分布を混ぜると
+        # best/worst が実際の候補群からずれる（課題#31 と同じ失敗になる）
+        passing = [
+            view
+            for view in views.values()
+            if evaluate_must(view, pattern.must).passes(pattern.must.unknown_policy)
+        ]
+        known = sorted(v.commute_minutes for v in passing if v.commute_minutes is not None)
+        unknown = len(passing) - len(known)
+        print(f"  目的地: {pattern.commute.destination_station}")
+        print(
+            f"  母集団: MUST通過 {len(passing)}件"
+            f"（うち通勤時間あり {len(known)} / 不明 {unknown}）"
+        )
+        if not known:
+            continue
+        marks = [("最短", 0.0), ("25%", 0.25), ("中央", 0.5), ("75%", 0.75), ("90%", 0.9)]
+        cells = "  ".join(f"{label} {_percentile(known, r)}分" for label, r in marks)
+        print(f"  分布: {cells}  最長 {known[-1]}分")
+        print("  上限候補ごとの通過件数:")
+        for limit in (30, 40, 45, 50, 60, 75, 90):
+            passed = sum(1 for m in known if m <= limit)
+            share = passed / len(known) * 100
+            print(f"    {limit:>3}分以内: {passed:>5}件（{share:>5.1f}%）")
+        print("  worst 候補ごとの0点張り付き率（best=0固定）:")
+        for worst in (45, 60, 75, 90, 120):
+            zero = sum(1 for m in known if m >= worst)
+            print(f"    worst={worst:>3}分: {zero / len(known) * 100:>5.1f}%")
+        print()
+    return 0
+
+
 def _cmd_resolve_cities(args: argparse.Namespace) -> int:
     from house_search.pipeline.runtime import build_runtime
     from house_search.pipeline.tasks import resolve_cities
@@ -743,6 +814,7 @@ _COMMANDS = {
     "sync-stations": _cmd_sync_stations,
     "resolve-stations": _cmd_resolve_stations,
     "resolve-commutes": _cmd_resolve_commutes,
+    "commute-stats": _cmd_commute_stats,
 }
 
 
