@@ -14,8 +14,9 @@
 -- （/search/city/{JIS5} ・ページ送りは /page/{N} のパス形式）。
 -- robots.txt が Disallow: *?* でクエリ付きURLを全面禁止しているため
 -- 価格上限をサイト側へ渡せず、市区の全掲載を取ってローカル判定する。
--- is_active=false のまま観測モードで運用し、Phase 4 の名寄せで
--- ユニーク物件率を実測してから有効化する（scan --site CHINTAI_EX --seed）。
+-- Phase 5 で本採用した（is_active=true）。全件では他サイトと重なりユニーク率26%
+-- だったが、エリア帯を都心45分圏に絞ると63%・69代表と GOO に迫る寄与になる
+-- （全体の26%は216市区を舐めて市区必須サイトと重なった結果）→ 課題#5。
 --
 -- MINIMINI は取得手段が無いと確定したため is_active=false にしてある（Phase 4）。
 -- 通常の scan の対象一覧から外れるが、`scan --site MINIMINI` で名指しすれば
@@ -46,7 +47,7 @@ INSERT INTO m_sites (
     ('ATHOME',     'アットホーム',     'https://www.athome.co.jp',  'HTTP',       FALSE, 6.0, 5, NULL,  30, 'Phase 3 でHTTP取得を確認。ただしパズル認証のボット検知があり、3秒間隔で47件連続取得したら発動した。間隔を6秒に広げたが発動したままのため Phase 5 で is_active=false（--site で名指しすれば回復を観測できる → 課題#20）'),
     ('NIFTY',      'ニフティ不動産',   'https://myhome.nifty.com',  'HTTP',       TRUE,  3.0, 5, NULL,  40, '他社サイトの掲載を集約するポータル。市区指定が必須。外部ドメインへ飛ぶ掲載は取り込まない'),
     ('GOO',        'goo不動産',        'https://house.goo.ne.jp',   'HTTP',       TRUE,  2.5, 5, NULL,  50, '掲載重複が多い'),
-    ('CHINTAI_EX', '賃貸EX',          'https://chintai-ex.jp',     'HTTP',       FALSE, 2.5, 50, NULL, 60, 'robots.txtがクエリ付きURLを全面禁止。価格上限を渡せず市区の全掲載を取る。観測モード中'),
+    ('CHINTAI_EX', '賃貸EX',          'https://chintai-ex.jp',     'HTTP',       TRUE,  2.5, 50, NULL, 60, 'robots.txtがクエリ付きURLを全面禁止。価格上限を渡せず市区の全掲載を取る'),
     ('ABLE',       'エイブル',         'https://www.able.co.jp',    'HTTP',       TRUE,  2.5, 5, NULL,  70, '市区指定が必須。都道府県のみだと0件になるため市区へ自動展開する'),
     ('MINIMINI',   'minimini',        'https://minimini.jp',       'HTTP',       FALSE, 2.5, 5, NULL,  80, '一覧ページがreCAPTCHAのボット判定下。HTTPでも素のブラウザでも取得不可（Phase 3 で実測）。取得手段が無いと確定したため Phase 4 で is_active=false（--site で名指しすれば回復の観測はできる）'),
     ('APAMAN',     'アパマンショップ', 'https://www.apamanshop.com','HTTP',       TRUE,  4.0, 5, NULL,  90, 'robots.txtが全パスを禁止（Disallow: /）。ユーザーの明示的判断で取得する（ADR 0011）。市区指定が必須'),

@@ -1,0 +1,168 @@
+# ============================================================
+# 近郊45分圏（エリア帯2）
+#
+# **エリア帯**: 賃料相場が一様とみなせる地理的範囲。1パターン=1帯で、
+# 帯どうしは重ならない（→ CONTEXT.md / ADR 0013）。
+#
+# ⚠ **行政区画では帯を切れない。** 同じ埼玉県に都心30分の川口市と
+# 群馬県境の神川町が同居する。実測（2026-09-02）では4都県を1本で見た結果、
+# 上位100件が本庄市・茂原市・毛呂山町など群馬/栃木県境と外房で埋まり、
+# **東京の掲載が上位15件に1件も入らなかった**。そのため帯は
+# 「都心までおおむね45分」で市区を選んで定義する。
+#
+# ⚠ この市区リストは通勤時間の**近似**であり、駅データに基づくものではない。
+# 実際に通う場所が決まったら見直すこと。
+#
+# MUST は v2 初版のまま。実測でこの帯は MUST通過1,128件・代表920件・
+# 最高69点と十分に成立している。
+# ============================================================
+
+name: "近郊45分圏賃貸"
+property_type: "CHINTAI"
+webhook_ref: "CHINTAI_ALONE"
+
+sites:
+  - "SUUMO"
+  - "HOMES"      # AWS WAF に阻まれることがある（課題#17）
+  - "GOO"
+  - "ABLE"
+  - "CHINTAI_EX" # Phase 5 で本採用。帯2でユニーク率63%・69代表
+  - "ATHOME"     # パズル認証のボット検知が発動中（課題#20・is_active=false）
+  - "MINIMINI"   # 未実装。HTTPでもブラウザでも reCAPTCHA を通れない（課題#18）
+  - "EHEYA"
+  - "NIFTY"
+  - "APAMAN"     # robots.txt を無視する唯一の例外（ADR 0011）
+  - "SMOCCA"     # 1ページ90件のみ取得できる（課題#22）
+
+search:
+  prefectures:
+    - "東京都"
+    - "埼玉県"
+    - "千葉県"
+    - "神奈川県"
+  cities:
+    # 東京都下（中央線・西武線・京王線沿線）
+    - "武蔵野市"
+    - "三鷹市"
+    - "調布市"
+    - "狛江市"
+    - "西東京市"
+    - "小金井市"
+    - "府中市"
+    - "国分寺市"
+    - "小平市"
+    - "東久留米市"
+    - "清瀬市"
+    - "稲城市"
+    - "国立市"
+    - "東村山市"
+    # 埼玉県（京浜東北・埼京・東武・武蔵野線沿線）
+    - "川口市"
+    - "蕨市"
+    - "戸田市"
+    - "草加市"
+    - "越谷市"
+    - "朝霞市"
+    - "志木市"
+    - "新座市"
+    - "和光市"
+    - "富士見市"
+    - "ふじみ野市"
+    - "三郷市"
+    - "八潮市"
+    - "吉川市"
+    # さいたま市（都心寄りの区のみ）
+    - "さいたま市浦和区"
+    - "さいたま市南区"
+    - "さいたま市中央区"
+    - "さいたま市大宮区"
+    - "さいたま市北区"
+    - "さいたま市見沼区"
+    - "さいたま市緑区"
+    - "さいたま市桜区"
+    - "さいたま市西区"
+    # 千葉県（総武・常磐・東西線沿線）
+    - "市川市"
+    - "船橋市"
+    - "松戸市"
+    - "浦安市"
+    - "習志野市"
+    - "鎌ケ谷市"
+    - "流山市"
+    - "柏市"
+    # 川崎市
+    - "川崎市川崎区"
+    - "川崎市幸区"
+    - "川崎市中原区"
+    - "川崎市高津区"
+    - "川崎市宮前区"
+    - "川崎市多摩区"
+    - "川崎市麻生区"
+    # 横浜市（東急・京浜東北・横浜線沿線の区のみ）
+    - "横浜市鶴見区"
+    - "横浜市港北区"
+    - "横浜市神奈川区"
+    - "横浜市西区"
+    - "横浜市中区"
+    - "横浜市保土ケ谷区"
+    - "横浜市南区"
+    - "横浜市港南区"
+    - "横浜市都筑区"
+    - "横浜市青葉区"
+    - "横浜市緑区"
+  # MUST上限 70,000円 の約1.3倍。管理費が別計上のサイトで
+  # 「賃料は上限内だが管理費込みだと超える」掲載を取りこぼさないためのバッファ
+  price_max_hint: 90000
+
+must:
+  rent_total_max: 70000
+  layouts: ["1LDK", "2K", "2DK", "2LDK", "3LDK"]
+  area_min: 30.0
+  walk_minutes_max: 20
+  features: []
+  unknown_policy: keep
+
+# ---- WANT: 重み付き加点（設備 110 / 数値 90）----
+want:
+  features:
+    # 生活の質に直結し、無いと日常的に困るもの
+    - { code: INT_LAUNDRY,          weight: 10 }   # 室内洗濯機置場
+    - { code: BATH_SEPARATE,        weight: 9 }    # バス・トイレ別
+    - { code: KITCHEN_2BURNER,      weight: 9 }    # コンロ2口以上
+    # 後から追加できないもの・強く欲しいもの
+    - { code: SEC_AUTOLOCK,         weight: 8 }    # オートロック
+    - { code: INT_WASHROOM,         weight: 7 }    # 洗面所独立
+    - { code: EQUIP_DELIVERY_BOX,   weight: 7 }    # 宅配ボックス
+    # あると嬉しいもの
+    - { code: HVAC_AC,              weight: 6 }    # エアコン付き
+    # RC と SRC は同時に満たしえない排他選択。別々に weight を振ると
+    # 片方が必ず miss になるのに分母には両方が乗り、スコア上限が構造的に下がる
+    - { any_of: [STRUCT_RC, STRUCT_SRC], weight: 6 }
+    - { code: KITCHEN_GAS,          weight: 5 }    # ガスコンロ対応
+    - { code: SEC_MONITOR_INTERCOM, weight: 5 }    # TVモニタ付きインターホン
+    - { code: COMM_NET_FREE,        weight: 5 }    # インターネット無料
+    - { code: LOC_FLOOR_2UP,        weight: 5 }    # 2階以上
+    # 小さな加点
+    - { code: EQUIP_TRASH_24H,      weight: 4 }    # 24時間ゴミ出し可
+    - { code: INT_FLOORING,         weight: 4 }    # フローリング
+    - { code: EQUIP_CITY_GAS,       weight: 4 }    # 都市ガス（プロパンとの月額差）
+    - { code: COMM_FIBER,           weight: 3 }    # 光ファイバー
+    - { code: STORAGE_SHOE,         weight: 3 }    # シューズボックス
+    - { code: EQUIP_BICYCLE,        weight: 3 }    # 駐輪場あり
+    # 誤差程度
+    - { code: MOVEIN_IMMEDIATE,     weight: 2 }    # 即入居可
+    - { code: FEAT_RENOVATED,       weight: 2 }    # リノベーション物件
+    - { code: MOVEIN_INSTRUMENT,    weight: 2 }    # 楽器相談可
+    - { code: EQUIP_PARKING,        weight: 1 }    # 駐車場あり
+
+  # worst は MUST の上限／下限に一致させてある。
+  # MUST ぎりぎりの掲載は該当metricが0点になり、余裕のあるものほど加点される
+  numeric:
+    - { metric: rent_total,   weight: 40, best: 50000, worst: 70000 }
+    - { metric: area_sqm,     weight: 20, best: 45,    worst: 30 }
+    - { metric: age_years,    weight: 15, best: 0,     worst: 30 }
+    - { metric: walk_minutes, weight: 15, best: 3,     worst: 20 }
+
+ranking:
+  top_n: 15
+  digest_group: "賃貸"

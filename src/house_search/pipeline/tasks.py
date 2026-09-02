@@ -251,11 +251,20 @@ def check_sold(runtime: Runtime, pattern, *, limit: int = 100) -> CheckSoldResul
                 "JOIN m_sites s ON s.id = p.site_id "
                 "JOIN m_property_types pt ON pt.id = p.property_type_id "
                 "WHERE p.status = 'active' AND pt.code = :ptype AND s.code = ANY(:sites) "
+                # そのパターンで採点されている掲載だけを追う。エリア帯を絞ると
+                # 帯外の掲載は last_seen_at が更新されなくなり「最も古い」に
+                # なるため、これが無いと確認枠が帯外で埋まってしまう
+                "  AND EXISTS ("
+                "    SELECT 1 FROM t_property_scores sc"
+                "    WHERE sc.property_id = p.id AND sc.pattern_name = :pattern_name"
+                "      AND sc.must_result <> 'fail'"
+                "  ) "
                 "ORDER BY p.last_seen_at ASC LIMIT :limit"
             ),
             {
                 "ptype": pattern.property_type,
                 "sites": list(pattern.sites),
+                "pattern_name": pattern.name,
                 "limit": limit,
             },
         ).all()

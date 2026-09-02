@@ -1,0 +1,117 @@
+# ============================================================
+# 東京23区（エリア帯1）
+#
+# **エリア帯**: 賃料相場が一様とみなせる地理的範囲。1パターン=1帯で、
+# 帯どうしは重ならない（→ CONTEXT.md / ADR 0013）。
+# 相場の違う範囲を1帯に混ぜると安い側が構造的に上位を独占するため、
+# 4都県を1本のパターンで見ていた v2 初版を2帯へ分割した。
+#
+# ⚠ **MUST の賃料上限は暫定値**。実測（2026-09-02・8,429掲載）では
+# 7万円・30㎡・徒歩20分を満たす23区の掲載は足立区19件・葛飾区11件しかなく、
+# ランキングが成立しない。そこで**広めに取ってから rescore で締める**方針にした
+# （締める方向はネットワーク不要のDBバッチで試せるが、緩める方向は取り直しになる）。
+# 初回スキャン後に賃料×面積の分布を見て確定させること。
+# ============================================================
+
+name: "東京23区賃貸"
+property_type: "CHINTAI"
+webhook_ref: "CHINTAI_ALONE"
+
+sites:
+  - "SUUMO"
+  - "HOMES"      # AWS WAF に阻まれることがある（課題#17）
+  - "GOO"
+  - "ABLE"
+  - "CHINTAI_EX" # Phase 5 で本採用。帯2でユニーク率63%・69代表
+  - "ATHOME"     # パズル認証のボット検知が発動中（課題#20・is_active=false）
+  - "MINIMINI"   # 未実装。HTTPでもブラウザでも reCAPTCHA を通れない（課題#18）
+  - "EHEYA"
+  - "NIFTY"
+  - "APAMAN"     # robots.txt を無視する唯一の例外（ADR 0011）
+  - "SMOCCA"     # 1ページ90件のみ取得できる（課題#22）
+
+# ---- サイト側へ渡す唯一の条件（エリア＋種別＋価格上限）----
+search:
+  prefectures:
+    - "東京都"
+  cities:
+    # 東京23区
+    - "千代田区"
+    - "中央区"
+    - "港区"
+    - "新宿区"
+    - "文京区"
+    - "台東区"
+    - "墨田区"
+    - "江東区"
+    - "品川区"
+    - "目黒区"
+    - "大田区"
+    - "世田谷区"
+    - "渋谷区"
+    - "中野区"
+    - "杉並区"
+    - "豊島区"
+    - "北区"
+    - "荒川区"
+    - "板橋区"
+    - "練馬区"
+    - "足立区"
+    - "葛飾区"
+    - "江戸川区"
+  # MUST上限 120,000円 の約1.3倍
+  price_max_hint: 156000
+
+# ---- MUST: 未充足なら除外 ----
+must:
+  rent_total_max: 120000   # ⚠ 暫定。初回スキャン後に実測して締める
+  layouts: ["1LDK", "2K", "2DK", "2LDK", "3LDK"]
+  area_min: 30.0
+  walk_minutes_max: 20
+  features: []
+  unknown_policy: keep
+
+# ---- WANT: 重み付き加点（設備 110 / 数値 90）----
+want:
+  features:
+    # 生活の質に直結し、無いと日常的に困るもの
+    - { code: INT_LAUNDRY,          weight: 10 }   # 室内洗濯機置場
+    - { code: BATH_SEPARATE,        weight: 9 }    # バス・トイレ別
+    - { code: KITCHEN_2BURNER,      weight: 9 }    # コンロ2口以上
+    # 後から追加できないもの・強く欲しいもの
+    - { code: SEC_AUTOLOCK,         weight: 8 }    # オートロック
+    - { code: INT_WASHROOM,         weight: 7 }    # 洗面所独立
+    - { code: EQUIP_DELIVERY_BOX,   weight: 7 }    # 宅配ボックス
+    # あると嬉しいもの
+    - { code: HVAC_AC,              weight: 6 }    # エアコン付き
+    # RC と SRC は同時に満たしえない排他選択。別々に weight を振ると
+    # 片方が必ず miss になるのに分母には両方が乗り、スコア上限が構造的に下がる
+    - { any_of: [STRUCT_RC, STRUCT_SRC], weight: 6 }
+    - { code: KITCHEN_GAS,          weight: 5 }    # ガスコンロ対応
+    - { code: SEC_MONITOR_INTERCOM, weight: 5 }    # TVモニタ付きインターホン
+    - { code: COMM_NET_FREE,        weight: 5 }    # インターネット無料
+    - { code: LOC_FLOOR_2UP,        weight: 5 }    # 2階以上
+    # 小さな加点
+    - { code: EQUIP_TRASH_24H,      weight: 4 }    # 24時間ゴミ出し可
+    - { code: INT_FLOORING,         weight: 4 }    # フローリング
+    - { code: EQUIP_CITY_GAS,       weight: 4 }    # 都市ガス（プロパンとの月額差）
+    - { code: COMM_FIBER,           weight: 3 }    # 光ファイバー
+    - { code: STORAGE_SHOE,         weight: 3 }    # シューズボックス
+    - { code: EQUIP_BICYCLE,        weight: 3 }    # 駐輪場あり
+    # 誤差程度
+    - { code: MOVEIN_IMMEDIATE,     weight: 2 }    # 即入居可
+    - { code: FEAT_RENOVATED,       weight: 2 }    # リノベーション物件
+    - { code: MOVEIN_INSTRUMENT,    weight: 2 }    # 楽器相談可
+    - { code: EQUIP_PARKING,        weight: 1 }    # 駐車場あり
+
+  # best/worst は帯の相場に合わせる。帯2と同じ 50,000〜70,000 にすると
+  # 23区の掲載はほぼ全て0点になり、賃料の weight 40 が死ぬ
+  numeric:
+    - { metric: rent_total,   weight: 40, best: 70000, worst: 120000 }
+    - { metric: area_sqm,     weight: 20, best: 45,    worst: 30 }
+    - { metric: age_years,    weight: 15, best: 0,     worst: 30 }
+    - { metric: walk_minutes, weight: 15, best: 3,     worst: 20 }
+
+ranking:
+  top_n: 15
+  digest_group: "賃貸"

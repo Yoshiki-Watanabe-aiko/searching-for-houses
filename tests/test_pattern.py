@@ -196,14 +196,32 @@ def test_同梱の雛形YAMLが読める() -> None:
     assert len(pattern.want.numeric) == 4
 
 
-def test_実運用の検索パターンが読める() -> None:
-    """v1 から変換した chintai_alone.yaml が v2 スキーマを満たすこと（課題#9）。"""
-    pattern = load_pattern_file(REPO_ROOT / "configs" / "chintai_alone.yaml")
+@pytest.mark.parametrize("filename", ["chintai_23ku.yaml", "chintai_suburb45.yaml"])
+def test_実運用の検索パターンが読める(filename: str) -> None:
+    """エリア帯ごとの実運用パターンが v2 スキーマを満たすこと（課題#9）。"""
+    pattern = load_pattern_file(REPO_ROOT / "configs" / filename)
     assert pattern.property_type == "CHINTAI"
     assert pattern.webhook_ref == "CHINTAI_ALONE"
     # RC / SRC は排他なので any_of で1項目にまとめてある
     any_of_items = [f for f in pattern.want.features if f.any_of]
     assert [f.codes for f in any_of_items] == [("STRUCT_RC", "STRUCT_SRC")]
+
+
+def test_エリア帯は市区を明示列挙し重ならない() -> None:
+    """帯は行政区画ではなく通勤圏で切るため、市区の明示リストで定義する。
+
+    帯が重なると同じ掲載が2つのランキングに出て通知も二重になる。
+    ``cities`` が空だと都道府県内の全市区へ自動展開され、
+    群馬県境や外房まで同じ帯に入ってしまう（実測でランキングが埋まった）。
+    """
+    bands = {
+        name: set(load_pattern_file(REPO_ROOT / "configs" / name).search.cities)
+        for name in ("chintai_23ku.yaml", "chintai_suburb45.yaml")
+    }
+    for name, cities in bands.items():
+        assert cities, f"{name}: cities が空だと都道府県内の全市区へ広がる"
+    overlap = bands["chintai_23ku.yaml"] & bands["chintai_suburb45.yaml"]
+    assert not overlap, f"エリア帯が重なっている: {sorted(overlap)}"
 
 
 def test_codeとany_ofの同時指定はエラーになる() -> None:
