@@ -247,3 +247,19 @@ def test_賃料上限は整数の万円へ切り上げる(scraper: SuumoScraper,
     """
     url = scraper.list_urls(p := _pattern(price_max_hint=hint), _areas(p))[0]
     assert expected in url
+
+
+def test_エラーページを掴んだら例外にする() -> None:
+    """⚠ **絞り込みに選択肢外の値を渡すと、SUUMO は HTTP 200 のまま
+    エラーページを返す**（実測 2026-09-03: et=12 で title が
+    「エラー｜SUUMO(スーモ)」の 11KB のページ）。
+
+    そのまま解析すると**掲載0件になるだけで例外にならない**ので、
+    「取れているつもり」で気づけない（→ 課題#29）。
+    """
+    html_text = (
+        "<html><head><title>エラー｜SUUMO(スーモ)</title></head>"
+        "<body><p>お探しのページは見つかりませんでした</p></body></html>"
+    )
+    with pytest.raises(ValueError, match="エラーページ"):
+        SuumoScraper().parse_list(html_text)

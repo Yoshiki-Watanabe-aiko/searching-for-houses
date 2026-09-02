@@ -124,6 +124,7 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 | `coverage` | サイト別の設備抽出数分布・数値カラム非NULL率の実測 | ✅ Phase 2 |
 | `regroup` | 名寄せキーを全件作り直してグループを同期（ネットワーク不要・**通知なし**） | ✅ Phase 4 |
 | `resolve-cities` | 既存掲載の `city_id` を現在の `m_cities` で引き直す（ネットワーク不要） | ✅ Phase 5A |
+| `sync-site-params` | `data/site_search_params.yaml` → `m_site_search_params` | ✅ Phase 5B |
 | `dedup-stats` | サイト別のキー充足率・クロスサイト重複率・ユニーク率の実測 | ✅ Phase 4 |
 
 **Phase 2 で全コマンドが実装済みになった。**
@@ -254,6 +255,10 @@ search:                             # サイト側へ渡す唯一の条件
   prefectures: ["東京都", "千葉県", "埼玉県", "神奈川県"]
   cities: []                        # 空ならABLE/SMOCCAは都道府県内全市区へ自動展開
   price_max_hint: 90000             # MUST上限の2〜3割増し（管理費別計上サイト対策のバッファ）
+  site_filters:                     # ★MUSTをサイト側のフォームにも渡す（→ ADR 0015）
+    enabled: true                   # 既定 false。事故時はここを false に戻せば従来動作
+    axes: ["area_min", "walk_minutes_max", "layouts"]
+    exclude_sites: []
 
 must:                               # 未充足なら除外
   rent_total_max: 70000
@@ -484,6 +489,7 @@ DDLは Alembic（`migrations/`）、マスタデータは `db/seed/*.sql`（冪�
 | `m_condition_property_types` | 条件×物件種別（487行） |
 | `m_condition_synonyms` | **設備抽出辞書**（条件コード → 表記パターン） |
 | `m_cities` | 市区町村（**1,918行・47都道府県**。総務省の全国地方公共団体コードが正典 → ADR 0014。`canonical_name` がYAML指定値の正典） |
+| `m_site_search_params` | **サイト側の絞り込みパラメータ定義**（MUST限定・サイト×物件種別×軸 → ADR 0015） |
 | `m_city_site_values` | 市区町村×サイトの検索値（**縦持ち**・1833行。JIS系サイトは `m_cities.jis_code` から導出するのでこの表を引かない） |
 | `t_listings` | **掲載**（1行=1サイトの1件の募集）|
 | `t_listing_features` | 掲載から抽出した設備・特性 |
@@ -661,6 +667,12 @@ uv run house-search db-seed --test-db
   - **403・405 などの拒否系**: 再試行はしないが `failures` に数え、
     5回連続で打ち切る。数えないと打ち切りが永久に発火せず、
     初回全件スキャンで NIFTY の 405 を**271回叩き続けた**
+- **MUST をサイト側へ渡す軸は `search.site_filters` で指定する**（→ ADR 0015）。
+  丸めの向きは軸の意味から機械的に決まり（上限は切り上げ・下限は切り下げ・
+  間取りは全項目を表現できるときだけ）、サイト定義には書けないようにしてある。
+  正典は `data/site_search_params.yaml` で、`sync-site-params` で
+  `m_site_search_params` へ同期し実行時はDBから読む。
+  **配線済みは SUUMO のみ**（実測 2026-09-03: 母集団 62,030 → 27,150件・57%削減）
 - ⚠ **サイト側の絞り込みパラメータに無効値を渡すと HTTP 200 のまま0件になる**
   （→ 課題#29）。SUUMO の `ct`（賃料上限・万円）は選択肢が決まっており、
   `ct=15.6` は0件・`ct=16.0` は100件・指定なしは160件だった（実測）。

@@ -114,6 +114,16 @@ search:
   # 「賃料は上限内だが管理費込みだと超える」掲載を取りこぼさないためのバッファ
   price_max_hint: 90000
 
+  # MUST をサイト側のフォームにも渡す（→ ADR 0015）。
+  # WANT は渡さない（渡すと加点対象の掲載が除外されて順位に現れない）。
+  # 実測（2026-09-03・足立区）: SUUMO の母集団が 62,030 → 27,150件（57%削減）。
+  # ⚠ 無効値は HTTP 200 のまま0件やエラーページになる（→ 課題#29）ので、
+  #   事故が起きたら enabled: false に戻せば全サイトが従来の動作へ戻る。
+  site_filters:
+    enabled: true
+    axes: ["area_min", "walk_minutes_max", "layouts"]
+    exclude_sites: []
+
 must:
   rent_total_max: 70000
   layouts: ["1LDK", "2K", "2DK", "2LDK", "3LDK"]

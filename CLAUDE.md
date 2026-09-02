@@ -41,6 +41,7 @@ uv run house-search report-unknown         # 辞書未登録の表記
 uv run house-search coverage               # サイト別の抽出充足率（ネットワーク不要）
 uv run house-search regroup                # 名寄せの再構築（ネットワーク不要・通知なし）
 uv run house-search resolve-cities         # 市区町村IDの引き直し（マスタ入替後・ネットワーク不要）
+uv run house-search sync-site-params       # サイト側フィルタ定義の同期（scan の前に必要）
 uv run house-search dedup-stats            # サイト別の重複率・ユニーク率（ネットワーク不要）
 uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観測モード
 uv run house-search scan --detail-limit 800         # 詳細取得の上限を上書き（既定40 / --full時400）
@@ -148,6 +149,12 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
   `raise_for_status()` が先に例外を投げると `consecutive_failures` に到達しない。
   NIFTY の405を271回叩き続けた。⚠ 404 も同じ経路で例外になるため、
   `is_sold` の404判定に到達できず**掲載終了の検知が死んでいた**（→ 課題#25）
+- **サイト側へ渡してよいのは MUST だけ**（→ ADR 0015）。設備条件と WANT は永久に渡さない。
+  丸めの向きは `scrape/params.py` の `AXIS_BOUND` で軸ごとに決まり、サイト定義には書けない。
+  ⚠ **キー名・選択肢・不等号の向きは推測で書かず実サイトで測る。**
+  誤りには「0件になる／黙って無視される／向きが逆」の3つの現れ方があり、**どれも例外にならない**。
+  測るときは先に存在しないキー（`zzz=1`）を送って件数が変わらないことを確かめ、
+  判定方法自体の妥当性を担保してから測る
 - **`price_max_hint` を変えたら、それを使う全サイトのURLを実測で確かめる。**
   運用中の 90,000 円は偶然どのサイトでも有効な値だったため、
   156,000 円にした瞬間に SUUMO と HOME'S が0件になった

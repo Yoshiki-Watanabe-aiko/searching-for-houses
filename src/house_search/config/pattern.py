@@ -24,6 +24,7 @@ from house_search.config.metrics import (
     MUST_ITEMS_BY_NAME,
     Family,
 )
+from house_search.scrape.params import AXIS_BOUND
 
 
 class Strict(BaseModel):
@@ -32,12 +33,55 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class SearchSpec(Strict):
-    """サイト側へ渡す唯一の条件。
+class SiteFilterSpec(Strict):
+    """MUST をサイト側のフォームにも渡すかどうかの指定（→ ADR 0015）。
 
-    v2 ではサイトに渡すのは「エリア＋物件種別＋価格上限（バッファ付き）」の3つだけ。
-    設備条件をサイト側フィルタへ渡すと、対応サイトでは WANT 条件の物件が除外されて
+    **WANT は決して渡さない。** 渡すと対応サイトでは加点対象の掲載が除外されて
     順位に現れず、非対応サイトでは素通りするため、ランキングと両立しない。
+    MUST は「ローカルで fail にする掲載」なので、サイト側で落としても結果が
+    変わらず取得量だけ減る。
+
+    ⚠ **既定は無効。** 無効値を渡すと HTTP 200 のまま0件になる事故があり
+    （→ 課題#29）、``enabled: false`` に戻せば全サイトが即座に従来の動作へ戻る。
+    """
+
+    enabled: bool = Field(
+        default=False,
+        description="MUSTをサイト側へも渡すか。false なら従来どおりエリアと価格上限だけ",
+    )
+    axes: list[str] = Field(
+        default_factory=list,
+        description=(
+            "サイト側へ渡す MUST の軸。"
+            "area_min / area_max / walk_minutes_max / age_max / layouts"
+        ),
+    )
+    exclude_sites: list[str] = Field(
+        default_factory=list,
+        description="この指定から外すサイトコード（実測で不調なサイトを個別に止める）",
+    )
+
+    @model_validator(mode="after")
+    def _check_axes(self) -> SiteFilterSpec:
+        """設備条件などサイト側へ渡してはいけない軸を弾く。"""
+        for axis in self.axes:
+            if axis not in AXIS_BOUND:
+                known = ", ".join(sorted(AXIS_BOUND))
+                raise ValueError(
+                    f"サイト側へ渡せない軸です: '{axis}'（使えるのは: {known}）。"
+                    "設備条件は仕様として渡せません"
+                )
+        if self.enabled and not self.axes:
+            raise ValueError("site_filters.enabled が true なのに axes が空です")
+        return self
+
+
+class SearchSpec(Strict):
+    """サイト側へ渡す条件。
+
+    基本はエリア・物件種別・価格上限（バッファ付き）の3つだけ。
+    ``site_filters`` を有効にすると、これに **MUST の数値条件と間取り**が加わる
+    （→ ADR 0015 が ADR 0003 を補強する）。設備条件は永久に渡さない。
     """
 
     prefectures: list[str] = Field(min_length=1, description="対象都道府県")
@@ -54,6 +98,10 @@ class SearchSpec(Strict):
             "サイト側フォームに渡す価格上限。MUST上限の2〜3割増しにする"
             "（管理費が別計上のサイトで取りこぼさないためのバッファ）"
         ),
+    )
+    site_filters: SiteFilterSpec = Field(
+        default_factory=SiteFilterSpec,
+        description="MUSTをサイト側のフォームにも渡すかどうか（既定は無効）",
     )
 
 
@@ -230,6 +278,15 @@ class PatternBase(Strict):
                 continue  # unknown_policy のような制御項目
             if ptype not in spec_must.property_types:
                 raise ValueError(f"MUST項目 '{field_name}' は物件種別 {ptype} には適用できません")
+
+        # サイト側へ渡す軸が、この種別の MUST に存在することを確かめる。
+        # 存在しない軸を書いても実行時は黙って送られないだけなので、
+        # 「設定したのに効いていない」に気づけなくなる
+        for axis in self.search.site_filters.axes:
+            if axis not in must_fields:
+                raise ValueError(
+                    f"site_filters.axes の '{axis}' は物件種別 {ptype} の MUST にありません"
+                )
         return self
 
     def score_config(self) -> dict[str, Any]:

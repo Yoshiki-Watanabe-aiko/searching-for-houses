@@ -1,8 +1,12 @@
 """マスタテーブル (``m_*``) のモデル定義。
 
-v2 では「サイト側の検索フォームで絞る」方針を全廃したため、旧 ``site_condition_map``
-(サイト×条件の対応表) は存在しない。代わりに設備条件はローカル抽出で判定するので、
-抽出辞書テーブル ``m_condition_synonyms`` が新設されている。
+v2 では「サイト側の検索フォームで**設備条件**を絞る」方針を全廃したため、
+旧 ``site_condition_map`` (サイト×設備条件の対応表) は存在しない。設備条件は
+ローカル抽出で判定するので、抽出辞書テーブル ``m_condition_synonyms`` が新設されている。
+
+⚠ ``m_site_search_params`` は**その復活ではない**。扱うのは数値系の MUST と間取りだけで、
+設備条件は含まない。MUST は「ローカルで fail にする掲載」なので、サイト側で落としても
+結果が変わらず取得量だけ減る（→ ADR 0015 が ADR 0003 を補強する）。
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from house_search.db.base import Base, TimestampMixin
@@ -279,3 +284,73 @@ class CitySiteValue(TimestampMixin, Base):
         ),
     )
     # 行が存在しない = そのサイトでは当該市区の検索値が未登録 → 都道府県レベル検索へフォールバック。
+
+
+class SiteSearchParam(TimestampMixin, Base):
+    """サイト側の絞り込みパラメータ定義。
+
+    ``data/site_search_params.yaml`` を正として ``sync-site-params`` で同期する
+    （``m_condition_synonyms`` と同じ構成）。Git管理YAMLを正典にするのは、
+    実測値の変更をdiffレビューできるようにするため。
+
+    ⚠ **扱うのは数値系の MUST と間取りだけ。** 設備条件は永久に含めない（→ ADR 0015）。
+    """
+
+    __tablename__ = "m_site_search_params"
+    __table_args__ = (
+        UniqueConstraint("site_id", "property_type_id", "axis"),
+        {"comment": "サイト側の絞り込みパラメータ定義（MUST限定・サイト×物件種別×軸）"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, comment="パラメータ定義ID")
+    site_id: Mapped[int] = mapped_column(
+        ForeignKey("m_sites.id"), nullable=False, comment="サイトID"
+    )
+    property_type_id: Mapped[int] = mapped_column(
+        ForeignKey("m_property_types.id"), nullable=False, comment="物件種別ID"
+    )
+    axis: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        comment=(
+            "MUSTの軸名（area_min / area_max / walk_minutes_max / age_max / layouts）。"
+            "丸めの向きは軸から決まるのでここには持たせない"
+        ),
+    )
+    param_name: Mapped[str] = mapped_column(
+        String(100), nullable=False, comment="URLクエリのキー（SUUMO の mb / et / md など）"
+    )
+    value_kind: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        comment=(
+            "値の表し方。stepped=等間隔の選択肢 / enum=不等間隔の選択肢 / "
+            "multi=複数値を並べて送る（間取り）"
+        ),
+    )
+    unit: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        comment=(
+            "サイトが受け取る単位（yen / man_yen / sqm / minutes / years）。"
+            "MUST側の値から換算する"
+        ),
+    )
+    value_spec: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        server_default=text("'{}'::jsonb"),
+        comment=(
+            "値の空間。stepped は min/max/step、enum は choices、multi は mapping。"
+            "いずれも format（Python の書式文字列）を伴う"
+        ),
+    )
+    is_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("true"),
+        comment="この軸を実際に送るか。実測で効かないと分かったら false にする",
+    )
+    notes: Mapped[str | None] = mapped_column(
+        Text, comment="実測メモ（件数の変化・0件になる条件など）"
+    )
