@@ -142,6 +142,17 @@ METRICS: tuple[MetricSpec, ...] = (
         property_types=ALL_PROPERTY_TYPES,
         source_columns=("walk_minutes",),
     ),
+    MetricSpec(
+        name="commute_minutes",
+        label="通勤時間",
+        direction=Direction.LOWER_IS_BETTER,
+        unit="分",
+        property_types=ALL_PROPERTY_TYPES,
+        # ⚠ t_listings の物理列ではない。t_listing_stations（掲載→駅）と
+        # t_station_commutes（駅ペアの所要時間キャッシュ）から導出する
+        # 最寄り駅ごとの最短値。列名としてはここにしか現れない。
+        source_columns=("commute_minutes",),
+    ),
 )
 
 METRICS_BY_NAME: dict[str, MetricSpec] = {m.name: m for m in METRICS}
@@ -191,6 +202,15 @@ MUST_ITEMS: tuple[MustSpec, ...] = (
         True,
     ),
     MustSpec("walk_minutes_max", "駅徒歩の上限", ALL_PROPERTY_TYPES, ("walk_minutes",), True),
+    MustSpec(
+        "commute_minutes_max",
+        "通勤時間の上限",
+        ALL_PROPERTY_TYPES,
+        ("commute_minutes",),
+        # 駅の同定と所要時間キャッシュの解決が要るため一覧だけでは判定できない。
+        # 未解決は unknown になり、unknown_policy に従う（既定 keep）。
+        False,
+    ),
     MustSpec(
         "floor_min",
         "所在階の下限",

@@ -7,6 +7,11 @@ Create Date: 2026-09-03
 通勤時間をランキングに組み込む（Phase 5C・課題#24）。スコアに立地の配点が無いため
 「安くて広い郊外」が構造的に上位を占める問題が残っており、これを埋める。
 
+⚠ 所要時間の算出に Google Maps は使えない。Routes API・Directions API とも
+**日本の公共交通経路を返さない**ことを実測で確認した（同じ呼び出しが米国では経路を返し、
+日本は HTTP 200 のまま本文が空。日本でも DRIVE なら返る）。駅データ.jp の接続情報から
+自前で経路を探索する（→ ADR 0016）。
+
 ⚠ **既存テーブルへの列追加はしない。** t_listings に通勤時間の列を足すと、監査カラムを
 最終列に保つDB規約からテーブル再作成（生成列 rent_total・部分インデックス・外部キーの
 張り直し）が要る。通勤時間は駅から導出できる値なので新規テーブルに置けば足りる。
@@ -219,42 +224,39 @@ def upgrade() -> None:
             sa.String(length=10),
             nullable=False,
             comment=(
-                "ok=所要時間を取得 / no_route=経路なし（APIが200で空応答）/ error=取得失敗。"
-                "再取得の対象は error だけ"
+                "ok=所要時間を算出できた / no_route=線路がつながっておらず到達できない。"
+                "到達不能を明示的に記録し、欠損と区別する"
             ),
         ),
         sa.Column(
             "commute_minutes",
             sa.Integer(),
             nullable=True,
-            comment="所要時間（分）。status='ok' のときだけ入る。秒は切り上げる",
+            comment="所要時間（分）。status='ok' のときだけ入る",
         ),
         sa.Column(
-            "raw_duration_sec",
+            "transfers",
             sa.Integer(),
             nullable=True,
-            comment="APIが返した所要時間（秒）の生値。丸め方を変えても取り直さずに済むように残す",
+            comment="乗換回数。所要時間の内訳を人が確かめるために持つ",
         ),
         sa.Column(
-            "departure_time",
-            sa.DateTime(timezone=True),
-            nullable=False,
-            comment=(
-                "計算に使った出発時刻。所要時間はダイヤに依存するので、"
-                "駅ペア間の比較可能性を保つには全ペアで時刻を揃える必要がある"
-            ),
-        ),
-        sa.Column(
-            "error_detail",
-            sa.Text(),
+            "distance_km",
+            sa.Numeric(precision=7, scale=2),
             nullable=True,
-            comment="status='error' のときのHTTPステータスと本文抜粋",
+            comment="経路上の駅間距離の合計（km）。校正のときに使う",
         ),
         sa.Column(
-            "fetched_at",
+            "source",
+            sa.String(length=20),
+            nullable=False,
+            comment="算出元（rail_graph=駅データ.jpの接続情報からの自前計算）",
+        ),
+        sa.Column(
+            "computed_at",
             sa.DateTime(timezone=True),
             nullable=False,
-            comment="APIを叩いた時刻。error 行の再取得判断に使う",
+            comment="算出した時刻。パラメータを変えて計算し直したときの区別に使う",
         ),
         sa.Column(
             "created_at",
@@ -271,7 +273,7 @@ def upgrade() -> None:
             comment="レコード更新日時",
         ),
         sa.CheckConstraint(
-            "status IN ('ok', 'no_route', 'error')",
+            "status IN ('ok', 'no_route')",
             name=op.f("ck_t_station_commutes_station_commutes_status"),
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_t_station_commutes")),
@@ -282,7 +284,7 @@ def upgrade() -> None:
                 "uq_t_station_commutes_origin_station_g_cd_destination_station_g_cd"
             ),
         ),
-        comment="駅ペアの通勤所要時間キャッシュ（Routes API・TRANSIT）",
+        comment="駅ペアの通勤所要時間キャッシュ",
     )
 
 

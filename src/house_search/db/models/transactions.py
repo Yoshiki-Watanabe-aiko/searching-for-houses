@@ -40,8 +40,8 @@ LOG_LEVELS = ("INFO", "WARN", "ERROR")
 RUN_STATUSES = ("running", "completed", "failed", "aborted")
 # 掲載の駅表記と駅マスタの同定結果。ambiguous / unmatched は採点上 unknown として扱う。
 MATCH_STATUSES = ("matched", "ambiguous", "unmatched")
-# 通勤時間キャッシュの状態。no_route は「経路なし」を明示的に記録するための値。
-COMMUTE_STATUSES = ("ok", "no_route", "error")
+# 通勤時間キャッシュの状態。no_route は「線路がつながっていない」を明示的に記録する値。
+COMMUTE_STATUSES = ("ok", "no_route")
 
 
 class ListingGroup(TimestampMixin, Base):
@@ -626,16 +626,16 @@ class ListingStation(TimestampMixin, Base):
 
 
 class StationCommute(TimestampMixin, Base):
-    """駅ペアの所要時間キャッシュ（Google Maps Routes API・TRANSIT）。
+    """駅ペアの通勤所要時間キャッシュ。
 
-    採点と再採点をネットワーク非依存に保つための表。``rescore`` が
+    採点と再採点をネットワークにもCSVにも依存させないための表。``rescore`` が
     「DB保存済みの属性からの純関数」であることは v2 の設計上の性質なので、
-    通勤時間も**駅ペアごとに一度だけ**取得してここへ落とす。
+    所要時間は**駅グループのペアごとに一度だけ**求めてここへ落とす。
 
-    ⚠ **Routes API は経路が見つからないと HTTP 200 のまま本文が ``{}`` になる**（実測）。
-    例外にならないため ``status='no_route'`` として明示的に記録する。
-    このプロジェクトは同型の罠（SUUMO のエラーページ・ATHOME の認証ページ・
-    課題#29 の無効パラメータ）を既に3度踏んでいる。
+    ⚠ **算出は Google Maps ではない。** Routes API・Directions API とも
+    **日本の公共交通経路を返さない**ことを実測で確認した（米国の同じ呼び出しは
+    経路を返し、日本は HTTP 200 のまま本文が空。DRIVE なら日本でも返る）。
+    駅データ.jp の接続情報から自前で経路を探索している（→ ADR 0016）。
 
     目的地も駅グループコードで持つので、**勤務先が変わっても行が増えるだけ**で
     既存のキャッシュは無効にならない。
@@ -644,10 +644,8 @@ class StationCommute(TimestampMixin, Base):
     __tablename__ = "t_station_commutes"
     __table_args__ = (
         UniqueConstraint("origin_station_g_cd", "destination_station_g_cd"),
-        CheckConstraint(
-            "status IN ('ok', 'no_route', 'error')", name="station_commutes_status"
-        ),
-        {"comment": "駅ペアの通勤所要時間キャッシュ（Routes API・TRANSIT）"},
+        CheckConstraint("status IN ('ok', 'no_route')", name="station_commutes_status"),
+        {"comment": "駅ペアの通勤所要時間キャッシュ"},
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, comment="キャッシュID")
@@ -661,30 +659,26 @@ class StationCommute(TimestampMixin, Base):
         String(10),
         nullable=False,
         comment=(
-            "ok=所要時間を取得 / no_route=経路なし（APIが200で空応答）/ error=取得失敗。"
-            "再取得の対象は error だけ"
+            "ok=所要時間を算出できた / no_route=線路がつながっておらず到達できない。"
+            "到達不能を明示的に記録し、欠損と区別する"
         ),
     )
     commute_minutes: Mapped[int | None] = mapped_column(
-        Integer, comment="所要時間（分）。status='ok' のときだけ入る。秒は切り上げる"
+        Integer, comment="所要時間（分）。status='ok' のときだけ入る"
     )
-    raw_duration_sec: Mapped[int | None] = mapped_column(
-        Integer,
-        comment="APIが返した所要時間（秒）の生値。丸め方を変えても取り直さずに済むように残す",
+    transfers: Mapped[int | None] = mapped_column(
+        Integer, comment="乗換回数。所要時間の内訳を人が確かめるために持つ"
     )
-    departure_time: Mapped[dt.datetime] = mapped_column(
+    distance_km: Mapped[float | None] = mapped_column(
+        Numeric(7, 2), comment="経路上の駅間距離の合計（km）。校正のときに使う"
+    )
+    source: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        comment="算出元（rail_graph=駅データ.jpの接続情報からの自前計算）",
+    )
+    computed_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        comment=(
-            "計算に使った出発時刻。所要時間はダイヤに依存するので、"
-            "駅ペア間の比較可能性を保つには全ペアで時刻を揃える必要がある"
-        ),
-    )
-    error_detail: Mapped[str | None] = mapped_column(
-        Text, comment="status='error' のときのHTTPステータスと本文抜粋"
-    )
-    fetched_at: Mapped[dt.datetime] = mapped_column(
-        DateTime(timezone=True),
-        nullable=False,
-        comment="APIを叩いた時刻。error 行の再取得判断に使う",
+        comment="算出した時刻。パラメータを変えて計算し直したときの区別に使う",
     )

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Connection, Engine, text
 
 from house_search.commute.normalize import normalize_key
 
@@ -186,7 +186,7 @@ def sync_stations(engine: Engine, rows: tuple[StationRow, ...]) -> tuple[int, in
 
 
 def resolve_station_group(
-    engine: Engine, station_name: str, prefecture_code: int | None = None
+    conn: Connection, station_name: str, prefecture_code: int | None = None
 ) -> tuple[int, str] | None:
     """駅名から駅グループコードを引く（勤務先の最寄り駅の解決に使う）。
 
@@ -205,8 +205,7 @@ def resolve_station_group(
     if prefecture_code is not None:
         sql += " AND pref_cd = :pref"
         params["pref"] = prefecture_code
-    with engine.connect() as conn:
-        found = conn.execute(text(sql), params).all()
+    found = conn.execute(text(sql), params).all()
     if len(found) != 1:
         return None
     return int(found[0][0]), str(found[0][1])
