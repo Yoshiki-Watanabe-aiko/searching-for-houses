@@ -43,7 +43,7 @@ INSERT INTO m_sites (
     representative_priority, notes
 ) VALUES
     ('SUUMO',      'SUUMO',           'https://suumo.jp',          'HTTP',       TRUE,  2.5, 5, NULL,  10, NULL),
-    ('HOMES',      'LIFULL HOME''S',  'https://www.homes.co.jp',   'HTTP',       TRUE,  2.5, 5, NULL,  20, NULL),
+    ('HOMES',      'LIFULL HOME''S',  'https://www.homes.co.jp',   'HTTP',       TRUE,  10.0, 5, NULL,  20, '2.5秒では絞られる。実測（2026-09-03）で4秒間隔でも6リクエスト目からHTTP 202＋空ボディになり、以後はパラメータなしのURLでも同じになった。本番でも起きており t_scrape_logs は112件すべて Document is empty・掲載は10件しか入っていなかった。ユーザー判断で間隔のみ10秒へ広げた（→ 課題#17）'),
     ('ATHOME',     'アットホーム',     'https://www.athome.co.jp',  'HTTP',       FALSE, 6.0, 5, NULL,  30, 'Phase 3 でHTTP取得を確認。ただしパズル認証のボット検知があり、3秒間隔で47件連続取得したら発動した。間隔を6秒に広げたが発動したままのため Phase 5 で is_active=false（--site で名指しすれば回復を観測できる → 課題#20）'),
     ('NIFTY',      'ニフティ不動産',   'https://myhome.nifty.com',  'HTTP',       TRUE,  3.0, 5, NULL,  40, '他社サイトの掲載を集約するポータル。市区指定が必須。外部ドメインへ飛ぶ掲載は取り込まない'),
     ('GOO',        'goo不動産',        'https://house.goo.ne.jp',   'HTTP',       TRUE,  2.5, 5, NULL,  50, '掲載重複が多い'),
