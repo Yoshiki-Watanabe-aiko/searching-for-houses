@@ -52,7 +52,7 @@ def _insert(
     return conn.execute(
         text(
             """
-            INSERT INTO t_properties (
+            INSERT INTO t_listings (
                 site_id, property_type_id, external_id, url, title,
                 price, mgmt_fee_monthly, area_sqm, layout, floor_num,
                 address, prefecture, status, first_seen_at, last_seen_at,
@@ -81,27 +81,27 @@ def _insert(
     ).scalar_one()
 
 
-def _add_feature(conn: Connection, property_id: int, condition_code: str) -> None:
+def _add_feature(conn: Connection, listing_id: int, condition_code: str) -> None:
     conn.execute(
         text(
-            "INSERT INTO t_property_features "
-            "(property_id, condition_id, source, extracted_at, created_at, updated_at) "
-            "SELECT :property_id, id, 'DETAIL', now(), now(), now() "
+            "INSERT INTO t_listing_features "
+            "(listing_id, condition_id, source, extracted_at, created_at, updated_at) "
+            "SELECT :listing_id, id, 'DETAIL', now(), now(), now() "
             "FROM m_conditions WHERE code = :code"
         ),
-        {"property_id": property_id, "code": condition_code},
+        {"listing_id": listing_id, "code": condition_code},
     )
 
 
-def _group_of(conn: Connection, property_id: int) -> int | None:
+def _group_of(conn: Connection, listing_id: int) -> int | None:
     return conn.execute(
-        text("SELECT group_id FROM t_properties WHERE id = :id"), {"id": property_id}
+        text("SELECT group_id FROM t_listings WHERE id = :id"), {"id": listing_id}
     ).scalar_one()
 
 
 def _representative(conn: Connection, group_id: int) -> int | None:
     return conn.execute(
-        text("SELECT representative_property_id FROM t_property_groups WHERE id = :id"),
+        text("SELECT representative_listing_id FROM t_listing_groups WHERE id = :id"),
         {"id": group_id},
     ).scalar_one()
 
@@ -119,7 +119,7 @@ def test_同一住戸の別サイト掲載が1グループになる(conn: Connec
     assert _group_of(conn, a) is not None
     assert _group_of(conn, a) == _group_of(conn, b)
     member_count = conn.execute(
-        text("SELECT member_count FROM t_property_groups WHERE id = :id"),
+        text("SELECT member_count FROM t_listing_groups WHERE id = :id"),
         {"id": _group_of(conn, a)},
     ).scalar_one()
     assert member_count == 2
@@ -139,7 +139,7 @@ def test_構成要素が欠けた掲載はグループ化されない(conn: Conn
     dedup_groups.sync_groups(conn)
     assert _group_of(conn, orphan) is None
     key = conn.execute(
-        text("SELECT dedup_key FROM t_properties WHERE id = :id"), {"id": orphan}
+        text("SELECT dedup_key FROM t_listings WHERE id = :id"), {"id": orphan}
     ).scalar_one()
     assert key is None
 
@@ -199,8 +199,8 @@ def test_代表が成約したら次の代表へ移る(conn: Connection) -> None
 
     assert _representative(conn, group_id) == other
     change = next(c for c in changes if c.group_id == group_id)
-    assert change.previous_property_id == cheap
-    assert change.current_property_id == other
+    assert change.previous_listing_id == cheap
+    assert change.current_listing_id == other
     # 高いほうへ移ったので安値通知の対象にはならない
     assert change.is_cheaper is False
 
@@ -214,7 +214,7 @@ def test_より安い掲載が現れたら安値通知の候補になる(conn: C
     dedup_groups.refresh_dedup_keys(conn, [cheaper])
     changes = dedup_groups.sync_groups(conn)
 
-    change = next(c for c in changes if c.current_property_id == cheaper)
+    change = next(c for c in changes if c.current_listing_id == cheaper)
     assert change.is_cheaper is True
     assert change.previous_cost == 105000  # 100000 + 管理費5000
     assert change.current_cost == 85000
@@ -226,11 +226,11 @@ def test_掲載が全て消えたグループは削除される(conn: Connection
     dedup_groups.sync_groups(conn)
     group_id = _group_of(conn, only)
 
-    conn.execute(text("DELETE FROM t_properties WHERE id = :id"), {"id": only})
+    conn.execute(text("DELETE FROM t_listings WHERE id = :id"), {"id": only})
     dedup_groups.sync_groups(conn)
 
     remaining = conn.execute(
-        text("SELECT count(*) FROM t_property_groups WHERE id = :id"), {"id": group_id}
+        text("SELECT count(*) FROM t_listing_groups WHERE id = :id"), {"id": group_id}
     ).scalar_one()
     assert remaining == 0
 
@@ -246,7 +246,7 @@ def test_設備はグループ内の和集合で読まれる(conn: Connection) -
     dedup_groups.refresh_dedup_keys(conn, [a, b])
     dedup_groups.sync_groups(conn)
 
-    views = persist.load_property_views(conn, property_ids=[a, b])
+    views = persist.load_listing_views(conn, listing_ids=[a, b])
     # サイトAでしか判らない設備とサイトBでしか判らない設備がマージされる
     assert {"SEC_AUTOLOCK", "BATH_SEPARATE"} <= views[a].feature_codes
     assert {"SEC_AUTOLOCK", "BATH_SEPARATE"} <= views[b].feature_codes
@@ -256,12 +256,12 @@ def test_詳細取得済みはグループ内の誰かが取れていれば真�
     fetched = _insert(conn, site_code="SUUMO", external_id="v1")
     pending = _insert(conn, site_code="GOO", external_id="v2")
     conn.execute(
-        text("UPDATE t_properties SET detail_fetched_at = now() WHERE id = :id"), {"id": fetched}
+        text("UPDATE t_listings SET detail_fetched_at = now() WHERE id = :id"), {"id": fetched}
     )
     dedup_groups.refresh_dedup_keys(conn, [fetched, pending])
     dedup_groups.sync_groups(conn)
 
-    views = persist.load_property_views(conn, property_ids=[pending])
+    views = persist.load_listing_views(conn, listing_ids=[pending])
     assert views[pending].detail_fetched is True
 
 
@@ -272,10 +272,10 @@ def test_順位は代表と未グループ物件にだけ振られる(conn: Conn
     dedup_groups.refresh_dedup_keys(conn, [representative, member, alone])
     dedup_groups.sync_groups(conn)
 
-    for property_id, score in ((representative, 70.0), (member, 69.0), (alone, 80.0)):
+    for listing_id, score in ((representative, 70.0), (member, 69.0), (alone, 80.0)):
         persist.save_score(
             conn,
-            property_id=property_id,
+            listing_id=listing_id,
             pattern_name="テスト",
             must_result="pass",
             score=score,
@@ -285,10 +285,10 @@ def test_順位は代表と未グループ物件にだけ振られる(conn: Conn
     persist.update_ranks(conn, "テスト")
 
     ranks = {
-        property_id: rank
-        for property_id, rank in conn.execute(
+        listing_id: rank
+        for listing_id, rank in conn.execute(
             text(
-                "SELECT property_id, rank_in_pattern FROM t_property_scores "
+                "SELECT listing_id, rank_in_pattern FROM t_listing_scores "
                 "WHERE pattern_name = 'テスト'"
             )
         )
@@ -311,7 +311,7 @@ def test_同じグループの別掲載は新着として二重通知されな�
 
     persist.record_notification(
         conn,
-        property_id=first,
+        listing_id=first,
         group_id=group_id,
         pattern_name="テスト",
         notification_type="new",
@@ -322,26 +322,26 @@ def test_同じグループの別掲載は新着として二重通知されな�
 
     assert persist.already_notified(
         conn,
-        property_id=second,
+        listing_id=second,
         pattern_name="テスト",
         notification_type="new",
         group_id=group_id,
     )
     # グループを渡さなければ別物件として扱われる
     assert not persist.already_notified(
-        conn, property_id=second, pattern_name="テスト", notification_type="new"
+        conn, listing_id=second, pattern_name="テスト", notification_type="new"
     )
 
 
 def test_安値通知は同額なら再送しないが更に安くなれば送る(conn: Connection) -> None:
-    property_id = _insert(conn, site_code="SUUMO", external_id="x1")
-    dedup_groups.refresh_dedup_keys(conn, [property_id])
+    listing_id = _insert(conn, site_code="SUUMO", external_id="x1")
+    dedup_groups.refresh_dedup_keys(conn, [listing_id])
     dedup_groups.sync_groups(conn)
-    group_id = _group_of(conn, property_id)
+    group_id = _group_of(conn, listing_id)
 
     persist.record_notification(
         conn,
-        property_id=property_id,
+        listing_id=listing_id,
         group_id=group_id,
         pattern_name="テスト",
         notification_type="cheaper_listing",

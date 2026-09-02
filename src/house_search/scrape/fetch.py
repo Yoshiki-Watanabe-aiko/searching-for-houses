@@ -11,6 +11,7 @@ import random
 import time
 import urllib.robotparser
 from dataclasses import dataclass, field
+from typing import NoReturn
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -26,6 +27,9 @@ BACKOFF_BASE_SEC = 4.0
 CONSECUTIVE_FAILURE_LIMIT = 5
 
 RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
+# 404 は「その掲載が無い」という正常な状態変化なので例外にせず response を返す。
+# 呼び出し側（``is_sold``）が掲載終了の判定に使う。
+NOT_FOUND_STATUS = 404
 
 
 class SiteAborted(RuntimeError):
@@ -137,10 +141,20 @@ class SiteFetcher:
             except httpx.HTTPError as exc:
                 last_error = exc
             else:
-                if response.status_code not in RETRYABLE_STATUSES:
-                    response.raise_for_status()
-                    self.stats.consecutive_failures = 0
-                    return response
+                status = response.status_code
+                if status not in RETRYABLE_STATUSES:
+                    if status < 400 or status == NOT_FOUND_STATUS:
+                        self.stats.consecutive_failures = 0
+                        return response
+                    # 403・405 のように相手が明示的に拒否している。再試行せず
+                    # 失敗として数え、連続すれば打ち切る。ここを例外の素通しに
+                    # すると失敗が1件も数えられず、打ち切りが永久に発火しない
+                    return self._fail(
+                        url,
+                        httpx.HTTPStatusError(
+                            f"HTTP {status}", request=response.request, response=response
+                        ),
+                    )
                 last_error = httpx.HTTPStatusError(
                     f"HTTP {response.status_code}", request=response.request, response=response
                 )
@@ -150,6 +164,10 @@ class SiteFetcher:
                 self.sleep(backoff)  # type: ignore[operator]
                 backoff *= 2
 
+        return self._fail(url, last_error)
+
+    def _fail(self, url: str, last_error: Exception | None) -> NoReturn:
+        """失敗を数えて例外にする。連続が続けばサイトごと打ち切る。"""
         self.stats.failures += 1
         self.stats.consecutive_failures += 1
         if self.stats.consecutive_failures >= CONSECUTIVE_FAILURE_LIMIT:

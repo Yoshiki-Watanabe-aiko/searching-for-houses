@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from house_search.config.metrics import MUST_ITEMS_BY_NAME
-from house_search.scoring.property_view import PropertyView, normalize_layout
+from house_search.scoring.listing_view import ListingView, normalize_layout
 
 PASS = "pass"
 FAIL = "fail"
@@ -23,7 +23,7 @@ UNKNOWN = "unknown"
 # 判定の悪いほうが勝つ（1つでも fail があれば全体は fail）。
 _SEVERITY = {PASS: 0, UNKNOWN: 1, FAIL: 2}
 
-# MUST項目名 → PropertyView から値を取り出すときの metric 名。
+# MUST項目名 → ListingView から値を取り出すときの metric 名。
 # 項目名から機械的に導くと ``area_min`` が ``area`` になるなど取り違えるため明示する。
 _VALUE_METRIC: dict[str, str] = {
     "rent_total_max": "rent_total",
@@ -93,7 +93,7 @@ def _compare_min(value: float | None, limit: float) -> str:
     return PASS if value >= limit else FAIL
 
 
-def _check_layouts(view: PropertyView, allowed: list[str]) -> tuple[str, object]:
+def _check_layouts(view: ListingView, allowed: list[str]) -> tuple[str, object]:
     actual = view.normalized_layout
     if actual is None:
         return UNKNOWN, None
@@ -101,7 +101,7 @@ def _check_layouts(view: PropertyView, allowed: list[str]) -> tuple[str, object]
     return (PASS if actual in allowed_normalized else FAIL), view.layout
 
 
-def _check_features(view: PropertyView, required: list[str]) -> tuple[str, object]:
+def _check_features(view: ListingView, required: list[str]) -> tuple[str, object]:
     """必須設備の判定。
 
     詳細ページ未取得なら判定できないので unknown。取得済みなら
@@ -113,7 +113,7 @@ def _check_features(view: PropertyView, required: list[str]) -> tuple[str, objec
     return (PASS if not missing else FAIL), missing
 
 
-def evaluate_must(view: PropertyView, must: object, *, list_stage_only: bool = False) -> MustResult:
+def evaluate_must(view: ListingView, must: object, *, list_stage_only: bool = False) -> MustResult:
     """MUST条件を評価する。
 
     ``list_stage_only`` が True のときは一覧ページだけで判定できる項目に限定し、

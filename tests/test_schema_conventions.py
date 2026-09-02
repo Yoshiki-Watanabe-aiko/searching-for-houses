@@ -26,10 +26,10 @@ EXPECTED_MASTER_TABLES = {
 }
 EXPECTED_TRANSACTION_TABLES = {
     "t_notifications",
-    "t_properties",
-    "t_property_features",
-    "t_property_groups",
-    "t_property_scores",
+    "t_listings",
+    "t_listing_features",
+    "t_listing_groups",
+    "t_listing_scores",
     "t_ranking_digests",
     "t_scrape_logs",
     "t_scrape_runs",
@@ -182,9 +182,9 @@ def test_市区町村サイト値が縦持ちで引ける(test_engine: Engine) -
 def test_生成列rent_totalが賃料と管理費の合計になる(test_engine: Engine) -> None:
     """アプリ側の算出漏れで賃料合計がドリフトしないことをDB側で担保する。"""
     with test_engine.begin() as conn:
-        property_id = conn.execute(
+        listing_id = conn.execute(
             text("""
-                INSERT INTO t_properties
+                INSERT INTO t_listings
                     (site_id, property_type_id, external_id, url, price, mgmt_fee_monthly)
                 SELECT s.id, p.id, 'TEST-RENT-TOTAL', 'https://example.com/test', 65000, 5000
                 FROM m_sites s, m_property_types p
@@ -194,21 +194,21 @@ def test_生成列rent_totalが賃料と管理費の合計になる(test_engine:
         ).scalar_one()
         try:
             rent_total = conn.execute(
-                text("SELECT rent_total FROM t_properties WHERE id = :id"),
-                {"id": property_id},
+                text("SELECT rent_total FROM t_listings WHERE id = :id"),
+                {"id": listing_id},
             ).scalar_one()
             assert rent_total == 70000
 
             # 価格が未定（NULL）なら合計も NULL になる（新築の価格未定対応）
             conn.execute(
-                text("UPDATE t_properties SET price = NULL WHERE id = :id"), {"id": property_id}
+                text("UPDATE t_listings SET price = NULL WHERE id = :id"), {"id": listing_id}
             )
             assert (
                 conn.execute(
-                    text("SELECT rent_total FROM t_properties WHERE id = :id"),
-                    {"id": property_id},
+                    text("SELECT rent_total FROM t_listings WHERE id = :id"),
+                    {"id": listing_id},
                 ).scalar_one()
                 is None
             )
         finally:
-            conn.execute(text("DELETE FROM t_properties WHERE id = :id"), {"id": property_id})
+            conn.execute(text("DELETE FROM t_listings WHERE id = :id"), {"id": listing_id})

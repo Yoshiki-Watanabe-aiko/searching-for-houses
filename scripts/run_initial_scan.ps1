@@ -138,12 +138,6 @@ $scanArgs = @("scan", "--seed", "--detail-limit", "$DetailLimit")
 if (-not $Drain) { $scanArgs += "--full" }
 Invoke-HouseSearch -Label "全サイトのシードスキャン" -Arguments $scanArgs | Out-Null
 
-# 賃貸EX は is_active=false の観測モード。--site で名指ししたときだけ動く。
-# robots.txt がクエリ付きURLを禁じており価格上限を渡せないので一覧が膨らむ。
-# --full は付けない（216市区 × 最大50ページで際限なく伸びるため）
-Invoke-HouseSearch -Label "賃貸EXの観測（課題#5の判断材料）" `
-                   -Arguments @("scan", "--seed", "--site", "CHINTAI_EX", "--detail-limit", "800") | Out-Null
-
 Write-Step "==== 初回全件スキャン終了 ===="
 Write-Step "次にやること: regroup → rescore → dedup-stats → coverage"
 exit 0

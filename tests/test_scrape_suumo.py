@@ -232,3 +232,18 @@ def test_詳細から住所と徒歩分数が取れる(detail) -> None:
 def test_値なしの欄は種別固有属性に入れない(detail) -> None:
     # 「向き: -」を属性として持つと、後段が「-」という値を意味ありと誤解する
     assert "facing" not in detail.type_specific_attrs
+
+
+@pytest.mark.parametrize(
+    ("hint", "expected"),
+    [(90000, "ct=9.0"), (156000, "ct=16.0"), (120000, "ct=12.0"), (95000, "ct=10.0")],
+)
+def test_賃料上限は整数の万円へ切り上げる(scraper: SuumoScraper, hint, expected) -> None:
+    """``ct`` は選択肢が決まっており、端数を渡すと掲載0件になる。
+
+    実測（2026-09-02・千代田区）: ``ct=15.6`` で0件 / ``ct=16.0`` で100件 /
+    ``ct`` 無しで160件。**HTTP 200 で返るためエラーにならず**、
+    「取れているつもり」で気づけない（→ 課題#29）。
+    """
+    url = scraper.list_urls(p := _pattern(price_max_hint=hint), _areas(p))[0]
+    assert expected in url

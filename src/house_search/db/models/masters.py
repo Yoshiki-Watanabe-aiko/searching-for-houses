@@ -149,7 +149,7 @@ class Condition(TimestampMixin, Base):
         server_default=text("false"),
         comment=(
             "詳細ページ本文からのローカル抽出対象か。"
-            "true の条件だけが m_condition_synonyms の辞書を持ち t_property_features に載る。"
+            "true の条件だけが m_condition_synonyms の辞書を持ち t_listing_features に載る。"
             "エリア・価格上限のような検索軸そのものは false"
         ),
     )

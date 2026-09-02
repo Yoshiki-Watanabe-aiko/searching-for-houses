@@ -64,7 +64,7 @@ class MetricSpec:
     unit: str
     property_types: frozenset[str]
     source_columns: tuple[str, ...]
-    """値の取得元となる ``t_properties`` の列。複数なら合算した派生値になる。"""
+    """値の取得元となる ``t_listings`` の列。複数なら合算した派生値になる。"""
 
     @property
     def is_derived(self) -> bool:

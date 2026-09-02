@@ -139,8 +139,8 @@ FROM (VALUES
     ('NEARBY', 'NEARBY_SCHOOL', '小学校800m以内', NULL, 'boolean', TRUE, 3),
     ('NEARBY', 'NEARBY_PARK', '公園400m以内', NULL, 'boolean', TRUE, 4),
     -- ここから v2 で追加した売買固有の条件
-    ('PRICE_BUY', 'PRICE_BUY_MGMT_FEE', '管理費（月額）', 'マンション売買の管理費。t_properties.mgmt_fee_monthly に格納する', 'range', FALSE, 5),
-    ('PRICE_BUY', 'PRICE_BUY_REPAIR_RESERVE', '修繕積立金（月額）', 'マンション売買の修繕積立金。t_properties.repair_reserve_monthly に格納する', 'range', FALSE, 6),
+    ('PRICE_BUY', 'PRICE_BUY_MGMT_FEE', '管理費（月額）', 'マンション売買の管理費。t_listings.mgmt_fee_monthly に格納する', 'range', FALSE, 5),
+    ('PRICE_BUY', 'PRICE_BUY_REPAIR_RESERVE', '修繕積立金（月額）', 'マンション売買の修繕積立金。t_listings.repair_reserve_monthly に格納する', 'range', FALSE, 6),
     ('BUILDING', 'BLDG_TOTAL_UNITS', '総戸数', 'マンションの総戸数', 'number', FALSE, 9),
     ('FEAT', 'FEAT_VACANT', '現況空家（即引渡し可）', '中古物件が空室で引渡しが早い', 'boolean', TRUE, 16),
     ('CERT', 'CERT_INSPECTION', '建物状況調査（インスペクション）実施済', NULL, 'boolean', TRUE, 1),

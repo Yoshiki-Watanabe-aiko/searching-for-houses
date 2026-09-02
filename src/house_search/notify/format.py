@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from house_search.scoring.property_view import PropertyView
+from house_search.scoring.listing_view import ListingView
 from house_search.scoring.score import STATUS_UNKNOWN, ScoreResult
 
 # 通知種別 → embed の色（requirements.md §9）。
@@ -37,10 +37,10 @@ DIGEST_TRUNCATION_NOTE = "…（以降は文字数上限のため省略）"
 
 
 @dataclass(frozen=True, slots=True)
-class NotifiableProperty:
+class NotifiableListing:
     """通知に必要な物件情報。DB行から詰め替えて使う。"""
 
-    property_id: int
+    listing_id: int
     site_code: str
     url: str
     title: str | None
@@ -73,21 +73,21 @@ class NotifiableProperty:
 
 
 def notifiable_from(
-    view: PropertyView,
+    view: ListingView,
     *,
     member_count: int = 1,
     other_site_codes: tuple[str, ...] = (),
     price_prev: int | None = None,
     previous_total: int | None = None,
     previous_site_code: str | None = None,
-) -> NotifiableProperty:
+) -> NotifiableListing:
     """採点用ビューを通知用の値に詰め替える。
 
     ``scan`` と ``digest`` の双方が同じ形で通知を組み立てられるように、
     詰め替えはここ1箇所にまとめてある。
     """
-    return NotifiableProperty(
-        property_id=view.property_id or 0,
+    return NotifiableListing(
+        listing_id=view.listing_id or 0,
         site_code=view.site_code or "",
         url=view.url or "",
         title=view.title,
@@ -111,7 +111,7 @@ def _yen(value: int | None) -> str:
     return f"{value:,}円" if value is not None else "—"
 
 
-def _summary_line(prop: NotifiableProperty) -> str:
+def _summary_line(prop: NotifiableListing) -> str:
     """間取り・面積・築年・徒歩を1行にまとめる。"""
     parts = [
         prop.layout or "—",
@@ -122,8 +122,8 @@ def _summary_line(prop: NotifiableProperty) -> str:
     return " / ".join(parts)
 
 
-def build_property_embed(
-    prop: NotifiableProperty,
+def build_listing_embed(
+    prop: NotifiableListing,
     score: ScoreResult,
     *,
     notification_type: str,
@@ -212,8 +212,8 @@ def build_property_embed(
     return embed
 
 
-def build_property_message(
-    prop: NotifiableProperty,
+def build_listing_message(
+    prop: NotifiableListing,
     score: ScoreResult,
     *,
     notification_type: str,
@@ -223,7 +223,7 @@ def build_property_message(
     """個別通知1件ぶんのメッセージ本体。"""
     return {
         "embeds": [
-            build_property_embed(
+            build_listing_embed(
                 prop,
                 score,
                 notification_type=notification_type,
@@ -239,7 +239,7 @@ class DigestEntry:
     """ダイジェスト1行ぶん。"""
 
     rank: int
-    prop: NotifiableProperty
+    prop: NotifiableListing
     score: ScoreResult
 
 

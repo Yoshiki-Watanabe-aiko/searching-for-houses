@@ -50,7 +50,7 @@ class RescoreResult:
 class ReExtractResult:
     """再抽出の結果。"""
 
-    properties: int
+    listings: int
     features: int
     unknown_tokens: int
 
@@ -77,8 +77,12 @@ def rescore(runtime: Runtime, pattern) -> RescoreResult:
     )
 
     with runtime.engine.connect() as conn:
-        views = persist.load_property_views(
-            conn, property_type_code=pattern.property_type, site_codes=list(pattern.sites)
+        views = persist.load_listing_views(
+            conn,
+            property_type_code=pattern.property_type,
+            site_codes=list(pattern.sites),
+            # scan と同じくエリア帯に閉じる（帯外の既存データを採点しない）
+            city_names=list(pattern.search.cities) or None,
         )
 
     with runtime.engine.begin() as conn:
@@ -87,7 +91,7 @@ def rescore(runtime: Runtime, pattern) -> RescoreResult:
             score = calculate_score(view, pattern.want) if not must.is_fail else None
             persist.save_score(
                 conn,
-                property_id=view.property_id,
+                listing_id=view.listing_id,
                 pattern_name=pattern.name,
                 must_result=must.result,
                 score=score.score if score else None,
@@ -97,6 +101,8 @@ def rescore(runtime: Runtime, pattern) -> RescoreResult:
             result.scored += 1
             if must.passes(pattern.must.unknown_policy):
                 result.must_pass += 1
+        # エリア帯から外れた掲載の古いスコア行を消す（残すと二重採点になる）
+        persist.prune_scores(conn, pattern.name, list(views))
         persist.update_ranks(conn, pattern.name)
     return result
 
@@ -110,7 +116,7 @@ def needs_rescore(runtime: Runtime, pattern) -> bool:
     with runtime.engine.connect() as conn:
         row = conn.execute(
             text(
-                "SELECT COUNT(*) FROM t_property_scores "
+                "SELECT COUNT(*) FROM t_listing_scores "
                 "WHERE pattern_name = :name AND config_hash <> :hash"
             ),
             {"name": pattern.name, "hash": pattern.config_hash()},
@@ -123,30 +129,30 @@ def digest(runtime: Runtime, pattern, *, dry_run: bool = False) -> DigestResult:
     with runtime.engine.connect() as conn:
         rows = conn.execute(
             text(
-                "SELECT property_id, rank_in_pattern FROM t_property_scores "
+                "SELECT listing_id, rank_in_pattern FROM t_listing_scores "
                 "WHERE pattern_name = :name AND must_result <> 'fail' AND score IS NOT NULL "
                 "ORDER BY rank_in_pattern ASC LIMIT :top_n"
             ),
             {"name": pattern.name, "top_n": pattern.ranking.top_n},
         ).all()
-        property_ids = [row.property_id for row in rows]
-        views = persist.load_property_views(conn, property_ids=property_ids)
+        listing_ids = [row.listing_id for row in rows]
+        views = persist.load_listing_views(conn, listing_ids=listing_ids)
         # 順位はグループ代表にしか振っていないので、ここに並ぶのは
         # 「代表 ＋ 未グループ物件」だけになる（= ランキングがグループ単位）
-        memberships = dedup.group_membership(conn, property_ids)
+        memberships = dedup.group_membership(conn, listing_ids)
 
     entries = [
         DigestEntry(
             rank=row.rank_in_pattern or index,
             prop=notifiable_from(
-                views[row.property_id],
-                member_count=memberships[row.property_id].member_count,
-                other_site_codes=memberships[row.property_id].other_site_codes,
+                views[row.listing_id],
+                member_count=memberships[row.listing_id].member_count,
+                other_site_codes=memberships[row.listing_id].other_site_codes,
             ),
-            score=calculate_score(views[row.property_id], pattern.want),
+            score=calculate_score(views[row.listing_id], pattern.want),
         )
         for index, row in enumerate(rows, start=1)
-        if row.property_id in views
+        if row.listing_id in views
     ]
 
     message = build_digest_message(
@@ -163,7 +169,7 @@ def digest(runtime: Runtime, pattern, *, dry_run: bool = False) -> DigestResult:
             pattern_name=pattern.name,
             digest_group=pattern.ranking.digest_group,
             top_n=len(entries),
-            property_ids=[entry.prop.property_id for entry in entries],
+            listing_ids=[entry.prop.listing_id for entry in entries],
             status="sent" if sent else "failed",
         )
     return DigestResult(pattern_name=pattern.name, entries=len(entries), sent=sent)
@@ -177,11 +183,11 @@ def re_extract(
     辞書を育てたあとはこれを回すだけで既存物件へ反映される。
     原文を保存してあることの効き目がここに出る。
     """
-    result = ReExtractResult(properties=0, features=0, unknown_tokens=0)
+    result = ReExtractResult(listings=0, features=0, unknown_tokens=0)
     sql = (
         "SELECT p.id, p.url, p.site_id, s.code AS site_code, p.raw_features_text, "
         "       p.floor_num, p.total_floors "
-        "FROM t_properties p JOIN m_sites s ON s.id = p.site_id "
+        "FROM t_listings p JOIN m_sites s ON s.id = p.site_id "
         "WHERE p.raw_features_text IS NOT NULL"
     )
     if limit:
@@ -217,7 +223,7 @@ def re_extract(
                 property_family=family,
                 sample_url=row.url,
             )
-        result.properties += 1
+        result.listings += 1
         result.features += saved
         result.unknown_tokens += len(unknown)
     return result
@@ -247,15 +253,24 @@ def check_sold(runtime: Runtime, pattern, *, limit: int = 100) -> CheckSoldResul
     with runtime.engine.connect() as conn:
         rows = conn.execute(
             text(
-                "SELECT p.id, p.url, s.code AS site_code FROM t_properties p "
+                "SELECT p.id, p.url, s.code AS site_code FROM t_listings p "
                 "JOIN m_sites s ON s.id = p.site_id "
                 "JOIN m_property_types pt ON pt.id = p.property_type_id "
                 "WHERE p.status = 'active' AND pt.code = :ptype AND s.code = ANY(:sites) "
+                # そのパターンで採点されている掲載だけを追う。エリア帯を絞ると
+                # 帯外の掲載は last_seen_at が更新されなくなり「最も古い」に
+                # なるため、これが無いと確認枠が帯外で埋まってしまう
+                "  AND EXISTS ("
+                "    SELECT 1 FROM t_listing_scores sc"
+                "    WHERE sc.listing_id = p.id AND sc.pattern_name = :pattern_name"
+                "      AND sc.must_result <> 'fail'"
+                "  ) "
                 "ORDER BY p.last_seen_at ASC LIMIT :limit"
             ),
             {
                 "ptype": pattern.property_type,
                 "sites": list(pattern.sites),
+                "pattern_name": pattern.name,
                 "limit": limit,
             },
         ).all()
@@ -276,10 +291,10 @@ def check_sold(runtime: Runtime, pattern, *, limit: int = 100) -> CheckSoldResul
             rate_limit=RateLimit(min_interval_sec=runtime.settings.default_min_interval_sec),
         )
         try:
-            for property_id, url in items:
+            for listing_id, url in items:
                 result.checked += 1
                 if scraper.is_sold(fetcher, url):
-                    sold_ids.append(property_id)
+                    sold_ids.append(listing_id)
         finally:
             client.close()
 
@@ -298,7 +313,7 @@ class SiteCoverage:
     """サイト1件ぶんの充足率（``coverage`` コマンドの出力）。"""
 
     site_code: str
-    properties: int
+    listings: int
     detail_fetched: int
     with_features: int
     features_avg: float
@@ -339,21 +354,21 @@ def measure_coverage(runtime: Runtime) -> list[SiteCoverage]:
     query = text(
         f"""
         WITH feature_counts AS (
-            SELECT property_id, count(*) AS n
-            FROM t_property_features
-            GROUP BY property_id
+            SELECT listing_id, count(*) AS n
+            FROM t_listing_features
+            GROUP BY listing_id
         )
         SELECT s.code AS site_code,
-               count(*) AS properties,
+               count(*) AS listings,
                count(p.detail_fetched_at) AS detail_fetched,
                count(f.n) AS with_features,
                COALESCE(avg(f.n), 0) AS features_avg,
                COALESCE(min(f.n), 0) AS features_min,
                COALESCE(max(f.n), 0) AS features_max,
                {filled}
-        FROM t_properties p
+        FROM t_listings p
         JOIN m_sites s ON s.id = p.site_id
-        LEFT JOIN feature_counts f ON f.property_id = p.id
+        LEFT JOIN feature_counts f ON f.listing_id = p.id
         GROUP BY s.code
         ORDER BY s.code
         """
@@ -364,7 +379,7 @@ def measure_coverage(runtime: Runtime) -> list[SiteCoverage]:
     return [
         SiteCoverage(
             site_code=row["site_code"],
-            properties=row["properties"],
+            listings=row["listings"],
             detail_fetched=row["detail_fetched"],
             with_features=row["with_features"],
             features_avg=float(row["features_avg"]),
@@ -382,7 +397,7 @@ class RegroupResult:
 
     keys_refreshed: int
     groups: int
-    grouped_properties: int
+    grouped_listings: int
     representative_changes: int
     cheaper_candidates: int
 
@@ -398,14 +413,14 @@ def regroup(runtime: Runtime) -> RegroupResult:
     with runtime.engine.begin() as conn:
         refreshed = dedup.refresh_dedup_keys(conn)
         changes = dedup.sync_groups(conn)
-        groups = conn.execute(text("SELECT count(*) FROM t_property_groups")).scalar_one()
+        groups = conn.execute(text("SELECT count(*) FROM t_listing_groups")).scalar_one()
         grouped = conn.execute(
-            text("SELECT count(*) FROM t_properties WHERE group_id IS NOT NULL")
+            text("SELECT count(*) FROM t_listings WHERE group_id IS NOT NULL")
         ).scalar_one()
     return RegroupResult(
         keys_refreshed=refreshed,
         groups=int(groups),
-        grouped_properties=int(grouped),
+        grouped_listings=int(grouped),
         representative_changes=len(changes),
         cheaper_candidates=sum(1 for change in changes if change.is_cheaper),
     )

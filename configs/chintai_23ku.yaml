@@ -1,40 +1,31 @@
 # ============================================================
-# 東京賃貸一人暮らし（v1 の chintai_alone.yaml を v2 形式へ変換したもの）
+# 東京23区（エリア帯1）
 #
-# v1 からの変更点:
-#   - discord_webhook（実URL）→ webhook_ref。実URLは .env に集約したため
-#     このファイルは Git 管理できる（検索条件の変更履歴が残る）
-#   - conditions（全条件AND絞り込み）→ search / must / want の3層
-#   - v1 で features に挙げていた25条件のうち、
-#       * STRUCT_RC / STRUCT_SRC は排他選択のため any_of で1項目に統合
-#       * FEAT_WITH_PHOTO / FEAT_WITH_LAYOUT は WANT から除外
-#         （掲載の充実度であって物件の質ではない。加点すると写真の無い
-#           優良物件が平凡だが写真付きの物件の下に沈む）
-#     を除いた22項目を want.features に配分した
+# **エリア帯**: 賃料相場が一様とみなせる地理的範囲。1パターン=1帯で、
+# 帯どうしは重ならない（→ CONTEXT.md / ADR 0013）。
+# 相場の違う範囲を1帯に混ぜると安い側が構造的に上位を独占するため、
+# 4都県を1本のパターンで見ていた v2 初版を2帯へ分割した。
 #
-# 重み配分は「案A バランス型」（2026-09-01 ユーザー確定）:
-#   設備 weight 合計 110 / 数値 weight 合計 90（数値の比率 45%）
-# 重みは rescore コマンド（ネットワーク不要のDBバッチ）でいつでも振り直せる。
-#
-# 検証: uv run house-search validate-config
+# **MUST の賃料上限は実測で確定した**（2026-09-02）。まず12万円で広めに取り、
+# 分布を見てから締めた。7万円では23区の掲載が足立区19件・葛飾区11件しかなく
+# ランキングが成立せず、12万円では554件・中央値105,000円・第3四分位115,000円と
+# 上限に張り付いて「実際には契約しない価格帯」がダイジェストの枠を使っていた。
+# 中央値にあたる10万円を上限とする。
+# ⚠ 締める方向は rescore だけで試せるが、**緩める方向は取り直しになる**
+# （MUST 1段目で fail の掲載はDBにも入らないため）。
 # ============================================================
 
-name: "東京賃貸一人暮らし"
+name: "東京23区賃貸"
 property_type: "CHINTAI"
 webhook_ref: "CHINTAI_ALONE"
 
-# Phase 3 時点で実装済みは MINIMINI を除く10サイト（すべてHTTP取得）。
-# 未実装サイトは scan が明示的にスキップを報告する
-# （黙って無視すると「実装済みだが未配線」を見逃すため）。
-# CHINTAI_EX は m_sites.is_active=false のため通常の scan では取りに行かず、
-# `scan --site CHINTAI_EX --seed` で名指ししたときだけ観測用に動く。
 sites:
   - "SUUMO"
   - "HOMES"      # AWS WAF に阻まれることがある（課題#17）
   - "GOO"
   - "ABLE"
-  - "CHINTAI_EX"
-  - "ATHOME"     # パズル認証のボット検知が発動中（課題#20）
+  - "CHINTAI_EX" # Phase 5 で本採用。帯2でユニーク率63%・69代表
+  - "ATHOME"     # パズル認証のボット検知が発動中（課題#20・is_active=false）
   - "MINIMINI"   # 未実装。HTTPでもブラウザでも reCAPTCHA を通れない（課題#18）
   - "EHEYA"
   - "NIFTY"
@@ -45,23 +36,41 @@ sites:
 search:
   prefectures:
     - "東京都"
-    - "千葉県"
-    - "埼玉県"
-    - "神奈川県"
-  cities: []
-  # MUST上限 70,000円 の約1.3倍。管理費が別計上のサイトで
-  # 「賃料は上限内だが管理費込みだと超える」物件を取りこぼさないためのバッファ
-  price_max_hint: 90000
+  cities:
+    # 東京23区
+    - "千代田区"
+    - "中央区"
+    - "港区"
+    - "新宿区"
+    - "文京区"
+    - "台東区"
+    - "墨田区"
+    - "江東区"
+    - "品川区"
+    - "目黒区"
+    - "大田区"
+    - "世田谷区"
+    - "渋谷区"
+    - "中野区"
+    - "杉並区"
+    - "豊島区"
+    - "北区"
+    - "荒川区"
+    - "板橋区"
+    - "練馬区"
+    - "足立区"
+    - "葛飾区"
+    - "江戸川区"
+  # MUST上限 100,000円 の約1.3倍
+  price_max_hint: 130000
 
 # ---- MUST: 未充足なら除外 ----
 must:
-  rent_total_max: 70000
+  rent_total_max: 100000   # 実測で確定（2026-09-02）
   layouts: ["1LDK", "2K", "2DK", "2LDK", "3LDK"]
   area_min: 30.0
   walk_minutes_max: 20
   features: []
-  # 判定不能なMUSTは通す。詳細ページを見るまで確定しない項目で
-  # 取りこぼすより、いったん残して採点で沈める方が損失が小さい
   unknown_policy: keep
 
 # ---- WANT: 重み付き加点（設備 110 / 数値 90）----
@@ -97,14 +106,14 @@ want:
     - { code: MOVEIN_INSTRUMENT,    weight: 2 }    # 楽器相談可
     - { code: EQUIP_PARKING,        weight: 1 }    # 駐車場あり
 
-  # worst は MUST の上限／下限に一致させてある。
-  # MUST ぎりぎりの物件は該当metricが0点になり、余裕のある物件ほど加点される
+  # best/worst は帯の相場に合わせる。帯2と同じ 50,000〜70,000 にすると
+  # 23区の掲載はほぼ全て0点になり、賃料の weight 40 が死ぬ
   numeric:
-    - { metric: rent_total,   weight: 40, best: 50000, worst: 70000 }
+    - { metric: rent_total,   weight: 40, best: 70000, worst: 100000 }
     - { metric: area_sqm,     weight: 20, best: 45,    worst: 30 }
     - { metric: age_years,    weight: 15, best: 0,     worst: 30 }
     - { metric: walk_minutes, weight: 15, best: 3,     worst: 20 }
 
 ranking:
   top_n: 15
-  digest_group: null
+  digest_group: "賃貸"

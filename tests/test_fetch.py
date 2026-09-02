@@ -105,16 +105,67 @@ def test_429も再試行対象() -> None:
     assert build_fetcher(robots_then(factory)).get("https://example.com/list").text == "ok"
 
 
-def test_404は再試行せず即座に例外になる() -> None:
+def test_404は再試行せず_例外にもせずresponseを返す() -> None:
+    """404 は「その掲載が無い」という正常な状態変化。
+
+    例外にすると ``is_sold`` の 404 判定に到達できず、掲載終了を
+    永久に検知できなくなる（実際にデッドコードになっていた）。
+    """
     attempts: list[int] = []
 
     def factory(request: httpx.Request) -> httpx.Response:
         attempts.append(1)
         return httpx.Response(404)
 
-    with pytest.raises(httpx.HTTPStatusError):
-        build_fetcher(robots_then(factory)).get("https://example.com/gone")
+    fetcher = build_fetcher(robots_then(factory))
+    response = fetcher.get("https://example.com/gone")
+    assert response.status_code == 404
     assert len(attempts) == 1
+    assert fetcher.stats.failures == 0
+
+
+def test_拒否系の4xxは再試行せず失敗として数える() -> None:
+    """403・405 は相手の拒否。再試行しないが失敗には数える。
+
+    数えないと ``consecutive_failures`` が増えず、連続失敗による
+    打ち切りが永久に発火しない（NIFTY の 405 を271回叩き続けた原因）。
+    """
+    attempts: list[int] = []
+
+    def factory(request: httpx.Request) -> httpx.Response:
+        attempts.append(1)
+        return httpx.Response(405)
+
+    fetcher = build_fetcher(robots_then(factory))
+    with pytest.raises(RuntimeError):
+        fetcher.get("https://example.com/detail")
+    assert len(attempts) == 1  # 再試行しない
+    assert fetcher.stats.failures == 1
+    assert fetcher.stats.consecutive_failures == 1
+
+
+def test_拒否系が連続したらサイトを打ち切る() -> None:
+    fetcher = build_fetcher(robots_then(lambda r: httpx.Response(403)))
+    for _ in range(CONSECUTIVE_FAILURE_LIMIT - 1):
+        with pytest.raises(RuntimeError):
+            fetcher.get("https://example.com/detail")
+    with pytest.raises(SiteAborted):
+        fetcher.get("https://example.com/detail")
+
+
+def test_404は連続失敗の数え上げをリセットする() -> None:
+    """404 は失敗ではないので、拒否系のカウントを持ち越さない。"""
+    responses = [httpx.Response(403), httpx.Response(404)]
+
+    def factory(request: httpx.Request) -> httpx.Response:
+        return responses.pop(0) if responses else httpx.Response(200, text="ok")
+
+    fetcher = build_fetcher(robots_then(factory))
+    with pytest.raises(RuntimeError):
+        fetcher.get("https://example.com/a")
+    assert fetcher.stats.consecutive_failures == 1
+    fetcher.get("https://example.com/b")
+    assert fetcher.stats.consecutive_failures == 0
 
 
 def test_リトライを使い切ったら失敗として数える() -> None:

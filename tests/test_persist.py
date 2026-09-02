@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from house_search.pipeline.persist import resolve_city
 
 # ``load_city_index`` と同じ形（都道府県, 正規名, city_id）。
@@ -46,3 +48,34 @@ def test_都道府県だけ判る住所は市区をNoneにする() -> None:
 def test_住所が無ければ何も返さない() -> None:
     assert resolve_city(None, INDEX) == (None, None)
     assert resolve_city("", INDEX) == (None, None)
+
+
+def test_エリア帯で絞る採点クエリが実行できる(test_engine) -> None:
+    """``city_names`` を渡したときのSQLが壊れていないことを固定する。
+
+    エリア帯は取得URLを絞るだけなので、採点側でも閉じないと帯外の既存データに
+    帯のスコアが付き、23区のランキングが群馬県境の掲載で埋まる。
+    絞り込みの効き目そのものは実データで確認する（掲載0件でも構文は検証できる）。
+    """
+    from house_search.pipeline import persist
+
+    with test_engine.connect() as conn:
+        views = persist.load_listing_views(
+            conn, property_type_code="CHINTAI", city_names=["足立区", "本庄市"]
+        )
+    assert isinstance(views, dict)
+
+
+@pytest.mark.parametrize(
+    "address",
+    ["千葉県鎌ヶ谷市丸山１", "千葉県鎌ケ谷市丸山１"],
+)
+def test_小書き仮名の表記ゆれを吸収して市区を解決する(address: str) -> None:
+    """``m_cities`` は「鎌ケ谷市」だがサイトの住所は「鎌ヶ谷市」で来る。
+
+    NFKC 正規化ではこの2文字は区別されるため、そのまま照合すると
+    city_id が NULL のまま残る。実測（2026-09-02）で SUUMO の新規485件中
+    34件がこれで落ち、**帯に属さない掲載が両方の帯に採点された**。
+    """
+    index = [("千葉県", "鎌ケ谷市", 12224)]
+    assert resolve_city(address, index) == ("千葉県", 12224)

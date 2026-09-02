@@ -39,7 +39,7 @@ LOG_LEVELS = ("INFO", "WARN", "ERROR")
 RUN_STATUSES = ("running", "completed", "failed", "aborted")
 
 
-class PropertyGroup(TimestampMixin, Base):
+class ListingGroup(TimestampMixin, Base):
     """クロスサイト名寄せグループ。
 
     ランキング上位が同一物件のサイト違いで埋まるのを防ぐため v2 では本体要件。
@@ -47,7 +47,7 @@ class PropertyGroup(TimestampMixin, Base):
     （名寄せの誤爆はランキングから物件を1件消すことを意味し偽陽性のコストが高い）。
     """
 
-    __tablename__ = "t_property_groups"
+    __tablename__ = "t_listing_groups"
     __table_args__ = {"comment": "クロスサイト名寄せグループ"}
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, comment="グループID")
@@ -64,9 +64,9 @@ class PropertyGroup(TimestampMixin, Base):
     property_type_id: Mapped[int] = mapped_column(
         ForeignKey("m_property_types.id"), nullable=False, comment="物件種別ID"
     )
-    representative_property_id: Mapped[int | None] = mapped_column(
-        # t_properties との相互参照になるため、ALTER TABLE で後付けする。
-        ForeignKey("t_properties.id", ondelete="SET NULL", use_alter=True),
+    representative_listing_id: Mapped[int | None] = mapped_column(
+        # t_listings との相互参照になるため、ALTER TABLE で後付けする。
+        ForeignKey("t_listings.id", ondelete="SET NULL", use_alter=True),
         comment="代表物件ID。月額/価格が最安 → 設備抽出数が最多 → サイト優先順 で選定",
     )
     member_count: Mapped[int] = mapped_column(
@@ -78,7 +78,7 @@ class PropertyGroup(TimestampMixin, Base):
     )
 
 
-class Property(TimestampMixin, Base):
+class Listing(TimestampMixin, Base):
     """物件。1行=1掲載（サイト×external_id）。名寄せ後の実体はグループ側で表す。
 
     新築マンション・新築分譲戸建ては「1物件=1棟/1プロジェクト」粒度で、価格がレンジ表示
@@ -86,15 +86,15 @@ class Property(TimestampMixin, Base):
     価格未定は ``price`` を NULL にして ``type_specific_attrs.price_undecided`` を立てる。
     """
 
-    __tablename__ = "t_properties"
+    __tablename__ = "t_listings"
     __table_args__ = (
         UniqueConstraint("site_id", "external_id"),
         CheckConstraint("status IN ('active', 'sold', 'removed')", name="properties_status"),
-        Index("ix_t_properties_status", "status"),
-        Index("ix_t_properties_dedup_key", "dedup_key", postgresql_where="dedup_key IS NOT NULL"),
-        Index("ix_t_properties_group_id", "group_id", postgresql_where="group_id IS NOT NULL"),
+        Index("ix_t_listings_status", "status"),
+        Index("ix_t_listings_dedup_key", "dedup_key", postgresql_where="dedup_key IS NOT NULL"),
+        Index("ix_t_listings_group_id", "group_id", postgresql_where="group_id IS NOT NULL"),
         Index(
-            "ix_t_properties_detail_pending",
+            "ix_t_listings_detail_pending",
             "site_id",
             # 詳細取得キューはこの部分インデックスで引く。中断・再開はSQLの自然な帰結になる。
             postgresql_where="detail_fetched_at IS NULL AND status = 'active'",
@@ -205,10 +205,10 @@ class Property(TimestampMixin, Base):
         ),
     )
     dedup_key: Mapped[str | None] = mapped_column(
-        String(64), comment="名寄せキー（SHA256 hex）。t_property_groups.dedup_key と対応"
+        String(64), comment="名寄せキー（SHA256 hex）。t_listing_groups.dedup_key と対応"
     )
     group_id: Mapped[int | None] = mapped_column(
-        ForeignKey("t_property_groups.id", ondelete="SET NULL", use_alter=True),
+        ForeignKey("t_listing_groups.id", ondelete="SET NULL", use_alter=True),
         comment="名寄せグループID。未グループ化は NULL",
     )
 
@@ -238,18 +238,18 @@ class Property(TimestampMixin, Base):
     )
 
 
-class PropertyFeature(TimestampMixin, Base):
+class ListingFeature(TimestampMixin, Base):
     """物件から抽出した設備・特性。辞書マッチングの結果。"""
 
-    __tablename__ = "t_property_features"
+    __tablename__ = "t_listing_features"
     __table_args__ = (
-        UniqueConstraint("property_id", "condition_id"),
+        UniqueConstraint("listing_id", "condition_id"),
         {"comment": "物件の設備・特性抽出結果"},
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, comment="抽出結果ID")
-    property_id: Mapped[int] = mapped_column(
-        ForeignKey("t_properties.id", ondelete="CASCADE"), nullable=False, comment="物件ID"
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("t_listings.id", ondelete="CASCADE"), nullable=False, comment="物件ID"
     )
     condition_id: Mapped[int] = mapped_column(
         ForeignKey("m_conditions.id"), nullable=False, comment="条件ID"
@@ -275,26 +275,26 @@ class PropertyFeature(TimestampMixin, Base):
     )
 
 
-class PropertyScore(TimestampMixin, Base):
+class ListingScore(TimestampMixin, Base):
     """パターンごとのスコアリング結果。
 
     スコアはDB保存済みの物件属性と抽出済み features からの純関数のため、
     再計算はネットワーク不要のDBバッチで完結する。
     """
 
-    __tablename__ = "t_property_scores"
+    __tablename__ = "t_listing_scores"
     __table_args__ = (
-        UniqueConstraint("property_id", "pattern_name"),
+        UniqueConstraint("listing_id", "pattern_name"),
         CheckConstraint(
             "must_result IN ('pass', 'fail', 'unknown')", name="property_scores_must_result"
         ),
-        Index("ix_t_property_scores_pattern_score", "pattern_name", "score"),
+        Index("ix_t_listing_scores_pattern_score", "pattern_name", "score"),
         {"comment": "検索パターン別のスコアリング結果"},
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, comment="スコアID")
-    property_id: Mapped[int] = mapped_column(
-        ForeignKey("t_properties.id", ondelete="CASCADE"), nullable=False, comment="物件ID"
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("t_listings.id", ondelete="CASCADE"), nullable=False, comment="物件ID"
     )
     pattern_name: Mapped[str] = mapped_column(
         String(255), nullable=False, comment="検索パターン名（YAML の name）"
@@ -343,17 +343,17 @@ class Notification(CreatedAtMixin, Base):
             "notification_type IN ('new', 'sold', 'price_up', 'price_down', 'cheaper_listing')",
             name="notifications_type",
         ),
-        Index("ix_t_notifications_property_type", "property_id", "notification_type"),
+        Index("ix_t_notifications_property_type", "listing_id", "notification_type"),
         Index("ix_t_notifications_pattern_name", "pattern_name"),
         {"comment": "個別通知の送信履歴（追記専用）"},
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, comment="通知ID")
-    property_id: Mapped[int] = mapped_column(
-        ForeignKey("t_properties.id", ondelete="CASCADE"), nullable=False, comment="物件ID"
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("t_listings.id", ondelete="CASCADE"), nullable=False, comment="物件ID"
     )
     group_id: Mapped[int | None] = mapped_column(
-        ForeignKey("t_property_groups.id", ondelete="SET NULL"),
+        ForeignKey("t_listing_groups.id", ondelete="SET NULL"),
         comment="名寄せグループID。重複抑制はグループ単位で行う",
     )
     pattern_name: Mapped[str] = mapped_column(String(255), nullable=False, comment="検索パターン名")
@@ -402,7 +402,7 @@ class RankingDigest(CreatedAtMixin, Base):
         ),
     )
     top_n: Mapped[int] = mapped_column(Integer, nullable=False, comment="掲載した件数")
-    property_ids: Mapped[list | None] = mapped_column(
+    listing_ids: Mapped[list | None] = mapped_column(
         JSONB, comment="掲載した物件IDの配列（順位順）"
     )
     status: Mapped[str] = mapped_column(
@@ -556,10 +556,10 @@ __all__ = [
     "PROPERTY_STATUSES",
     "RUN_STATUSES",
     "Notification",
-    "Property",
-    "PropertyFeature",
-    "PropertyGroup",
-    "PropertyScore",
+    "Listing",
+    "ListingFeature",
+    "ListingGroup",
+    "ListingScore",
     "RankingDigest",
     "ScrapeLog",
     "ScrapeRun",

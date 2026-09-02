@@ -25,9 +25,9 @@ class GroupChange:
 
     group_id: int
     dedup_key: str
-    previous_property_id: int | None
+    previous_listing_id: int | None
     previous_cost: int | None
-    current_property_id: int | None
+    current_listing_id: int | None
     current_cost: int | None
     member_count: int
 
@@ -49,7 +49,7 @@ class SiteDedupStats:
     """サイト1件ぶんの名寄せ実測（``dedup-stats`` の出力）。"""
 
     site_code: str
-    properties: int
+    listings: int
     with_key: int
     grouped: int
     shared_with_other_sites: int
@@ -58,25 +58,25 @@ class SiteDedupStats:
 
     @property
     def key_rate(self) -> float:
-        return self.with_key / self.properties if self.properties else 0.0
+        return self.with_key / self.listings if self.listings else 0.0
 
     @property
     def unique_rate(self) -> float:
         """他サイトに同一物件の掲載が無い割合。賃貸EX の採否判断に使う。"""
-        if not self.properties:
+        if not self.listings:
             return 0.0
-        return 1.0 - self.shared_with_other_sites / self.properties
+        return 1.0 - self.shared_with_other_sites / self.listings
 
 
 _SELECT_FOR_KEY = """
     SELECT p.id, pt.family, p.address, p.prefecture, p.layout, p.area_sqm, p.floor_num,
            p.land_area_sqm, p.building_area_sqm, p.address_normalized, p.dedup_key
-    FROM t_properties p
+    FROM t_listings p
     JOIN m_property_types pt ON pt.id = p.property_type_id
 """
 
 
-def refresh_dedup_keys(conn: Connection, property_ids: list[int] | None = None) -> int:
+def refresh_dedup_keys(conn: Connection, listing_ids: list[int] | None = None) -> int:
     """``address_normalized`` と ``dedup_key`` を計算し直す。
 
     値が変わった行だけ UPDATE する。詳細取得で階数・住所が埋まるとキーが
@@ -86,11 +86,11 @@ def refresh_dedup_keys(conn: Connection, property_ids: list[int] | None = None) 
     """
     params: dict[str, Any] = {}
     sql = _SELECT_FOR_KEY
-    if property_ids is not None:
-        if not property_ids:
+    if listing_ids is not None:
+        if not listing_ids:
             return 0
-        sql += " WHERE p.id = ANY(:property_ids)"
-        params["property_ids"] = property_ids
+        sql += " WHERE p.id = ANY(:listing_ids)"
+        params["listing_ids"] = listing_ids
 
     updates: list[dict[str, Any]] = []
     for row in conn.execute(text(sql), params):
@@ -106,13 +106,13 @@ def refresh_dedup_keys(conn: Connection, property_ids: list[int] | None = None) 
         )
         if normalized == row.address_normalized and key == row.dedup_key:
             continue
-        updates.append({"property_id": row.id, "address_normalized": normalized, "dedup_key": key})
+        updates.append({"listing_id": row.id, "address_normalized": normalized, "dedup_key": key})
 
     if updates:
         conn.execute(
             text(
-                "UPDATE t_properties SET address_normalized = :address_normalized, "
-                "dedup_key = :dedup_key, updated_at = now() WHERE id = :property_id"
+                "UPDATE t_listings SET address_normalized = :address_normalized, "
+                "dedup_key = :dedup_key, updated_at = now() WHERE id = :listing_id"
             ),
             updates,
         )
@@ -124,10 +124,10 @@ def refresh_dedup_keys(conn: Connection, property_ids: list[int] | None = None) 
 _RANK_REPRESENTATIVES = text(
     """
     WITH feature_counts AS (
-        SELECT property_id, count(*) AS n FROM t_property_features GROUP BY property_id
+        SELECT listing_id, count(*) AS n FROM t_listing_features GROUP BY listing_id
     ), ranked AS (
         SELECT p.group_id,
-               p.id AS property_id,
+               p.id AS listing_id,
                COALESCE(p.rent_total, p.price) AS cost,
                ROW_NUMBER() OVER (
                    PARTITION BY p.group_id
@@ -136,21 +136,21 @@ _RANK_REPRESENTATIVES = text(
                             s.representative_priority ASC,
                             p.id ASC
                ) AS rn
-        FROM t_properties p
+        FROM t_listings p
         JOIN m_sites s ON s.id = p.site_id
-        LEFT JOIN feature_counts fc ON fc.property_id = p.id
+        LEFT JOIN feature_counts fc ON fc.listing_id = p.id
         WHERE p.group_id IS NOT NULL AND p.status = 'active'
     )
-    SELECT group_id, property_id, cost FROM ranked WHERE rn = 1
+    SELECT group_id, listing_id, cost FROM ranked WHERE rn = 1
     """
 )
 
 _INSERT_GROUPS = text(
     """
-    INSERT INTO t_property_groups
+    INSERT INTO t_listing_groups
         (dedup_key, property_type_id, member_count, created_at, updated_at)
     SELECT DISTINCT ON (p.dedup_key) p.dedup_key, p.property_type_id, 1, now(), now()
-    FROM t_properties p
+    FROM t_listings p
     WHERE p.dedup_key IS NOT NULL
     ORDER BY p.dedup_key, p.property_type_id
     ON CONFLICT (dedup_key) DO NOTHING
@@ -159,10 +159,10 @@ _INSERT_GROUPS = text(
 
 _SELECT_BEFORE = text(
     """
-    SELECT g.id, g.dedup_key, g.member_count, g.representative_property_id,
+    SELECT g.id, g.dedup_key, g.member_count, g.representative_listing_id,
            COALESCE(p.rent_total, p.price) AS cost
-    FROM t_property_groups g
-    LEFT JOIN t_properties p ON p.id = g.representative_property_id
+    FROM t_listing_groups g
+    LEFT JOIN t_listings p ON p.id = g.representative_listing_id
     """
 )
 
@@ -181,14 +181,14 @@ def sync_groups(conn: Connection) -> list[GroupChange]:
     # 2. 所属を張り替える。キーが消えた物件（住所が粗くなった等）は未グループへ戻す。
     conn.execute(
         text(
-            "UPDATE t_properties p SET group_id = g.id, updated_at = now() "
-            "FROM t_property_groups g "
+            "UPDATE t_listings p SET group_id = g.id, updated_at = now() "
+            "FROM t_listing_groups g "
             "WHERE g.dedup_key = p.dedup_key AND p.group_id IS DISTINCT FROM g.id"
         )
     )
     conn.execute(
         text(
-            "UPDATE t_properties SET group_id = NULL, updated_at = now() "
+            "UPDATE t_listings SET group_id = NULL, updated_at = now() "
             "WHERE dedup_key IS NULL AND group_id IS NOT NULL"
         )
     )
@@ -197,16 +197,16 @@ def sync_groups(conn: Connection) -> list[GroupChange]:
     #    t_notifications.group_id は ON DELETE SET NULL なので履歴は壊れない。
     conn.execute(
         text(
-            "DELETE FROM t_property_groups g "
-            "WHERE NOT EXISTS (SELECT 1 FROM t_properties p WHERE p.group_id = g.id)"
+            "DELETE FROM t_listing_groups g "
+            "WHERE NOT EXISTS (SELECT 1 FROM t_listings p WHERE p.group_id = g.id)"
         )
     )
 
     # 4. 掲載件数。通知に「同一条件の掲載n件」と出すための値。
     conn.execute(
         text(
-            "UPDATE t_property_groups g SET member_count = c.n, updated_at = now() "
-            "FROM (SELECT group_id, count(*) AS n FROM t_properties "
+            "UPDATE t_listing_groups g SET member_count = c.n, updated_at = now() "
+            "FROM (SELECT group_id, count(*) AS n FROM t_listings "
             "      WHERE group_id IS NOT NULL GROUP BY group_id) c "
             "WHERE g.id = c.group_id AND g.member_count IS DISTINCT FROM c.n"
         )
@@ -214,11 +214,11 @@ def sync_groups(conn: Connection) -> list[GroupChange]:
 
     # 5. 代表選定。交代の検出のため、更新前の状態を先に読む。
     before = {
-        row.id: (row.representative_property_id, row.dedup_key, row.member_count, row.cost)
+        row.id: (row.representative_listing_id, row.dedup_key, row.member_count, row.cost)
         for row in conn.execute(_SELECT_BEFORE)
     }
     chosen = {
-        row.group_id: (row.property_id, row.cost) for row in conn.execute(_RANK_REPRESENTATIVES)
+        row.group_id: (row.listing_id, row.cost) for row in conn.execute(_RANK_REPRESENTATIVES)
     }
 
     changes: list[GroupChange] = []
@@ -229,14 +229,14 @@ def sync_groups(conn: Connection) -> list[GroupChange]:
         current_id, current_cost = chosen.get(group_id, (None, None))
         if current_id == previous_id:
             continue
-        updates.append({"group_id": group_id, "representative_property_id": current_id})
+        updates.append({"group_id": group_id, "representative_listing_id": current_id})
         changes.append(
             GroupChange(
                 group_id=group_id,
                 dedup_key=dedup_key,
-                previous_property_id=previous_id,
+                previous_listing_id=previous_id,
                 previous_cost=previous_cost,
-                current_property_id=current_id,
+                current_listing_id=current_id,
                 current_cost=current_cost,
                 member_count=member_count,
             )
@@ -245,8 +245,8 @@ def sync_groups(conn: Connection) -> list[GroupChange]:
     if updates:
         conn.execute(
             text(
-                "UPDATE t_property_groups SET representative_property_id = "
-                ":representative_property_id, updated_at = now() WHERE id = :group_id"
+                "UPDATE t_listing_groups SET representative_listing_id = "
+                ":representative_listing_id, updated_at = now() WHERE id = :group_id"
             ),
             updates,
         )
@@ -259,27 +259,27 @@ class GroupMembership:
 
     group_id: int | None
     member_count: int
-    representative_property_id: int | None
+    representative_listing_id: int | None
     other_site_codes: tuple[str, ...]
 
     @property
     def is_representative_of(self) -> bool:
-        return self.group_id is not None and self.representative_property_id is not None
+        return self.group_id is not None and self.representative_listing_id is not None
 
 
 _MEMBERSHIP = text(
     """
-    SELECT target.id AS property_id,
+    SELECT target.id AS listing_id,
            target.group_id,
            g.member_count,
-           g.representative_property_id,
+           g.representative_listing_id,
            s.code AS site_code
-    FROM t_properties target
-    JOIN t_property_groups g ON g.id = target.group_id
-    JOIN t_properties member ON member.group_id = target.group_id
+    FROM t_listings target
+    JOIN t_listing_groups g ON g.id = target.group_id
+    JOIN t_listings member ON member.group_id = target.group_id
     JOIN m_sites s ON s.id = member.site_id
     WHERE target.id = ANY(:ids) AND member.id <> target.id AND member.status = 'active'
-    GROUP BY target.id, target.group_id, g.member_count, g.representative_property_id, s.code
+    GROUP BY target.id, target.group_id, g.member_count, g.representative_listing_id, s.code
     ORDER BY target.id, s.code
     """
 )
@@ -288,40 +288,40 @@ _MEMBERSHIP = text(
 # 上のクエリは他メンバーが居ないと1行も返さないため、所属だけを別に引く。
 _MEMBERSHIP_BASE = text(
     """
-    SELECT p.id AS property_id, p.group_id, g.member_count, g.representative_property_id
-    FROM t_properties p
-    JOIN t_property_groups g ON g.id = p.group_id
+    SELECT p.id AS listing_id, p.group_id, g.member_count, g.representative_listing_id
+    FROM t_listings p
+    JOIN t_listing_groups g ON g.id = p.group_id
     WHERE p.id = ANY(:ids)
     """
 )
 
 NO_GROUP = GroupMembership(
-    group_id=None, member_count=1, representative_property_id=None, other_site_codes=()
+    group_id=None, member_count=1, representative_listing_id=None, other_site_codes=()
 )
 
 
-def group_membership(conn: Connection, property_ids: list[int]) -> dict[int, GroupMembership]:
+def group_membership(conn: Connection, listing_ids: list[int]) -> dict[int, GroupMembership]:
     """物件IDごとのグループ所属を返す。未グループの物件も既定値で埋める。
 
     通知の重複抑制（同一住戸の別サイト掲載を新着として二重に送らない）と、
     ダイジェストの「ほかNサイト」表示の双方がこれを使う。
     """
-    if not property_ids:
+    if not listing_ids:
         return {}
-    result: dict[int, GroupMembership] = dict.fromkeys(property_ids, NO_GROUP)
-    for row in conn.execute(_MEMBERSHIP_BASE, {"ids": property_ids}):
-        result[row.property_id] = GroupMembership(
+    result: dict[int, GroupMembership] = dict.fromkeys(listing_ids, NO_GROUP)
+    for row in conn.execute(_MEMBERSHIP_BASE, {"ids": listing_ids}):
+        result[row.listing_id] = GroupMembership(
             group_id=row.group_id,
             member_count=row.member_count,
-            representative_property_id=row.representative_property_id,
+            representative_listing_id=row.representative_listing_id,
             other_site_codes=(),
         )
-    for row in conn.execute(_MEMBERSHIP, {"ids": property_ids}):
-        current = result[row.property_id]
-        result[row.property_id] = GroupMembership(
+    for row in conn.execute(_MEMBERSHIP, {"ids": listing_ids}):
+        current = result[row.listing_id]
+        result[row.listing_id] = GroupMembership(
             group_id=row.group_id,
             member_count=row.member_count,
-            representative_property_id=row.representative_property_id,
+            representative_listing_id=row.representative_listing_id,
             other_site_codes=(*current.other_site_codes, row.site_code),
         )
     return result
@@ -333,14 +333,14 @@ _DEDUP_STATS = text(
            p.address_normalized,
            (p.dedup_key IS NOT NULL) AS has_key,
            (p.group_id IS NOT NULL) AS grouped,
-           (g.representative_property_id = p.id) AS is_representative,
+           (g.representative_listing_id = p.id) AS is_representative,
            EXISTS (
-               SELECT 1 FROM t_properties o
+               SELECT 1 FROM t_listings o
                WHERE o.group_id = p.group_id AND o.site_id <> p.site_id
            ) AS shared
-    FROM t_properties p
+    FROM t_listings p
     JOIN m_sites s ON s.id = p.site_id
-    LEFT JOIN t_property_groups g ON g.id = p.group_id
+    LEFT JOIN t_listing_groups g ON g.id = p.group_id
     ORDER BY s.code, p.id
     """
 )
@@ -356,9 +356,9 @@ def dedup_stats(conn: Connection) -> list[SiteDedupStats]:
     for row in conn.execute(_DEDUP_STATS):
         bucket = buckets.setdefault(
             row.site_code,
-            {"properties": 0, "with_key": 0, "grouped": 0, "shared": 0, "rep": 0, "gran": {}},
+            {"listings": 0, "with_key": 0, "grouped": 0, "shared": 0, "rep": 0, "gran": {}},
         )
-        bucket["properties"] += 1
+        bucket["listings"] += 1
         bucket["with_key"] += int(bool(row.has_key))
         bucket["grouped"] += int(bool(row.grouped))
         bucket["shared"] += int(bool(row.shared))
@@ -369,7 +369,7 @@ def dedup_stats(conn: Connection) -> list[SiteDedupStats]:
     return [
         SiteDedupStats(
             site_code=site_code,
-            properties=bucket["properties"],
+            listings=bucket["listings"],
             with_key=bucket["with_key"],
             grouped=bucket["grouped"],
             shared_with_other_sites=bucket["shared"],
