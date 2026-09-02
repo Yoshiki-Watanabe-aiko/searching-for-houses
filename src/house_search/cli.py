@@ -200,7 +200,7 @@ def _warn_orphan_scores(known_names: list[str]) -> int:
         with get_engine().connect() as conn:
             rows = conn.execute(
                 text(
-                    "SELECT pattern_name, count(*) FROM t_property_scores "
+                    "SELECT pattern_name, count(*) FROM t_listing_scores "
                     "WHERE NOT (pattern_name = ANY(:names)) GROUP BY 1 ORDER BY 2 DESC"
                 ),
                 {"names": known_names},
@@ -211,7 +211,7 @@ def _warn_orphan_scores(known_names: list[str]) -> int:
     for name, count in rows:
         print(
             f"警告  configs に無いパターン '{name}' のスコア行が {count} 件残っています。"
-            " DELETE FROM t_property_scores WHERE pattern_name = '"
+            " DELETE FROM t_listing_scores WHERE pattern_name = '"
             f"{name}'; で消せます",
             file=sys.stderr,
         )
@@ -264,7 +264,7 @@ def _run_scan(args: argparse.Namespace) -> int:
         for site in summary.sites:
             print(
                 f"  {site.site_code:10s} 取得 {site.listings_seen:4d} → "
-                f"MUST1段目通過 {site.listings_kept:4d} → 新規 {site.properties_new:4d} / "
+                f"MUST1段目通過 {site.listings_kept:4d} → 新規 {site.listings_new:4d} / "
                 f"詳細 {site.details_fetched:3d}件 / 設備 {site.features_extracted:4d}件"
             )
         if summary.skipped_sites:
@@ -377,7 +377,7 @@ def _cmd_re_extract(args: argparse.Namespace) -> int:
         return 1
     result = re_extract(runtime, limit=args.limit)
     print(
-        f"再抽出: {result.properties}物件 / 設備 {result.features}件 / "
+        f"再抽出: {result.listings}物件 / 設備 {result.features}件 / "
         f"未知表記 {result.unknown_tokens}件"
     )
     return 0
@@ -417,7 +417,7 @@ def _cmd_coverage(args: argparse.Namespace) -> int:
     print("-" * 52)
     for row in rows:
         print(
-            f"{row.site_code:<12}{row.properties:>7}{row.detail_fetched:>7}"
+            f"{row.site_code:<12}{row.listings:>7}{row.detail_fetched:>7}"
             f"{row.with_features:>7}{row.features_avg:>7.1f}"
             f"{row.features_min:>5}{row.features_max:>5}"
         )
@@ -429,7 +429,7 @@ def _cmd_coverage(args: argparse.Namespace) -> int:
     print("-" * (12 + 10 * len(COVERAGE_COLUMNS)))
     for row in rows:
         cells = "".join(
-            f"{(100 * row.column_filled[c] / row.properties if row.properties else 0):>10.0f}"
+            f"{(100 * row.column_filled[c] / row.listings if row.listings else 0):>10.0f}"
             for c in COVERAGE_COLUMNS
         )
         print(f"{row.site_code:<12}{cells}")
@@ -448,7 +448,7 @@ def _cmd_regroup(args: argparse.Namespace) -> int:
 
     result = regroup(build_runtime())
     print(f"名寄せキーを更新した物件: {result.keys_refreshed}件")
-    print(f"グループ: {result.groups}件 / グループ化された掲載: {result.grouped_properties}件")
+    print(f"グループ: {result.groups}件 / グループ化された掲載: {result.grouped_listings}件")
     print(f"代表が入れ替わったグループ: {result.representative_changes}件")
     if result.cheaper_candidates:
         # regroup では通知しない。既存データへの初回適用で大量発火するため
@@ -477,7 +477,7 @@ def _cmd_dedup_stats(args: argparse.Namespace) -> int:
     print("-" * 60)
     for row in rows:
         print(
-            f"{row.site_code:<12}{row.properties:>6}{row.with_key:>7}{100 * row.key_rate:>7.0f}"
+            f"{row.site_code:<12}{row.listings:>6}{row.with_key:>7}{100 * row.key_rate:>7.0f}"
             f"{row.representative:>6}{row.shared_with_other_sites:>10}"
             f"{100 * row.unique_rate:>10.0f}"
         )
@@ -489,7 +489,7 @@ def _cmd_dedup_stats(args: argparse.Namespace) -> int:
         detail = " / ".join(f"{label} {count}" for label, count in row.granularity.items())
         print(f"{row.site_code:<12}{detail}")
 
-    total = sum(row.properties for row in rows)
+    total = sum(row.listings for row in rows)
     shared = sum(row.shared_with_other_sites for row in rows)
     print()
     print(f"全体: 掲載 {total}件 / 他サイトにも同一住戸がある掲載 {shared}件")

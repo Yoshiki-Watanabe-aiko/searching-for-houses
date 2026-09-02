@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from house_search.config.metrics import METRICS_BY_NAME, normalize
-from house_search.scoring.property_view import PropertyView
+from house_search.scoring.listing_view import ListingView
 
 STATUS_HIT = "hit"
 STATUS_MISS = "miss"
@@ -42,7 +42,7 @@ class ScoreItem:
     value: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        """``t_property_scores.score_breakdown`` へ入れる形。"""
+        """``t_listing_scores.score_breakdown`` へ入れる形。"""
         payload: dict[str, Any] = {
             "code": self.code,
             "name": self.name,
@@ -81,7 +81,7 @@ class ScoreResult:
         return [item.to_dict() for item in self.items]
 
 
-def _feature_item(feat: Any, view: PropertyView) -> ScoreItem:
+def _feature_item(feat: Any, view: ListingView) -> ScoreItem:
     """WANT設備1件を採点する。``any_of`` はいずれか1つ該当すれば満点。"""
     codes = feat.codes
     label = " / ".join(codes) if len(codes) > 1 else codes[0]
@@ -102,7 +102,7 @@ def _feature_item(feat: Any, view: PropertyView) -> ScoreItem:
     )
 
 
-def _numeric_item(item: Any, view: PropertyView) -> ScoreItem:
+def _numeric_item(item: Any, view: ListingView) -> ScoreItem:
     """WANT数値条件1件を採点する。値が取れなければ欠損として扱う。"""
     spec = METRICS_BY_NAME[item.metric]
     value = view.metric_value(item.metric)
@@ -130,7 +130,7 @@ def _numeric_item(item: Any, view: PropertyView) -> ScoreItem:
     )
 
 
-def calculate_score(view: PropertyView, want: Any) -> ScoreResult:
+def calculate_score(view: ListingView, want: Any) -> ScoreResult:
     """WANTスコアを計算する。
 
     設備は条件コード順、数値は metric 名順に固定して加算するため、
@@ -159,4 +159,4 @@ def rank(results: dict[int, ScoreResult]) -> dict[int, int]:
     同点は物件IDの昇順で決める（順位が実行ごとに揺れないように）。
     """
     ordered = sorted(results.items(), key=lambda kv: (-kv[1].score, kv[0]))
-    return {property_id: index for index, (property_id, _) in enumerate(ordered, start=1)}
+    return {listing_id: index for index, (listing_id, _) in enumerate(ordered, start=1)}

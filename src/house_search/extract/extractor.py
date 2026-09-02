@@ -1,7 +1,7 @@
 """設備・特性のローカル抽出。
 
 サイト側の検索フォームで絞り込む代わりに、詳細ページ本文から全サイト同一の
-判定器で設備を取り出す（→ ADR 0003）。原文を ``t_properties.raw_features_text``
+判定器で設備を取り出す（→ ADR 0003）。原文を ``t_listings.raw_features_text``
 に残してあるので、辞書を改善したら再スクレイピングせず ``re-extract`` で
 DB内の原文から全件やり直せる。
 
@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from house_search.extract.dictionary import DictionaryEntry, FeatureDictionary
 from house_search.extract.normalize import is_recordable_token, normalize_text, tokenize
 
-# t_property_features.source の値。
+# t_listing_features.source の値。
 SOURCE_LIST = "LIST"
 SOURCE_DETAIL = "DETAIL"
 SOURCE_SITE_TAG = "SITE_TAG"

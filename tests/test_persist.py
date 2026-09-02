@@ -60,7 +60,7 @@ def test_エリア帯で絞る採点クエリが実行できる(test_engine) -> 
     from house_search.pipeline import persist
 
     with test_engine.connect() as conn:
-        views = persist.load_property_views(
+        views = persist.load_listing_views(
             conn, property_type_code="CHINTAI", city_names=["足立区", "本庄市"]
         )
     assert isinstance(views, dict)

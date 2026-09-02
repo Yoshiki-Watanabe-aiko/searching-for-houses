@@ -1,7 +1,7 @@
 """MUST判定とWANTスコアリング。"""
 
+from house_search.scoring.listing_view import ListingView, normalize_layout
 from house_search.scoring.must import FAIL, PASS, UNKNOWN, MustCheck, MustResult, evaluate_must
-from house_search.scoring.property_view import PropertyView, normalize_layout
 from house_search.scoring.score import (
     KIND_FEATURE,
     KIND_NUMERIC,
@@ -25,7 +25,7 @@ __all__ = [
     "UNKNOWN",
     "MustCheck",
     "MustResult",
-    "PropertyView",
+    "ListingView",
     "ScoreItem",
     "ScoreResult",
     "calculate_score",

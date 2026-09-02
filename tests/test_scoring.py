@@ -8,10 +8,10 @@ import sys
 import textwrap
 
 import pytest
+from house_search.scoring.listing_view import ListingView, normalize_layout
 
 from house_search.config.pattern import parse_pattern
 from house_search.scoring.must import FAIL, PASS, UNKNOWN, evaluate_must
-from house_search.scoring.property_view import PropertyView, normalize_layout
 from house_search.scoring.score import STATUS_UNKNOWN, calculate_score, rank
 
 BASE_PATTERN = {
@@ -27,9 +27,9 @@ def make_pattern(**overrides):
     return parse_pattern({**BASE_PATTERN, **overrides})
 
 
-def make_view(**overrides) -> PropertyView:
+def make_view(**overrides) -> ListingView:
     defaults = {
-        "property_id": 1,
+        "listing_id": 1,
         "price": 60000,
         "mgmt_fee_monthly": 3000,
         "area_sqm": 35.0,
@@ -40,7 +40,7 @@ def make_view(**overrides) -> PropertyView:
         "detail_fetched": True,
         "feature_codes": frozenset(),
     }
-    return PropertyView(**{**defaults, **overrides})
+    return ListingView(**{**defaults, **overrides})
 
 
 # --- 間取り正規化 --------------------------------------------------------
@@ -266,7 +266,7 @@ def test_順位は同点なら物件ID昇順で安定する() -> None:
         want={"numeric": [{"metric": "area_sqm", "weight": 1, "best": 45, "worst": 30}]}
     )
     results = {
-        pid: calculate_score(make_view(property_id=pid, area_sqm=40.0), pattern.want)
+        pid: calculate_score(make_view(listing_id=pid, area_sqm=40.0), pattern.want)
         for pid in (30, 10, 20)
     }
     assert rank(results) == {10: 1, 20: 2, 30: 3}
@@ -283,7 +283,7 @@ def test_weightが0以下なら設定エラーになる() -> None:
 _DETERMINISM_SCRIPT = textwrap.dedent(
     """
     from house_search.config.pattern import parse_pattern
-    from house_search.scoring.property_view import PropertyView
+    from house_search.scoring.listing_view import ListingView
     from house_search.scoring.score import calculate_score
 
     pattern = parse_pattern({
@@ -302,7 +302,7 @@ _DETERMINISM_SCRIPT = textwrap.dedent(
             ],
         },
     })
-    view = PropertyView(
+    view = ListingView(
         price=58000, mgmt_fee_monthly=2000, area_sqm=38.0, detail_fetched=True,
         feature_codes=frozenset({"SEC_AUTOLOCK", "STRUCT_RC", "INT_LAUNDRY"}),
     )

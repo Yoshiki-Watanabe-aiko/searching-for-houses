@@ -108,6 +108,8 @@ class EheyaScraper:
         listings: list[ScrapedListing] = []
         for building in buildings:
             station_info = building.get("mainTransportationText")
+            # ⚠ "properties" は __NEXT_DATA__ のJSONキー。用語統一（物件→掲載）の
+            # 一括置換で壊しやすいので、サイト側の名前であることを明示しておく
             for room in building.get("properties") or []:
                 listing = _parse_room(building, room, station_info=station_info)
                 if listing is not None:

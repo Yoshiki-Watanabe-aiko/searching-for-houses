@@ -28,7 +28,7 @@ def normalize_layout(layout: str | None) -> str | None:
 
 
 @dataclass(frozen=True, slots=True)
-class PropertyView:
+class ListingView:
     """1物件の採点に必要な属性一式。
 
     ``detail_fetched`` が False のときは設備が「未確認」であることを意味し、
@@ -36,7 +36,7 @@ class PropertyView:
     通知に「未確認N項目」と出して判断材料にする）。
     """
 
-    property_id: int | None = None
+    listing_id: int | None = None
     site_code: str | None = None
     url: str | None = None
     title: str | None = None

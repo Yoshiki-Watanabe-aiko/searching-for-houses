@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from house_search.scoring.listing_view import ListingView
 
 from house_search.config.pattern import parse_pattern
 from house_search.notify.discord import MAX_EMBEDS_PER_MESSAGE, DiscordSender
@@ -11,12 +12,11 @@ from house_search.notify.format import (
     COLORS,
     MAX_DESCRIPTION_CHARS,
     DigestEntry,
-    NotifiableProperty,
+    NotifiableListing,
     build_digest_message,
     build_error_message,
-    build_property_message,
+    build_listing_message,
 )
-from house_search.scoring.property_view import PropertyView
 from house_search.scoring.score import calculate_score
 
 PATTERN = parse_pattern(
@@ -38,11 +38,11 @@ PATTERN = parse_pattern(
 )
 
 
-def make_prop(property_id: int = 1, **overrides) -> NotifiableProperty:
+def make_prop(listing_id: int = 1, **overrides) -> NotifiableListing:
     defaults = {
-        "property_id": property_id,
+        "listing_id": listing_id,
         "site_code": "SUUMO",
-        "url": f"https://suumo.jp/chintai/jnc_{property_id}/",
+        "url": f"https://suumo.jp/chintai/jnc_{listing_id}/",
         "title": "テストマンション",
         "price": 58000,
         "mgmt_fee_monthly": 2000,
@@ -53,11 +53,11 @@ def make_prop(property_id: int = 1, **overrides) -> NotifiableProperty:
         "walk_minutes": 8,
         "address": "東京都新宿区西新宿",
     }
-    return NotifiableProperty(**{**defaults, **overrides})
+    return NotifiableListing(**{**defaults, **overrides})
 
 
 def make_score(detail_fetched: bool = True, codes: frozenset[str] = frozenset({"SEC_AUTOLOCK"})):
-    view = PropertyView(
+    view = ListingView(
         price=58000, mgmt_fee_monthly=2000, detail_fetched=detail_fetched, feature_codes=codes
     )
     return calculate_score(view, PATTERN.want)
@@ -67,7 +67,7 @@ def make_score(detail_fetched: bool = True, codes: frozenset[str] = frozenset({"
 
 
 def test_新着通知の色とタイトル() -> None:
-    embed = build_property_message(
+    embed = build_listing_message(
         make_prop(), make_score(), notification_type="new", pattern_name="東京賃貸"
     )["embeds"][0]
     assert embed["color"] == COLORS["new"]
@@ -77,7 +77,7 @@ def test_新着通知の色とタイトル() -> None:
 
 def test_値下がり通知に差分が入る() -> None:
     prop = make_prop(price=55000, price_prev=60000)
-    embed = build_property_message(
+    embed = build_listing_message(
         prop, make_score(), notification_type="price_down", pattern_name="東京賃貸"
     )["embeds"][0]
     values = " ".join(field["value"] for field in embed["fields"])
@@ -87,7 +87,7 @@ def test_値下がり通知に差分が入る() -> None:
 
 
 def test_順位とスコアが入る() -> None:
-    embed = build_property_message(
+    embed = build_listing_message(
         make_prop(),
         make_score(),
         notification_type="new",
@@ -100,7 +100,7 @@ def test_順位とスコアが入る() -> None:
 
 
 def test_未確認項目数がフッタに出る() -> None:
-    embed = build_property_message(
+    embed = build_listing_message(
         make_prop(),
         make_score(detail_fetched=False),
         notification_type="new",
@@ -112,28 +112,28 @@ def test_未確認項目数がフッタに出る() -> None:
 
 def test_全て確認済みなら未確認の表記を出さない() -> None:
     score = make_score(codes=frozenset({"SEC_AUTOLOCK", "INT_LAUNDRY"}))
-    embed = build_property_message(
+    embed = build_listing_message(
         make_prop(), score, notification_type="new", pattern_name="東京賃貸"
     )["embeds"][0]
     assert "未確認" not in embed["footer"]["text"]
 
 
 def test_サムネイルは画像がある時だけ付く() -> None:
-    with_image = build_property_message(
+    with_image = build_listing_message(
         make_prop(image_url="https://img/x.jpg"),
         make_score(),
         notification_type="new",
         pattern_name="P",
     )["embeds"][0]
     assert with_image["thumbnail"]["url"] == "https://img/x.jpg"
-    without = build_property_message(
+    without = build_listing_message(
         make_prop(), make_score(), notification_type="new", pattern_name="P"
     )["embeds"][0]
     assert "thumbnail" not in without
 
 
 def test_物件名が無くても落ちない() -> None:
-    embed = build_property_message(
+    embed = build_listing_message(
         make_prop(title=None), make_score(), notification_type="new", pattern_name="P"
     )["embeds"][0]
     assert embed["title"] == "（物件名なし）"

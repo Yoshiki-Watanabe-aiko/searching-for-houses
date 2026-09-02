@@ -21,11 +21,11 @@ from house_search.extract.extractor import (
     extract_from_text,
     merge_features,
 )
-from house_search.notify.format import build_property_message, notifiable_from
+from house_search.notify.format import build_listing_message, notifiable_from
 from house_search.pipeline import persist
 from house_search.pipeline.runtime import Runtime
+from house_search.scoring.listing_view import ListingView
 from house_search.scoring.must import evaluate_must
-from house_search.scoring.property_view import PropertyView
 from house_search.scoring.score import calculate_score
 from house_search.scrape import get_scraper, resolve_areas
 from house_search.scrape.area import AreaTarget
@@ -63,7 +63,7 @@ class SiteOutcome:
     site_code: str
     listings_seen: int = 0
     listings_kept: int = 0
-    properties_new: int = 0
+    listings_new: int = 0
     details_fetched: int = 0
     features_extracted: int = 0
     errors: list[str] = field(default_factory=list)
@@ -91,8 +91,8 @@ class ScanSummary:
         return sum(site.listings_kept for site in self.sites)
 
     @property
-    def properties_new(self) -> int:
-        return sum(site.properties_new for site in self.sites)
+    def listings_new(self) -> int:
+        return sum(site.listings_new for site in self.sites)
 
     @property
     def details_fetched(self) -> int:
@@ -103,9 +103,9 @@ class ScanSummary:
         return [error for site in self.sites for error in site.errors]
 
 
-def _listing_view(listing: ScrapedListing) -> PropertyView:
+def _listing_view(listing: ScrapedListing) -> ListingView:
     """一覧の情報だけから作る採点用ビュー（1段目のMUST判定に使う）。"""
-    return PropertyView(
+    return ListingView(
         site_code=listing.site_code,
         url=listing.url,
         title=listing.title,
@@ -213,7 +213,7 @@ def _fetch_details(
     with runtime.engine.connect() as conn:
         queue = persist.detail_queue(conn, site_id=site_id, limit=limit)
 
-    for property_id, url in queue:
+    for listing_id, url in queue:
         try:
             response = fetcher.get(scraper.detail_url(url))
         except (SiteAborted, RobotsDisallowed):
@@ -246,8 +246,8 @@ def _fetch_details(
             continue
 
         with runtime.engine.begin() as conn:
-            persist.save_detail(conn, property_id, detail)
-            saved = persist.save_features(conn, property_id, features, runtime.condition_ids)
+            persist.save_detail(conn, listing_id, detail)
+            saved = persist.save_features(conn, listing_id, features, runtime.condition_ids)
             persist.save_unknown_tokens(
                 conn,
                 extraction.unknown_tokens,
@@ -257,16 +257,16 @@ def _fetch_details(
             )
             # 詳細で階数・住所が埋まると、一覧の時点では作れなかった名寄せキーが
             # 作れるようになる。ここで呼ばないとキー充足率が上がらない
-            dedup.refresh_dedup_keys(conn, [property_id])
+            dedup.refresh_dedup_keys(conn, [listing_id])
         outcome.details_fetched += 1
         outcome.features_extracted += saved
 
 
-def _score_pattern(runtime: Runtime, pattern, summary: ScanSummary) -> dict[int, PropertyView]:
+def _score_pattern(runtime: Runtime, pattern, summary: ScanSummary) -> dict[int, ListingView]:
     """パターン対象の物件を採点して保存する。"""
     config_hash = pattern.config_hash()
     with runtime.engine.connect() as conn:
-        views = persist.load_property_views(
+        views = persist.load_listing_views(
             conn,
             property_type_code=pattern.property_type,
             site_codes=list(pattern.sites),
@@ -281,7 +281,7 @@ def _score_pattern(runtime: Runtime, pattern, summary: ScanSummary) -> dict[int,
             score = calculate_score(view, pattern.want) if not must.is_fail else None
             persist.save_score(
                 conn,
-                property_id=view.property_id,
+                listing_id=view.listing_id,
                 pattern_name=pattern.name,
                 must_result=must.result,
                 score=score.score if score else None,
@@ -298,24 +298,24 @@ def _score_pattern(runtime: Runtime, pattern, summary: ScanSummary) -> dict[int,
 
 
 def _group_rank(
-    ranks: dict[int, int], property_id: int, membership: dedup.GroupMembership
+    ranks: dict[int, int], listing_id: int, membership: dedup.GroupMembership
 ) -> int | None:
     """順位を引く。非代表メンバーには代表の順位を見せる。
 
     順位はグループ代表にしか振らないので、非代表の掲載を新着通知するときに
     そのまま引くと「順位未確定」になってしまう。
     """
-    if (rank := ranks.get(property_id)) is not None:
+    if (rank := ranks.get(listing_id)) is not None:
         return rank
-    if membership.representative_property_id is not None:
-        return ranks.get(membership.representative_property_id)
+    if membership.representative_listing_id is not None:
+        return ranks.get(membership.representative_listing_id)
     return None
 
 
 def _notify_cheaper_listings(
     runtime: Runtime,
     pattern,
-    views: dict[int, PropertyView],
+    views: dict[int, ListingView],
     group_changes: list[dedup.GroupChange],
     ranks: dict[int, int],
     webhook_url: str,
@@ -328,9 +328,9 @@ def _notify_cheaper_listings(
     同額の再検出（グループの作り直しなど）では送らない。
     """
     for change in group_changes:
-        if not change.is_cheaper or change.current_property_id is None:
+        if not change.is_cheaper or change.current_listing_id is None:
             continue
-        view = views.get(change.current_property_id)
+        view = views.get(change.current_listing_id)
         if view is None:
             continue
         if not evaluate_must(view, pattern.must).passes(pattern.must.unknown_policy):
@@ -344,13 +344,13 @@ def _notify_cheaper_listings(
                 price=view.price,
             ):
                 continue
-            membership = dedup.group_membership(conn, [change.current_property_id])[
-                change.current_property_id
+            membership = dedup.group_membership(conn, [change.current_listing_id])[
+                change.current_listing_id
             ]
 
-        previous = views.get(change.previous_property_id or -1)
+        previous = views.get(change.previous_listing_id or -1)
         score = calculate_score(view, pattern.want)
-        message = build_property_message(
+        message = build_listing_message(
             notifiable_from(
                 view,
                 member_count=membership.member_count,
@@ -361,13 +361,13 @@ def _notify_cheaper_listings(
             score,
             notification_type=persist.CHEAPER_LISTING,
             pattern_name=pattern.name,
-            rank_in_pattern=_group_rank(ranks, view.property_id or 0, membership),
+            rank_in_pattern=_group_rank(ranks, view.listing_id or 0, membership),
         )
         sent = runtime.sender.send(webhook_url, message)
         with runtime.engine.begin() as conn:
             persist.record_notification(
                 conn,
-                property_id=change.current_property_id,
+                listing_id=change.current_listing_id,
                 group_id=change.group_id,
                 pattern_name=pattern.name,
                 notification_type=persist.CHEAPER_LISTING,
@@ -384,7 +384,7 @@ def _notify_cheaper_listings(
 def _notify(
     runtime: Runtime,
     pattern,
-    views: dict[int, PropertyView],
+    views: dict[int, ListingView],
     outcomes: list[persist.UpsertOutcome],
     group_changes: list[dedup.GroupChange],
     summary: ScanSummary,
@@ -394,22 +394,22 @@ def _notify(
 
     with runtime.engine.connect() as conn:
         ranks = {
-            property_id: rank
-            for property_id, rank in conn.execute(
+            listing_id: rank
+            for listing_id, rank in conn.execute(
                 text(
-                    "SELECT property_id, rank_in_pattern FROM t_property_scores "
+                    "SELECT listing_id, rank_in_pattern FROM t_listing_scores "
                     "WHERE pattern_name = :name AND rank_in_pattern IS NOT NULL"
                 ),
                 {"name": pattern.name},
             )
         }
-        memberships = dedup.group_membership(conn, [o.property_id for o in outcomes])
+        memberships = dedup.group_membership(conn, [o.listing_id for o in outcomes])
 
     for outcome in outcomes:
         notification_type = outcome.notification_type
         if notification_type is None:
             continue
-        view = views.get(outcome.property_id)
+        view = views.get(outcome.listing_id)
         if view is None:
             continue
 
@@ -417,13 +417,13 @@ def _notify(
         if not must.passes(pattern.must.unknown_policy):
             continue
 
-        membership = memberships.get(outcome.property_id, dedup.NO_GROUP)
+        membership = memberships.get(outcome.listing_id, dedup.NO_GROUP)
         with runtime.engine.connect() as conn:
             # グループ単位で抑制する。同一住戸の別サイト掲載を
             # それぞれ「新着」として二重に送らないため
             if persist.already_notified(
                 conn,
-                property_id=outcome.property_id,
+                listing_id=outcome.listing_id,
                 pattern_name=pattern.name,
                 notification_type=notification_type,
                 group_id=membership.group_id,
@@ -431,7 +431,7 @@ def _notify(
                 continue
 
         score = calculate_score(view, pattern.want)
-        message = build_property_message(
+        message = build_listing_message(
             notifiable_from(
                 view,
                 member_count=membership.member_count,
@@ -441,13 +441,13 @@ def _notify(
             score,
             notification_type=notification_type,
             pattern_name=pattern.name,
-            rank_in_pattern=_group_rank(ranks, outcome.property_id, membership),
+            rank_in_pattern=_group_rank(ranks, outcome.listing_id, membership),
         )
         sent = runtime.sender.send(webhook_url, message)
         with runtime.engine.begin() as conn:
             persist.record_notification(
                 conn,
-                property_id=outcome.property_id,
+                listing_id=outcome.listing_id,
                 group_id=membership.group_id,
                 pattern_name=pattern.name,
                 notification_type=notification_type,
@@ -553,8 +553,8 @@ def scan_pattern(
                     property_type_id=property_type_id,
                     city_index=runtime.city_index,
                 )
-                dedup.refresh_dedup_keys(conn, [o.property_id for o in outcomes])
-            outcome.properties_new = sum(1 for o in outcomes if o.is_new)
+                dedup.refresh_dedup_keys(conn, [o.listing_id for o in outcomes])
+            outcome.listings_new = sum(1 for o in outcomes if o.is_new)
             all_outcomes.extend(outcomes)
 
             _fetch_details(
@@ -580,7 +580,7 @@ def scan_pattern(
                     run_row,
                     status=status,
                     items_seen=outcome.listings_seen,
-                    items_new=outcome.properties_new,
+                    items_new=outcome.listings_new,
                     items_failed=len(outcome.errors),
                     phase="detail",
                 )

@@ -16,7 +16,7 @@ from typing import Any
 
 from sqlalchemy import Connection, text
 
-from house_search.scoring.property_view import PropertyView
+from house_search.scoring.listing_view import ListingView
 from house_search.scrape.base import ScrapedDetail, ScrapedListing
 
 # 通知種別。
@@ -31,7 +31,7 @@ CHEAPER_LISTING = "cheaper_listing"
 class UpsertOutcome:
     """1掲載ぶんの upsert 結果。通知の要否判定に使う。"""
 
-    property_id: int
+    listing_id: int
     external_id: str
     is_new: bool
     is_reinstated: bool
@@ -114,13 +114,13 @@ def _unique_city_names(index: list[tuple[str, str, int]]) -> frozenset[str]:
 
 
 _SELECT_EXISTING = text(
-    "SELECT external_id, id, price, status FROM t_properties "
+    "SELECT external_id, id, price, status FROM t_listings "
     "WHERE site_id = :site_id AND external_id = ANY(:external_ids)"
 )
 
 _UPSERT = text(
     """
-    INSERT INTO t_properties (
+    INSERT INTO t_listings (
         site_id, property_type_id, external_id, url, title,
         price, price_prev, mgmt_fee_monthly, deposit_amount, key_money_amount,
         area_sqm, layout, floor_num, total_floors, age_years,
@@ -135,23 +135,23 @@ _UPSERT = text(
     )
     ON CONFLICT (site_id, external_id) DO UPDATE SET
         url = EXCLUDED.url,
-        title = COALESCE(EXCLUDED.title, t_properties.title),
+        title = COALESCE(EXCLUDED.title, t_listings.title),
         price = EXCLUDED.price,
         price_prev = EXCLUDED.price_prev,
         mgmt_fee_monthly = EXCLUDED.mgmt_fee_monthly,
         deposit_amount = EXCLUDED.deposit_amount,
         key_money_amount = EXCLUDED.key_money_amount,
-        area_sqm = COALESCE(EXCLUDED.area_sqm, t_properties.area_sqm),
-        layout = COALESCE(EXCLUDED.layout, t_properties.layout),
-        floor_num = COALESCE(EXCLUDED.floor_num, t_properties.floor_num),
-        total_floors = COALESCE(EXCLUDED.total_floors, t_properties.total_floors),
-        age_years = COALESCE(EXCLUDED.age_years, t_properties.age_years),
-        address = COALESCE(EXCLUDED.address, t_properties.address),
-        prefecture = COALESCE(EXCLUDED.prefecture, t_properties.prefecture),
-        city_id = COALESCE(EXCLUDED.city_id, t_properties.city_id),
-        station_info = COALESCE(EXCLUDED.station_info, t_properties.station_info),
-        walk_minutes = COALESCE(EXCLUDED.walk_minutes, t_properties.walk_minutes),
-        image_url = COALESCE(EXCLUDED.image_url, t_properties.image_url),
+        area_sqm = COALESCE(EXCLUDED.area_sqm, t_listings.area_sqm),
+        layout = COALESCE(EXCLUDED.layout, t_listings.layout),
+        floor_num = COALESCE(EXCLUDED.floor_num, t_listings.floor_num),
+        total_floors = COALESCE(EXCLUDED.total_floors, t_listings.total_floors),
+        age_years = COALESCE(EXCLUDED.age_years, t_listings.age_years),
+        address = COALESCE(EXCLUDED.address, t_listings.address),
+        prefecture = COALESCE(EXCLUDED.prefecture, t_listings.prefecture),
+        city_id = COALESCE(EXCLUDED.city_id, t_listings.city_id),
+        station_info = COALESCE(EXCLUDED.station_info, t_listings.station_info),
+        walk_minutes = COALESCE(EXCLUDED.walk_minutes, t_listings.walk_minutes),
+        image_url = COALESCE(EXCLUDED.image_url, t_listings.image_url),
         status = 'active',
         last_seen_at = now(),
         updated_at = now()
@@ -233,7 +233,7 @@ def upsert_listings(
 
         outcomes.append(
             UpsertOutcome(
-                property_id=row_id,
+                listing_id=row_id,
                 external_id=listing.external_id,
                 is_new=is_new,
                 is_reinstated=is_reinstated,
@@ -244,12 +244,12 @@ def upsert_listings(
     return outcomes
 
 
-def save_detail(conn: Connection, property_id: int, detail: ScrapedDetail) -> None:
+def save_detail(conn: Connection, listing_id: int, detail: ScrapedDetail) -> None:
     """詳細ページ由来の情報を書き戻し、詳細取得済みにする。"""
     conn.execute(
         text(
             """
-            UPDATE t_properties SET
+            UPDATE t_listings SET
                 raw_features_text = COALESCE(:raw_features_text, raw_features_text),
                 built_on = COALESCE(:built_on, built_on),
                 floor_num = COALESCE(:floor_num, floor_num),
@@ -260,15 +260,15 @@ def save_detail(conn: Connection, property_id: int, detail: ScrapedDetail) -> No
                 address = COALESCE(:address, address),
                 walk_minutes = COALESCE(:walk_minutes, walk_minutes),
                 type_specific_attrs = COALESCE(
-                    t_properties.type_specific_attrs, '{}'::jsonb
+                    t_listings.type_specific_attrs, '{}'::jsonb
                 ) || CAST(:type_specific_attrs AS jsonb),
                 detail_fetched_at = now(),
                 updated_at = now()
-            WHERE id = :property_id
+            WHERE id = :listing_id
             """
         ),
         {
-            "property_id": property_id,
+            "listing_id": listing_id,
             "raw_features_text": detail.raw_features_text,
             "built_on": detail.built_on,
             "floor_num": detail.floor_num,
@@ -285,7 +285,7 @@ def save_detail(conn: Connection, property_id: int, detail: ScrapedDetail) -> No
 
 def save_features(
     conn: Connection,
-    property_id: int,
+    listing_id: int,
     features: tuple,
     condition_ids: dict[str, int],
 ) -> int:
@@ -295,12 +295,12 @@ def save_features(
     （辞書から外れた条件が残らないようにする）。
     """
     conn.execute(
-        text("DELETE FROM t_property_features WHERE property_id = :property_id"),
-        {"property_id": property_id},
+        text("DELETE FROM t_listing_features WHERE listing_id = :listing_id"),
+        {"listing_id": listing_id},
     )
     rows = [
         {
-            "property_id": property_id,
+            "listing_id": listing_id,
             "condition_id": condition_ids[feature.code],
             "source": feature.source,
             "matched_text": feature.matched_text,
@@ -311,10 +311,10 @@ def save_features(
     if rows:
         conn.execute(
             text(
-                "INSERT INTO t_property_features "
-                "(property_id, condition_id, source, matched_text, extracted_at, "
+                "INSERT INTO t_listing_features "
+                "(listing_id, condition_id, source, matched_text, extracted_at, "
                 " created_at, updated_at) "
-                "VALUES (:property_id, :condition_id, :source, :matched_text, now(), now(), now())"
+                "VALUES (:listing_id, :condition_id, :source, :matched_text, now(), now(), now())"
             ),
             rows,
         )
@@ -363,7 +363,7 @@ def save_unknown_tokens(
 def save_score(
     conn: Connection,
     *,
-    property_id: int,
+    listing_id: int,
     pattern_name: str,
     must_result: str,
     score: float | None,
@@ -374,14 +374,14 @@ def save_score(
     conn.execute(
         text(
             """
-            INSERT INTO t_property_scores (
-                property_id, pattern_name, must_result, score, score_breakdown,
+            INSERT INTO t_listing_scores (
+                listing_id, pattern_name, must_result, score, score_breakdown,
                 config_hash, scored_at, created_at, updated_at
             ) VALUES (
-                :property_id, :pattern_name, :must_result, :score,
+                :listing_id, :pattern_name, :must_result, :score,
                 CAST(:breakdown AS jsonb), :config_hash, now(), now(), now()
             )
-            ON CONFLICT (property_id, pattern_name) DO UPDATE SET
+            ON CONFLICT (listing_id, pattern_name) DO UPDATE SET
                 must_result = EXCLUDED.must_result,
                 score = EXCLUDED.score,
                 score_breakdown = EXCLUDED.score_breakdown,
@@ -391,7 +391,7 @@ def save_score(
             """
         ),
         {
-            "property_id": property_id,
+            "listing_id": listing_id,
             "pattern_name": pattern_name,
             "must_result": must_result,
             "score": score,
@@ -411,8 +411,8 @@ def prune_scores(conn: Connection, pattern_name: str, keep_ids: list[int]) -> in
     """
     result = conn.execute(
         text(
-            "DELETE FROM t_property_scores "
-            "WHERE pattern_name = :pattern_name AND NOT (property_id = ANY(:keep_ids))"
+            "DELETE FROM t_listing_scores "
+            "WHERE pattern_name = :pattern_name AND NOT (listing_id = ANY(:keep_ids))"
         ),
         {"pattern_name": pattern_name, "keep_ids": keep_ids or [0]},
     )
@@ -432,7 +432,7 @@ def update_ranks(conn: Connection, pattern_name: str) -> int:
     # 残らないようにするため（部分更新だと非代表に順位が残る）。
     conn.execute(
         text(
-            "UPDATE t_property_scores SET rank_in_pattern = NULL, updated_at = now() "
+            "UPDATE t_listing_scores SET rank_in_pattern = NULL, updated_at = now() "
             "WHERE pattern_name = :pattern_name AND rank_in_pattern IS NOT NULL"
         ),
         {"pattern_name": pattern_name},
@@ -440,16 +440,16 @@ def update_ranks(conn: Connection, pattern_name: str) -> int:
     result = conn.execute(
         text(
             """
-            UPDATE t_property_scores s SET rank_in_pattern = r.rn, updated_at = now()
+            UPDATE t_listing_scores s SET rank_in_pattern = r.rn, updated_at = now()
             FROM (
                 SELECT sc.id,
-                       ROW_NUMBER() OVER (ORDER BY sc.score DESC, sc.property_id ASC) AS rn
-                FROM t_property_scores sc
-                JOIN t_properties p ON p.id = sc.property_id
-                LEFT JOIN t_property_groups g ON g.id = p.group_id
+                       ROW_NUMBER() OVER (ORDER BY sc.score DESC, sc.listing_id ASC) AS rn
+                FROM t_listing_scores sc
+                JOIN t_listings p ON p.id = sc.listing_id
+                LEFT JOIN t_listing_groups g ON g.id = p.group_id
                 WHERE sc.pattern_name = :pattern_name AND sc.must_result <> 'fail'
                   AND sc.score IS NOT NULL
-                  AND (p.group_id IS NULL OR g.representative_property_id = p.id)
+                  AND (p.group_id IS NULL OR g.representative_listing_id = p.id)
             ) r
             WHERE s.id = r.id
             """
@@ -462,7 +462,7 @@ def update_ranks(conn: Connection, pattern_name: str) -> int:
 def record_notification(
     conn: Connection,
     *,
-    property_id: int,
+    listing_id: int,
     pattern_name: str,
     notification_type: str,
     price_at_notify: int | None,
@@ -474,13 +474,13 @@ def record_notification(
     conn.execute(
         text(
             "INSERT INTO t_notifications ("
-            " property_id, group_id, pattern_name, notification_type, price_at_notify,"
+            " listing_id, group_id, pattern_name, notification_type, price_at_notify,"
             " score_at_notify, status, notified_at, created_at) "
-            "VALUES (:property_id, :group_id, :pattern_name, :notification_type,"
+            "VALUES (:listing_id, :group_id, :pattern_name, :notification_type,"
             " :price_at_notify, :score_at_notify, :status, now(), now())"
         ),
         {
-            "property_id": property_id,
+            "listing_id": listing_id,
             "group_id": group_id,
             "pattern_name": pattern_name,
             "notification_type": notification_type,
@@ -497,11 +497,11 @@ def record_notification(
 _ALREADY_NOTIFIED = text(
     """
     SELECT 1 FROM t_notifications n
-    JOIN t_properties p ON p.id = n.property_id
+    JOIN t_listings p ON p.id = n.listing_id
     WHERE n.pattern_name = :pattern_name
       AND n.notification_type = :notification_type
       AND n.status = 'sent'
-      AND (n.property_id = :property_id
+      AND (n.listing_id = :listing_id
            OR (CAST(:group_id AS bigint) IS NOT NULL AND p.group_id = :group_id))
     LIMIT 1
     """
@@ -511,7 +511,7 @@ _ALREADY_NOTIFIED = text(
 def already_notified(
     conn: Connection,
     *,
-    property_id: int,
+    listing_id: int,
     pattern_name: str,
     notification_type: str,
     group_id: int | None = None,
@@ -524,7 +524,7 @@ def already_notified(
         conn.execute(
             _ALREADY_NOTIFIED,
             {
-                "property_id": property_id,
+                "listing_id": listing_id,
                 "group_id": group_id,
                 "pattern_name": pattern_name,
                 "notification_type": notification_type,
@@ -563,7 +563,7 @@ _PROPERTY_COLUMNS = """
     (
         p.detail_fetched_at IS NOT NULL
         OR EXISTS (
-            SELECT 1 FROM t_properties m
+            SELECT 1 FROM t_listings m
             WHERE p.group_id IS NOT NULL AND m.group_id = p.group_id
               AND m.detail_fetched_at IS NOT NULL
         )
@@ -576,12 +576,12 @@ _PROPERTY_COLUMNS = """
 # （再設計計画 §6「スコアはグループ内の抽出情報の和集合で計算」）。
 _GROUP_FEATURES = text(
     """
-    SELECT target.id AS property_id, c.code
-    FROM t_properties target
-    JOIN t_properties member
+    SELECT target.id AS listing_id, c.code
+    FROM t_listings target
+    JOIN t_listings member
       ON (target.group_id IS NULL AND member.id = target.id)
       OR (target.group_id IS NOT NULL AND member.group_id = target.group_id)
-    JOIN t_property_features f ON f.property_id = member.id
+    JOIN t_listing_features f ON f.listing_id = member.id
     JOIN m_conditions c ON c.id = f.condition_id
     WHERE target.id = ANY(:ids)
     GROUP BY target.id, c.code
@@ -589,9 +589,9 @@ _GROUP_FEATURES = text(
 )
 
 
-def _to_view(row: Any, feature_codes: frozenset[str]) -> PropertyView:
-    return PropertyView(
-        property_id=row.id,
+def _to_view(row: Any, feature_codes: frozenset[str]) -> ListingView:
+    return ListingView(
+        listing_id=row.id,
         site_code=row.site_code,
         url=row.url,
         title=row.title,
@@ -616,15 +616,15 @@ def _to_view(row: Any, feature_codes: frozenset[str]) -> PropertyView:
     )
 
 
-def load_property_views(
+def load_listing_views(
     conn: Connection,
     *,
-    property_ids: list[int] | None = None,
+    listing_ids: list[int] | None = None,
     property_type_code: str | None = None,
     site_codes: list[str] | None = None,
     city_names: list[str] | None = None,
     active_only: bool = True,
-) -> dict[int, PropertyView]:
+) -> dict[int, ListingView]:
     """採点に必要な物件ビューをまとめて読み出す。
 
     設備は1クエリでまとめて引いてから物件ごとに畳む（物件ごとに引くと
@@ -637,11 +637,11 @@ def load_property_views(
     """
     where = ["TRUE"]
     params: dict[str, Any] = {}
-    if property_ids is not None:
-        if not property_ids:
+    if listing_ids is not None:
+        if not listing_ids:
             return {}
-        where.append("p.id = ANY(:property_ids)")
-        params["property_ids"] = property_ids
+        where.append("p.id = ANY(:listing_ids)")
+        params["listing_ids"] = listing_ids
     if property_type_code:
         where.append("pt.code = :property_type_code")
         params["property_type_code"] = property_type_code
@@ -665,7 +665,7 @@ def load_property_views(
 
     rows = conn.execute(
         text(
-            f"SELECT {_PROPERTY_COLUMNS} FROM t_properties p "
+            f"SELECT {_PROPERTY_COLUMNS} FROM t_listings p "
             "JOIN m_sites s ON s.id = p.site_id "
             "JOIN m_property_types pt ON pt.id = p.property_type_id "
             f"WHERE {' AND '.join(where)}"
@@ -677,29 +677,29 @@ def load_property_views(
 
     ids = [row.id for row in rows]
     features: dict[int, set[str]] = {}
-    for property_id, code in conn.execute(_GROUP_FEATURES, {"ids": ids}):
-        features.setdefault(property_id, set()).add(code)
+    for listing_id, code in conn.execute(_GROUP_FEATURES, {"ids": ids}):
+        features.setdefault(listing_id, set()).add(code)
 
     return {row.id: _to_view(row, frozenset(features.get(row.id, ()))) for row in rows}
 
 
 def detail_queue(
-    conn: Connection, *, site_id: int, limit: int, property_ids: list[int] | None = None
+    conn: Connection, *, site_id: int, limit: int, listing_ids: list[int] | None = None
 ) -> list[tuple[int, str]]:
     """詳細ページ未取得の物件を取得キューとして引く。
 
-    部分インデックス ``ix_t_properties_detail_pending`` がそのまま効く。
+    部分インデックス ``ix_t_listings_detail_pending`` がそのまま効く。
     """
     params: dict[str, Any] = {"site_id": site_id, "limit": limit}
     extra = ""
-    if property_ids is not None:
-        if not property_ids:
+    if listing_ids is not None:
+        if not listing_ids:
             return []
-        extra = "AND id = ANY(:property_ids)"
-        params["property_ids"] = property_ids
+        extra = "AND id = ANY(:listing_ids)"
+        params["listing_ids"] = listing_ids
     rows = conn.execute(
         text(
-            "SELECT id, url FROM t_properties "
+            "SELECT id, url FROM t_listings "
             f"WHERE site_id = :site_id AND detail_fetched_at IS NULL AND status = 'active' {extra} "
             "ORDER BY first_seen_at DESC LIMIT :limit"
         ),
@@ -708,16 +708,16 @@ def detail_queue(
     return [(row.id, row.url) for row in rows]
 
 
-def mark_status(conn: Connection, property_ids: list[int], status: str) -> None:
+def mark_status(conn: Connection, listing_ids: list[int], status: str) -> None:
     """成約・掲載終了を記録する。"""
-    if not property_ids:
+    if not listing_ids:
         return
     conn.execute(
         text(
-            "UPDATE t_properties SET status = :status, updated_at = now() "
-            "WHERE id = ANY(:property_ids)"
+            "UPDATE t_listings SET status = :status, updated_at = now() "
+            "WHERE id = ANY(:listing_ids)"
         ),
-        {"status": status, "property_ids": property_ids},
+        {"status": status, "listing_ids": listing_ids},
     )
 
 
@@ -801,22 +801,22 @@ def record_digest(
     pattern_name: str,
     digest_group: str | None,
     top_n: int,
-    property_ids: list[int],
+    listing_ids: list[int],
     status: str,
 ) -> None:
     """ダイジェスト送信履歴を追記する。"""
     conn.execute(
         text(
-            "INSERT INTO t_ranking_digests (pattern_name, digest_group, top_n, property_ids, "
+            "INSERT INTO t_ranking_digests (pattern_name, digest_group, top_n, listing_ids, "
             "status, sent_at, created_at) "
-            "VALUES (:pattern_name, :digest_group, :top_n, CAST(:property_ids AS jsonb), "
+            "VALUES (:pattern_name, :digest_group, :top_n, CAST(:listing_ids AS jsonb), "
             ":status, now(), now())"
         ),
         {
             "pattern_name": pattern_name,
             "digest_group": digest_group,
             "top_n": top_n,
-            "property_ids": json.dumps(property_ids),
+            "listing_ids": json.dumps(listing_ids),
             "status": status,
         },
     )

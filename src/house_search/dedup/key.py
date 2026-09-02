@@ -1,7 +1,7 @@
 """名寄せキー（``dedup_key``）の合成。
 
-DBに触らない純関数。``sha256`` の hex 64桁を返し、``t_properties.dedup_key`` と
-``t_property_groups.dedup_key`` の双方に同じ値が入る。
+DBに触らない純関数。``sha256`` の hex 64桁を返し、``t_listings.dedup_key`` と
+``t_listing_groups.dedup_key`` の双方に同じ値が入る。
 
 **構成要素が1つでも欠けたら None を返す**（キーを作らない）。名寄せの誤爆は
 ランキングから物件を1件消すことを意味し偽陽性のコストが高いため、
@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 from decimal import Decimal, InvalidOperation
 
-from house_search.scoring.property_view import normalize_layout
+from house_search.scoring.listing_view import normalize_layout
 
 # キーの世代。正規化ルールを変えたらこれを上げ、``regroup`` で全再計算する
 # （新旧キーが混在して半端に一致する事故を防ぐ）。

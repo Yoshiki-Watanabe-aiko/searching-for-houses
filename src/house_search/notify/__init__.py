@@ -5,11 +5,11 @@ from house_search.notify.format import (
     COLORS,
     TYPE_LABELS,
     DigestEntry,
-    NotifiableProperty,
+    NotifiableListing,
     build_digest_message,
     build_error_message,
-    build_property_embed,
-    build_property_message,
+    build_listing_embed,
+    build_listing_message,
 )
 
 __all__ = [
@@ -17,10 +17,10 @@ __all__ = [
     "TYPE_LABELS",
     "DigestEntry",
     "DiscordSender",
-    "NotifiableProperty",
+    "NotifiableListing",
     "build_digest_message",
     "build_error_message",
-    "build_property_embed",
-    "build_property_message",
+    "build_listing_embed",
+    "build_listing_message",
     "build_sender",
 ]
