@@ -216,6 +216,45 @@ def test_正典YAMLの実測値でSUUMOのURLが組める() -> None:
     assert query == {"mb": ["30"], "et": ["15"], "md": ["04", "06"]}
 
 
+def test_正典YAMLが読めてHOMESの5軸がそろっている() -> None:
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    axes = set(table.for_site("HOMES", "CHINTAI"))
+    assert axes == {"area_min", "area_max", "walk_minutes_max", "age_max", "layouts"}
+
+
+def test_正典YAMLの実測値でHOMESのURLが組める() -> None:
+    """2026-09-03 の実測で確定したキーを固定する（足立区・基準 52,515件）。
+
+    間取りは ``cond[madori][15]=15`` のように**値ごとにキーが変わる**。
+    チェックボックスの name 属性がこの形で、実測でも件数が動いた（27,029件）。
+    """
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    query = table.build_query(
+        site_code="HOMES",
+        property_type="CHINTAI",
+        must=_Must(),
+        axes=["area_min", "walk_minutes_max", "layouts"],
+    )
+    assert query == {
+        "cond[housearea]": ["30"],
+        "cond[walkminutesh]": ["15"],  # ★12分の要求は緩い側（15分）へ切り上げる
+        "cond[madori][15]": ["15"],
+        "cond[madori][23]": ["23"],
+    }
+
+
+def test_HOMESの築年数の選択肢に7年は無い() -> None:
+    """⚠ SUUMO には 7 があるが HOME'S には無い。サイト間で流用しないための固定。"""
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    homes = table.for_site("HOMES", "CHINTAI")["age_max"]
+    suumo = table.for_site("SUUMO", "CHINTAI")["age_max"]
+    assert 7 not in homes.value_spec["choices"]
+    assert 7 in suumo.value_spec["choices"]
+    # 築7年の要求は、HOME'S では緩い側の10年へ切り上がる
+    assert homes.render(7) == {"cond[houseageh]": ["10"]}
+    assert suumo.render(7) == {"cn": ["7"]}
+
+
 # ---- 実際にURLへ載せるかどうかのゲート ----
 
 

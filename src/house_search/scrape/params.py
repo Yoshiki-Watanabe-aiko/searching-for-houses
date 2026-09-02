@@ -142,6 +142,13 @@ class ParamSpec:
                 return None
             if code not in codes:
                 codes.append(code)
+        template = self.value_spec.get("param_template")
+        if template:
+            # 値ごとにキーが変わる形式（HOME'S の ``cond[madori][15]=15``）。
+            # フォームの name 属性がこの形なので、実サイトの直列化に合わせる。
+            # ⚠ ``cond[madori][]=15`` の配列形式でも通るかは**未測定**。
+            # 測っていない形へ勝手に寄せない（0件になっても例外にならないため）。
+            return {str(template).format(code=code): [code] for code in codes}
         return {self.param_name: codes}
 
     def _render_numeric(self, value: object) -> dict[str, list[str]] | None:

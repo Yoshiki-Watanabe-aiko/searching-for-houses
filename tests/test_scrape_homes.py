@@ -196,3 +196,26 @@ def test_賃料上限は05刻みへ切り上げる(scraper: HomesScraper, hint, 
     p = _pattern(price_max_hint=hint)
     url = scraper.list_urls(p, prefecture_targets(p.search.prefectures))[0]
     assert f"monthmoneyroomh%5D{expected}" in url
+
+
+# ---- スロットリング／ボットチャレンジ（→ 課題#17） ----
+
+
+def test_空ボディを例外にする(scraper: HomesScraper) -> None:
+    """⚠ HOME'S は絞られると HTTP 202 ＋ 空ボディを返す（実測 2026-09-03）。
+
+    ``SiteFetcher`` は 400 未満を成功として返すので、ここで判別しないと
+    「取得できたつもりで0件」になり、エラーにもならない。
+    """
+    with pytest.raises(ValueError, match="応答が空です"):
+        scraper.parse_list("")
+
+
+def test_AWS_WAFのチャレンジを例外にする(scraper: HomesScraper) -> None:
+    with pytest.raises(ValueError, match="AWS WAF"):
+        scraper.parse_list("<html><script>var gokuProps = {};</script></html>")
+
+
+def test_サイト側フィルタへの対応を宣言している(scraper: HomesScraper) -> None:
+    """宣言しないと scan がクエリを足さない（→ ADR 0015）。"""
+    assert scraper.supports_site_filters is True
