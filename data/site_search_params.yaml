@@ -99,3 +99,95 @@ sites:
           14（5K以上）は「以上」で境界が曖昧なため対応表に入れていない。
           対応表に無い間取りが1つでもあれば軸ごと送らない仕様なので、
           5K以上を MUST に入れると間取りの絞り込みは自動的に無効になる。
+
+  # ----------------------------------------------------------
+  # LIFULL HOME'S（実測 2026-09-03・足立区 tokyo/adachi-city・基準 総物件数 52,515件）
+  #
+  # 検証方法: SUUMO と同じ。存在しないキー zzz=1 を送ると 52,515 のまま
+  # 変わらないことを先に確かめてから測った。
+  # キー名と選択肢は**一覧ページに埋まっている検索フォームの実HTML**から採り、
+  # そのうえで件数が動くことを確認している（推測で書いていない）。
+  #
+  #   cond[housearea]=30    -> 27,689件   cond[walkminutesh]=20 -> 50,400件
+  #   cond[houseageh]=10    -> 38,167件
+  #   cond[madori][15]=15&[22]=22&[23]=23&[25]=25&[35]=35 -> 27,029件
+  #
+  # ⚠ **選択肢に無い値を送ったときの挙動は未測定。** 6リクエスト目で
+  # HOME'S 側のスロットリングに入り、**パラメータなしのURLでも
+  # HTTP 202 ＋ 空ボディ**になったため切り分けられなかった（→ 課題#17）。
+  # 丸めは AXIS_BOUND が選択肢の中へ収めるので実害は無いが、
+  # 「測っていない」ことを明示しておく。
+  #
+  # ⚠ **築年数の選択肢に 7 が無い**（SUUMO にはある）。サイトごとに違うので流用しない。
+  # ----------------------------------------------------------
+  HOMES:
+    CHINTAI:
+      area_min:
+        param: "cond[housearea]"
+        kind: enum
+        unit: sqm
+        enabled: true
+        spec:
+          choices: [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85,
+                    90, 95, 100, 110, 120, 130, 140, 150, 200]
+          format: "{:.0f}"
+        notes: >-
+          専有面積の下限（㎡）。100までは5刻み、その先は110/120/130/140/150/200と
+          不等間隔なので stepped ではなく enum。実測 cond[housearea]=30 で 27,689件
+
+      area_max:
+        param: "cond[houseareah]"
+        kind: enum
+        unit: sqm
+        enabled: true
+        spec:
+          choices: [10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85,
+                    90, 95, 100, 110, 120, 130, 140, 150, 200]
+          format: "{:.0f}"
+        notes: "専有面積の上限（㎡）。下限と同じ選択肢"
+
+      walk_minutes_max:
+        param: "cond[walkminutesh]"
+        kind: enum
+        unit: minutes
+        enabled: true
+        spec: { choices: [1, 5, 7, 10, 15, 20], format: "{:.0f}" }
+        notes: "駅徒歩の上限（分）。実測 cond[walkminutesh]=20 で 50,400件"
+
+      age_max:
+        param: "cond[houseageh]"
+        kind: enum
+        unit: years
+        enabled: true
+        spec: { choices: [1, 3, 5, 10, 15, 20, 25, 30], format: "{:.0f}" }
+        notes: >-
+          築年数の上限（年）。実測 cond[houseageh]=10 で 38,167件。
+          ⚠ SUUMO と違い **7年の選択肢が無い**
+
+      layouts:
+        param: "cond[madori]"
+        kind: multi
+        unit: minutes # multi では使わない（換算しないため）
+        enabled: true
+        spec:
+          # ⚠ 値ごとにキーが変わる形式（cond[madori][15]=15）。
+          # チェックボックスの name 属性がこの形で、実測でも件数が動いた。
+          param_template: "cond[madori][{code}]"
+          mapping:
+            ワンルーム: "11"
+            1K: "12"
+            1DK: "13"
+            1LDK: "15"
+            2K: "22"
+            2DK: "23"
+            2LDK: "25"
+            3K: "32"
+            3DK: "33"
+            3LDK: "35"
+            4K: "42"
+            4DK: "43"
+        notes: >-
+          間取り。十の位が部屋数・一の位が種別（1=ワンルーム / 2=K / 3=DK / 5=LDK）。
+          45- は「4LDK以上」で境界が曖昧なため対応表に入れていない。
+          対応表に無い間取りが1つでもあれば軸ごと送らない仕様。
+          実測（1LDK/2K/2DK/2LDK/3LDK の5つ）で 27,029件

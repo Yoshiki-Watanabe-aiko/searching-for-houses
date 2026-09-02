@@ -72,6 +72,28 @@ _DETAIL_LABELS = {
 }
 
 
+def _reject_throttled(html_text: str) -> None:
+    """スロットリング／ボットチャレンジの応答を例外にする（→ 課題#17）。
+
+    ⚠ **HOME'S は絞られると HTTP 202 ＋ 空ボディを返す**（実測 2026-09-03。
+    4秒間隔で6リクエスト目に入り、**パラメータなしのURLでも**そうなった）。
+    ``SiteFetcher`` は 400 未満を成功として返すので、ここで判別しないと
+    「取得できたつもりで0件」になる。AWS WAF のチャレンジ（``gokuProps`` /
+    ``awsWafCookieDomainList``）も同じ扱いにする。
+
+    ⚠ **突破はしない。** 例外にして実行サマリへ出し、人が気づけるようにするだけ。
+    """
+    if not html_text.strip():
+        raise ValueError(
+            "HOMES: 応答が空です。スロットリング（HTTP 202 ＋ 空ボディ）の可能性が高い"
+            "（→ 課題#17）。取得間隔を広げて時間をおいてから試すこと"
+        )
+    if "awsWafCookieDomainList" in html_text or "gokuProps" in html_text:
+        raise ValueError(
+            "HOMES: AWS WAF のボットチャレンジが返りました（→ 課題#17）。突破はしない"
+        )
+
+
 class HomesScraper:
     """LIFULL HOME'S 賃貸の取得と解析。"""
 
@@ -81,6 +103,9 @@ class HomesScraper:
     # 既定の自己申告UAだと robots.txt で許可されているパスでも 403 になる（実測）
     user_agent = BROWSER_USER_AGENT
     ignore_robots = False
+    # MUST をサイト側の検索フォームへ渡す（→ ADR 0015）。キー名・選択肢は
+    # data/site_search_params.yaml に実測値で書いてある
+    supports_site_filters = True
 
     def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
         """``/chintai/{エリアスラグ}/list/`` を組み立てる。
@@ -117,6 +142,7 @@ class HomesScraper:
 
     def parse_list(self, html_text: str) -> list[ScrapedListing]:
         """一覧ページHTMLから掲載（住戸）を取り出す。"""
+        _reject_throttled(html_text)
         doc = lxml_html.fromstring(html_text)
         listings: list[ScrapedListing] = []
 
@@ -189,6 +215,7 @@ class HomesScraper:
 
     def parse_detail(self, html_text: str) -> ScrapedDetail:
         """詳細ページから設備原文と補足項目を取り出す。"""
+        _reject_throttled(html_text)
         doc = lxml_html.fromstring(html_text)
         fields = _detail_fields(doc)
 
