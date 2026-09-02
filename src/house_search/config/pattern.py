@@ -105,8 +105,40 @@ class SearchSpec(Strict):
     )
 
 
+class CommuteSpec(Strict):
+    """通勤時間の基準（→ Phase 5C）。
+
+    所要時間は Google Maps Routes API（公共交通）で**駅ペアごとに一度だけ**取得し
+    ``t_station_commutes`` へキャッシュする。採点・再採点はキャッシュを読むだけなので
+    ネットワークに触らない。
+
+    ⚠ **測るのは駅から駅まで**で、駅までの徒歩は含めない。徒歩は
+    ``walk_minutes_max``（MUST）と ``walk_minutes``（WANT）で独立に効いており、
+    足すと二重に不利になる（2026-09-03 ユーザー確定）。
+    """
+
+    destination_station: str = Field(
+        min_length=1, description="勤務先の最寄り駅名（m_stations.station_name）"
+    )
+    destination_prefecture: str | None = Field(
+        default=None,
+        description=(
+            "目的地の都道府県名。同名異駅（日本橋＝東京/大阪、府中＝東京/広島）を"
+            "避けるため指定を推奨する"
+        ),
+    )
+
+
 class MustBase(Strict):
     """MUST条件の共通部。"""
+
+    commute_minutes_max: int | None = Field(
+        default=None,
+        description=(
+            "通勤時間の上限（分・駅から駅まで）。commute セクションが必要。"
+            "判定は駅の同定とキャッシュに依存するので unknown になりうる"
+        ),
+    )
 
     layouts: list[str] = Field(default_factory=list, description="許容する間取り")
     walk_minutes_max: int | None = Field(default=None, description="駅徒歩の上限（分）")
@@ -238,6 +270,9 @@ class PatternBase(Strict):
     )
     sites: list[str] = Field(min_length=1, description="スクレイプ対象サイトコード")
     search: SearchSpec
+    commute: CommuteSpec | None = Field(
+        default=None, description="通勤時間の基準。MUST・WANT で通勤時間を使うなら必須"
+    )
     want: WantSpec = Field(default_factory=WantSpec)
     ranking: RankingSpec = Field(default_factory=RankingSpec)
 
@@ -279,6 +314,16 @@ class PatternBase(Strict):
             if ptype not in spec_must.property_types:
                 raise ValueError(f"MUST項目 '{field_name}' は物件種別 {ptype} には適用できません")
 
+        # 通勤時間を使うなら目的地が要る。無いと採点時に黙って unknown になり、
+        # 「設定したのに効いていない」に気づけない。
+        uses_commute = self.must.commute_minutes_max is not None or any(  # type: ignore[attr-defined]
+            item.metric == "commute_minutes" for item in self.want.numeric
+        )
+        if uses_commute and self.commute is None:
+            raise ValueError(
+                "通勤時間を条件に使うには commute セクション（destination_station）が要ります"
+            )
+
         # サイト側へ渡す軸が、この種別の MUST に存在することを確かめる。
         # 存在しない軸を書いても実行時は黙って送られないだけなので、
         # 「設定したのに効いていない」に気づけなくなる
@@ -295,10 +340,16 @@ class PatternBase(Strict):
         検索範囲や通知先を変えただけで全件再スコアが走らないよう、
         WANT と物件種別だけをハッシュ対象にする。
         """
-        return {
+        config: dict[str, Any] = {
             "property_type": self.property_type,  # type: ignore[attr-defined]
             "want": self.want.model_dump(mode="json"),
         }
+        if self.commute is not None:
+            # 目的地が変われば通勤時間の意味も変わるので再スコアの対象にする。
+            # 未設定のパターンではキーごと省き、既存のハッシュを変えない
+            # （意図しない全件再スコアを起こさないため）。
+            config["commute"] = self.commute.model_dump(mode="json")
+        return config
 
     def config_hash(self) -> str:
         """スコア関連設定のSHA256。DB上の値と不一致なら自動再スコアの対象になる。"""

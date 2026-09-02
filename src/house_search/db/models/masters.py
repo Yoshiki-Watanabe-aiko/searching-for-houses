@@ -16,6 +16,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -353,4 +354,75 @@ class SiteSearchParam(TimestampMixin, Base):
     )
     notes: Mapped[str | None] = mapped_column(
         Text, comment="実測メモ（件数の変化・0件になる条件など）"
+    )
+
+
+class Station(TimestampMixin, Base):
+    """駅マスタ。通勤時間の算出に使う（Phase 5C）。
+
+    正典は駅データ.jp 無料版の CSV（``data/train_master/``）で、``sync-stations`` で同期する。
+    ⚠ **CSV は再配布不可のため Git 管理外**にしてある（README だけが追跡対象）。
+    設備抽出辞書・サイト検索パラメータは Git 管理 YAML を正典にできたが、
+    この表だけはライセンス上そうできない（→ ADR 0016）。
+
+    ``station_g_cd``（駅グループコード）を持つことがこのデータを選んだ理由。
+    乗換駅（同一の駅が路線ごとに別レコードになる）と同名異駅の区別が済んでおり、
+    通勤時間のキャッシュを**グループ単位**にできる（1都3県で駅2,052に対しグループ1,505）。
+
+    投入するのは営業中（``e_status=0``）の駅だけ。廃止駅を入れても掲載側には現れない。
+    """
+
+    __tablename__ = "m_stations"
+    __table_args__ = {"comment": "駅マスタ（駅データ.jp 無料版が正典・通勤時間の算出に使う）"}
+
+    station_cd: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=False, comment="駅コード（路線ごとに別コード）"
+    )
+    station_g_cd: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        index=True,
+        comment=(
+            "駅グループコード。乗換駅を1つに束ね、同名異駅を区別する単位。"
+            "通勤時間キャッシュ（t_station_commutes）のキーになる"
+        ),
+    )
+    station_name: Mapped[str] = mapped_column(
+        String(100), nullable=False, comment="駅名（「駅」を含まない原文表記）"
+    )
+    station_name_key: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        index=True,
+        comment=(
+            "照合用の正規化キー（NFKC・ヶ/ヵ・之/の の統一・小文字化）。"
+            "掲載側の駅表記も同じ関数を通してから突き合わせる"
+        ),
+    )
+    line_cd: Mapped[int] = mapped_column(Integer, nullable=False, comment="路線コード")
+    line_name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        comment=(
+            "路線名（例: 都営三田線）。"
+            "⚠ 同名の別路線が実在する（「三田線」は神戸電鉄）ため、駅名の照合は都道府県で絞る"
+        ),
+    )
+    company_name: Mapped[str | None] = mapped_column(
+        String(100),
+        comment=(
+            "事業者名（例: 東京都交通局）。"
+            "掲載側が路線名に会社名を前置することがある（「東武鉄道東上線」）ため照合に使う"
+        ),
+    )
+    pref_cd: Mapped[int] = mapped_column(
+        SmallInteger,
+        nullable=False,
+        comment="都道府県コード（JIS X 0401。m_cities.jis_code の上位2桁と同じ体系）",
+    )
+    lon: Mapped[float] = mapped_column(
+        Numeric(9, 6), nullable=False, comment="経度。Routes API の出発地・目的地に渡す"
+    )
+    lat: Mapped[float] = mapped_column(
+        Numeric(9, 6), nullable=False, comment="緯度。Routes API の出発地・目的地に渡す"
     )

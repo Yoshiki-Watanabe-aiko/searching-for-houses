@@ -104,6 +104,33 @@ def build_parser() -> argparse.ArgumentParser:
         "resolve-cities",
         help="既存掲載の市区町村IDを現在のマスタで引き直す（ネットワーク不要）",
     )
+
+    sub.add_parser(
+        "sync-stations",
+        help="data/train_master/*.csv を m_stations へ同期する（ネットワーク不要）",
+    )
+
+    p_stations = sub.add_parser(
+        "resolve-stations",
+        help="掲載の駅表記を駅マスタと突き合わせる（ネットワーク不要）",
+    )
+    p_stations.add_argument(
+        "--limit", type=int, default=30, help="同定できなかった表記の表示件数（既定30）"
+    )
+
+    p_commutes = sub.add_parser(
+        "resolve-commutes",
+        help="駅ペアの通勤所要時間を算出してキャッシュする（ネットワーク不要）",
+    )
+    p_commutes.add_argument("--pattern", help="対象を1つの検索パターンに絞る")
+    p_commutes.add_argument("--destination", help="目的地の駅名（既定はパターンの commute）")
+    p_commutes.add_argument("--destination-prefecture", help="目的地の都道府県名")
+
+    p_cstats = sub.add_parser(
+        "commute-stats",
+        help="通勤時間の分布を実測する（best/worst と MUST を決める材料・ネットワーク不要）",
+    )
+    p_cstats.add_argument("--pattern", help="対象を1つの検索パターンに絞る")
     return parser
 
 
@@ -474,6 +501,230 @@ def _cmd_sync_site_params(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_sync_stations(args: argparse.Namespace) -> int:
+    from house_search.commute.stations import load_station_rows, sync_stations
+    from house_search.config.settings import load_settings
+    from house_search.db.session import get_engine
+
+    settings = load_settings()
+    loaded = load_station_rows(settings.data_dir)
+    engine = get_engine()
+    applied, deleted = sync_stations(engine, loaded.rows)
+    groups = len({row.station_g_cd for row in loaded.rows})
+    print(
+        f"同期しました: {applied}駅 / {groups}駅グループ"
+        f"（CSVから消えた駅を削除: {deleted}件）"
+    )
+    print(
+        f"  対象外: 営業中でない駅 {loaded.skipped_closed}件 / "
+        f"営業中の路線に紐づかない駅 {loaded.skipped_no_line}件"
+    )
+    return 0
+
+
+def _cmd_resolve_stations(args: argparse.Namespace) -> int:
+    from house_search.commute.resolve import (
+        listing_prefecture_codes,
+        load_station_index,
+        resolve_listing_stations,
+        unmatched_station_names,
+    )
+    from house_search.db.session import get_engine
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        prefectures = listing_prefecture_codes(conn)
+        index = load_station_index(conn, prefectures)
+        if not index.by_key:
+            print("駅マスタが空です。先に sync-stations を実行してください")
+            return 1
+        stats = resolve_listing_stations(conn, index)
+        unmatched = unmatched_station_names(conn, args.limit)
+
+    print(f"照合スコープ: 都道府県コード {list(prefectures)} / {len(index.by_key)}駅名")
+    print(f"{'サイト':<12}{'掲載':>7}{'駅あり':>8}{'率':>8}{'同定':>7}{'曖昧':>7}{'不明':>7}")
+    for stat in stats.per_site:
+        print(
+            f"{stat.site_code:<12}{stat.listings:>7}{stat.with_station:>8}"
+            f"{stat.rate:>7.1f}%{stat.matched_rows:>7}"
+            f"{stat.ambiguous_rows:>7}{stat.unmatched_rows:>7}"
+        )
+    print(f"\n全体: {stats.with_station}/{stats.listings} = {stats.rate:.1f}%")
+    if unmatched:
+        print("\n同定できなかった表記（出現回数順）:")
+        for name, count in unmatched:
+            print(f"  {count:>6}  {name}")
+    return 0
+
+
+def _commute_destination(args: argparse.Namespace) -> tuple[str, str | None]:
+    """目的地の駅名と都道府県を決める。明示指定 > 検索パターンの commute。"""
+    if args.destination:
+        return args.destination, args.destination_prefecture
+
+    patterns = _load_patterns(args.pattern)
+    specs = {
+        (p.commute.destination_station, p.commute.destination_prefecture)
+        for p in patterns
+        if p.commute is not None
+    }
+    if not specs:
+        raise ValueError(
+            "目的地が決まりません。--destination を指定するか、"
+            "検索パターンに commute セクションを書いてください"
+        )
+    if len(specs) > 1:
+        raise ValueError(
+            f"検索パターンごとに目的地が違います: {sorted(specs)}。"
+            "--pattern で1つに絞ってください"
+        )
+    return specs.pop()
+
+
+def _cmd_resolve_commutes(args: argparse.Namespace) -> int:
+    from house_search.commute.graph import estimate_from, load_links, station_nodes
+    from house_search.commute.resolve import (
+        STATUS_NO_ROUTE,
+        STATUS_OK,
+        commute_distribution,
+        commute_summary,
+        load_station_nodes,
+        prefecture_code_of,
+        referenced_station_groups,
+        save_commutes,
+    )
+    from house_search.commute.stations import resolve_station_group
+    from house_search.config.settings import load_settings
+    from house_search.db.session import get_engine
+
+    station_name, prefecture_name = _commute_destination(args)
+    settings = load_settings()
+    engine = get_engine()
+    with engine.connect() as conn:
+        pref_cd = prefecture_code_of(conn, prefecture_name) if prefecture_name else None
+        if prefecture_name and pref_cd is None:
+            print(f"都道府県 '{prefecture_name}' を m_cities から解決できません")
+            return 1
+        found = resolve_station_group(conn, station_name, pref_cd)
+        if found is None:
+            print(
+                f"目的地の駅 '{station_name}' を一意に決められません。"
+                "--destination-prefecture で都道府県を指定してください"
+            )
+            return 1
+        destination_g_cd, destination_name = found
+        nodes = load_station_nodes(conn)
+        groups = referenced_station_groups(conn, pattern_name=args.pattern)
+
+    if not nodes:
+        print("駅マスタが空です。先に sync-stations を実行してください")
+        return 1
+    if not groups:
+        print("掲載に紐づく駅がありません。先に resolve-stations を実行してください")
+        return 1
+
+    links = load_links(settings.data_dir)
+    estimates = estimate_from(station_nodes(nodes), links, destination_g_cd)
+
+    rows = []
+    for group_code in groups:
+        estimate = estimates.get(group_code)
+        if estimate is None:
+            # 線路がつながっておらず到達できない。欠損と区別して明示的に残す
+            rows.append((group_code, STATUS_NO_ROUTE, None, None, None))
+        else:
+            rows.append(
+                (
+                    group_code,
+                    STATUS_OK,
+                    estimate.minutes,
+                    estimate.transfers,
+                    estimate.distance_km,
+                )
+            )
+
+    with engine.begin() as conn:
+        saved = save_commutes(conn, destination_g_cd=destination_g_cd, rows=rows)
+    with engine.connect() as conn:
+        summary = commute_summary(conn, destination_g_cd)
+        distribution = commute_distribution(conn, destination_g_cd)
+
+    print(f"目的地: {destination_name}（駅グループ {destination_g_cd}）")
+    print(f"算出しました: {saved}駅（到達可 {summary.ok} / 到達不可 {summary.no_route}）")
+    if distribution:
+        lowest, median, upper, highest = distribution
+        print(
+            f"所要時間の分布: 最短 {lowest}分 / 中央 {median}分 / "
+            f"75% {upper}分 / 最長 {highest}分"
+        )
+    return 0
+
+
+def _percentile(values: list[int], ratio: float) -> int:
+    """整列済みの列から百分位を取る（線形補間はしない）。"""
+    if not values:
+        return 0
+    index = min(int(len(values) * ratio), len(values) - 1)
+    return values[index]
+
+
+def _cmd_commute_stats(args: argparse.Namespace) -> int:
+    from house_search.commute.resolve import resolve_destination_group
+    from house_search.db.session import get_engine
+    from house_search.pipeline import persist
+    from house_search.scoring.must import evaluate_must
+
+    engine = get_engine()
+    for pattern in _load_patterns(args.pattern):
+        print(f"=== {pattern.name} ===")
+        if pattern.commute is None:
+            print("  commute セクションがありません")
+            continue
+        with engine.connect() as conn:
+            destination = resolve_destination_group(conn, pattern.commute)
+            if destination is None:
+                print(f"  目的地 '{pattern.commute.destination_station}' を解決できません")
+                continue
+            views = persist.load_listing_views(
+                conn,
+                property_type_code=pattern.property_type,
+                site_codes=list(pattern.sites),
+                city_names=list(pattern.search.cities) or None,
+                commute_destination_g_cd=destination,
+            )
+
+        # MUST を通る掲載だけを母集団にする。落ちる掲載の分布を混ぜると
+        # best/worst が実際の候補群からずれる（課題#31 と同じ失敗になる）
+        passing = [
+            view
+            for view in views.values()
+            if evaluate_must(view, pattern.must).passes(pattern.must.unknown_policy)
+        ]
+        known = sorted(v.commute_minutes for v in passing if v.commute_minutes is not None)
+        unknown = len(passing) - len(known)
+        print(f"  目的地: {pattern.commute.destination_station}")
+        print(
+            f"  母集団: MUST通過 {len(passing)}件"
+            f"（うち通勤時間あり {len(known)} / 不明 {unknown}）"
+        )
+        if not known:
+            continue
+        marks = [("最短", 0.0), ("25%", 0.25), ("中央", 0.5), ("75%", 0.75), ("90%", 0.9)]
+        cells = "  ".join(f"{label} {_percentile(known, r)}分" for label, r in marks)
+        print(f"  分布: {cells}  最長 {known[-1]}分")
+        print("  上限候補ごとの通過件数:")
+        for limit in (30, 40, 45, 50, 60, 75, 90):
+            passed = sum(1 for m in known if m <= limit)
+            share = passed / len(known) * 100
+            print(f"    {limit:>3}分以内: {passed:>5}件（{share:>5.1f}%）")
+        print("  worst 候補ごとの0点張り付き率（best=0固定）:")
+        for worst in (45, 60, 75, 90, 120):
+            zero = sum(1 for m in known if m >= worst)
+            print(f"    worst={worst:>3}分: {zero / len(known) * 100:>5.1f}%")
+        print()
+    return 0
+
+
 def _cmd_resolve_cities(args: argparse.Namespace) -> int:
     from house_search.pipeline.runtime import build_runtime
     from house_search.pipeline.tasks import resolve_cities
@@ -560,6 +811,10 @@ _COMMANDS = {
     "dedup-stats": _cmd_dedup_stats,
     "resolve-cities": _cmd_resolve_cities,
     "sync-site-params": _cmd_sync_site_params,
+    "sync-stations": _cmd_sync_stations,
+    "resolve-stations": _cmd_resolve_stations,
+    "resolve-commutes": _cmd_resolve_commutes,
+    "commute-stats": _cmd_commute_stats,
 }
 
 

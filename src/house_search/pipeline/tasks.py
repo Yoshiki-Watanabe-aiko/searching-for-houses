@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import text
 
 from house_search import dedup
+from house_search.commute.resolve import resolve_destination_group
 from house_search.extract.extractor import (
     SOURCE_DETAIL,
     derive_features,
@@ -77,12 +78,20 @@ def rescore(runtime: Runtime, pattern) -> RescoreResult:
     )
 
     with runtime.engine.connect() as conn:
+        destination = resolve_destination_group(conn, pattern.commute)
+        if pattern.commute is not None and destination is None:
+            raise ValueError(
+                f"通勤時間の目的地 '{pattern.commute.destination_station}' を"
+                "駅マスタから一意に解決できません。sync-stations の実行と"
+                "commute.destination_prefecture の指定を確認してください"
+            )
         views = persist.load_listing_views(
             conn,
             property_type_code=pattern.property_type,
             site_codes=list(pattern.sites),
             # scan と同じくエリア帯に閉じる（帯外の既存データを採点しない）
             city_names=list(pattern.search.cities) or None,
+            commute_destination_g_cd=destination,
         )
 
     with runtime.engine.begin() as conn:
@@ -136,7 +145,11 @@ def digest(runtime: Runtime, pattern, *, dry_run: bool = False) -> DigestResult:
             {"name": pattern.name, "top_n": pattern.ranking.top_n},
         ).all()
         listing_ids = [row.listing_id for row in rows]
-        views = persist.load_listing_views(conn, listing_ids=listing_ids)
+        views = persist.load_listing_views(
+            conn,
+            listing_ids=listing_ids,
+            commute_destination_g_cd=resolve_destination_group(conn, pattern.commute),
+        )
         # 順位はグループ代表にしか振っていないので、ここに並ぶのは
         # 「代表 ＋ 未グループ物件」だけになる（= ランキングがグループ単位）
         memberships = dedup.group_membership(conn, listing_ids)

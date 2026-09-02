@@ -617,7 +617,20 @@ _PROPERTY_COLUMNS = """
             WHERE p.group_id IS NOT NULL AND m.group_id = p.group_id
               AND m.detail_fetched_at IS NOT NULL
         )
-    ) AS detail_fetched
+    ) AS detail_fetched,
+    (
+        SELECT min(sc.commute_minutes)
+        FROM t_listings member
+        JOIN t_listing_stations ls ON ls.listing_id = member.id
+        JOIN t_station_commutes sc
+          ON sc.origin_station_g_cd = ls.station_g_cd
+         AND sc.destination_station_g_cd = :commute_destination
+        WHERE (
+            (p.group_id IS NULL AND member.id = p.id)
+            OR (p.group_id IS NOT NULL AND member.group_id = p.group_id)
+        )
+          AND sc.status = 'ok'
+    ) AS commute_minutes
 """
 
 
@@ -659,6 +672,7 @@ def _to_view(row: Any, feature_codes: frozenset[str]) -> ListingView:
         total_floors=row.total_floors,
         age_years=row.age_years,
         walk_minutes=row.walk_minutes,
+        commute_minutes=row.commute_minutes,
         prefecture=row.prefecture,
         address=row.address,
         detail_fetched=row.detail_fetched,
@@ -673,6 +687,7 @@ def load_listing_views(
     property_type_code: str | None = None,
     site_codes: list[str] | None = None,
     city_names: list[str] | None = None,
+    commute_destination_g_cd: int | None = None,
     active_only: bool = True,
 ) -> dict[int, ListingView]:
     """採点に必要な物件ビューをまとめて読み出す。
@@ -680,13 +695,19 @@ def load_listing_views(
     設備は1クエリでまとめて引いてから物件ごとに畳む（物件ごとに引くと
     数千件で往復が効いてくる）。
 
+    ``commute_destination_g_cd`` は勤務先の最寄り駅（駅グループコード）。
+    通勤時間は**グループ内の最短**を採る。設備と同じく、サイトによって挙げる駅が
+    違うため、名寄せしたグループ全体から拾わないと情報が減る。
+
     ``city_names`` は検索パターンのエリア帯。**採点範囲を帯に閉じるために要る。**
     エリア帯は取得URLを絞るだけなので、これが無いとDBに残っている帯外の掲載
     （帯を変える前に取ったもの）にも帯のスコアが付き、23区のランキングが
     群馬県境の掲載で埋まる。
     """
     where = ["TRUE"]
-    params: dict[str, Any] = {}
+    # 目的地が未設定なら通勤時間のサブクエリは常に NULL を返す（照合が成立しない）。
+    # 分岐でSQLを組み替えるより、値だけ差し替えるほうが経路が1本で済む。
+    params: dict[str, Any] = {"commute_destination": commute_destination_g_cd}
     if listing_ids is not None:
         if not listing_ids:
             return {}

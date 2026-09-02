@@ -19,6 +19,7 @@ from sqlalchemy import (
     Index,
     Integer,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -37,6 +38,10 @@ MUST_RESULTS = ("pass", "fail", "unknown")
 NOTIFICATION_TYPES = ("new", "sold", "price_up", "price_down", "cheaper_listing")
 LOG_LEVELS = ("INFO", "WARN", "ERROR")
 RUN_STATUSES = ("running", "completed", "failed", "aborted")
+# 掲載の駅表記と駅マスタの同定結果。ambiguous / unmatched は採点上 unknown として扱う。
+MATCH_STATUSES = ("matched", "ambiguous", "unmatched")
+# 通勤時間キャッシュの状態。no_route は「線路がつながっていない」を明示的に記録する値。
+COMMUTE_STATUSES = ("ok", "no_route")
 
 
 class ListingGroup(TimestampMixin, Base):
@@ -565,3 +570,115 @@ __all__ = [
     "ScrapeRun",
     "UnknownToken",
 ]
+
+
+class ListingStation(TimestampMixin, Base):
+    """掲載 → 駅（グループ）の同定結果。
+
+    掲載の駅表記は ``t_listings.station_info`` に原文で入っており、サイトごとに大きくばらつく
+    （全角ＪＲ・会社名の前置・区切り文字なしの連結・「駅」の省略・バス停の併記）。
+    同定は**保存済みの原文からの純関数**（``commute/matcher.py``）で行うので、
+    アダプタには手を入れない。辞書を直したら ``resolve-stations`` で作り直せる
+    （``raw_features_text`` から再抽出する設備の運用と同じ考え方）。
+
+    ⚠ ``station_g_cd`` に外部キーは張れない。``m_stations`` の主キーは ``station_cd`` で、
+    ``station_g_cd`` は一意でないため（同一グループに路線ごとの行が並ぶ）。
+    """
+
+    __tablename__ = "t_listing_stations"
+    __table_args__ = (
+        UniqueConstraint("listing_id", "position"),
+        CheckConstraint(
+            "match_status IN ('matched', 'ambiguous', 'unmatched')",
+            name="listing_stations_match_status",
+        ),
+        Index(
+            "ix_t_listing_stations_station_g_cd",
+            "station_g_cd",
+            postgresql_where="station_g_cd IS NOT NULL",
+        ),
+        {"comment": "掲載の駅表記と駅マスタの同定結果"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, comment="同定結果ID")
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("t_listings.id", ondelete="CASCADE"), nullable=False, comment="掲載ID"
+    )
+    position: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, comment="station_info 内での出現順（0始まり）"
+    )
+    raw_station_name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        comment="抽出した駅名の原文。同定に失敗した表記を後から調べるために残す",
+    )
+    station_g_cd: Mapped[int | None] = mapped_column(
+        Integer, comment="同定できた駅グループコード。ambiguous / unmatched では NULL"
+    )
+    match_status: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        comment=(
+            "matched=一意に同定 / ambiguous=同名の駅が複数あり路線でも絞れない / "
+            "unmatched=マスタに無い（バス停・施設名など）"
+        ),
+    )
+
+
+class StationCommute(TimestampMixin, Base):
+    """駅ペアの通勤所要時間キャッシュ。
+
+    採点と再採点をネットワークにもCSVにも依存させないための表。``rescore`` が
+    「DB保存済みの属性からの純関数」であることは v2 の設計上の性質なので、
+    所要時間は**駅グループのペアごとに一度だけ**求めてここへ落とす。
+
+    ⚠ **算出は Google Maps ではない。** Routes API・Directions API とも
+    **日本の公共交通経路を返さない**ことを実測で確認した（米国の同じ呼び出しは
+    経路を返し、日本は HTTP 200 のまま本文が空。DRIVE なら日本でも返る）。
+    駅データ.jp の接続情報から自前で経路を探索している（→ ADR 0016）。
+
+    目的地も駅グループコードで持つので、**勤務先が変わっても行が増えるだけ**で
+    既存のキャッシュは無効にならない。
+    """
+
+    __tablename__ = "t_station_commutes"
+    __table_args__ = (
+        UniqueConstraint("origin_station_g_cd", "destination_station_g_cd"),
+        CheckConstraint("status IN ('ok', 'no_route')", name="station_commutes_status"),
+        {"comment": "駅ペアの通勤所要時間キャッシュ"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, comment="キャッシュID")
+    origin_station_g_cd: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="出発駅の駅グループコード（物件側の最寄り駅）"
+    )
+    destination_station_g_cd: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="到着駅の駅グループコード（勤務先の最寄り駅）"
+    )
+    status: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        comment=(
+            "ok=所要時間を算出できた / no_route=線路がつながっておらず到達できない。"
+            "到達不能を明示的に記録し、欠損と区別する"
+        ),
+    )
+    commute_minutes: Mapped[int | None] = mapped_column(
+        Integer, comment="所要時間（分）。status='ok' のときだけ入る"
+    )
+    transfers: Mapped[int | None] = mapped_column(
+        Integer, comment="乗換回数。所要時間の内訳を人が確かめるために持つ"
+    )
+    distance_km: Mapped[float | None] = mapped_column(
+        Numeric(7, 2), comment="経路上の駅間距離の合計（km）。校正のときに使う"
+    )
+    source: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        comment="算出元（rail_graph=駅データ.jpの接続情報からの自前計算）",
+    )
+    computed_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        comment="算出した時刻。パラメータを変えて計算し直したときの区別に使う",
+    )

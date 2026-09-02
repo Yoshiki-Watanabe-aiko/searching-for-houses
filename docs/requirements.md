@@ -8,6 +8,7 @@
 > 房総半島で埋まり、東京の掲載が上位15件に1件も入らない**ことが判明した（→ 課題#24）。
 > 原因はスコアに立地の概念が無いことで、**エリア帯**を導入して検索パターンを
 > 2つに分割した（→ [ADR 0013](./adr/0013-area-bands.md)・[CONTEXT.md](../CONTEXT.md)）。
+> Phase 5C で**通勤時間**をランキングへ組み込んだ（→ [ADR 0016](./adr/0016-commute-time-rail-graph.md)）。
 > 帯ごとの初回取得とタスク登録（→ 課題#23）が残っている。
 > Phase 4 以降で確定した仕様を各Phase完了時に本書へ反映していく。
 > 移行の全体像・Phase構成・未確定事項は [`再設計計画.md`](./再設計計画.md) を参照。
@@ -125,6 +126,10 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 | `regroup` | 名寄せキーを全件作り直してグループを同期（ネットワーク不要・**通知なし**） | ✅ Phase 4 |
 | `resolve-cities` | 既存掲載の `city_id` を現在の `m_cities` で引き直す（ネットワーク不要） | ✅ Phase 5A |
 | `sync-site-params` | `data/site_search_params.yaml` → `m_site_search_params` | ✅ Phase 5B |
+| `sync-stations` | `data/train_master/*.csv` → `m_stations`（駅マスタ） | ✅ Phase 5C |
+| `resolve-stations` | 掲載の駅表記を駅マスタと突き合わせる（ネットワーク不要） | ✅ Phase 5C |
+| `resolve-commutes` | 駅ペアの通勤所要時間を算出してキャッシュ（ネットワーク不要） | ✅ Phase 5C |
+| `commute-stats` | 通勤時間の分布を実測（best/worst を決める材料） | ✅ Phase 5C |
 | `dedup-stats` | サイト別のキー充足率・クロスサイト重複率・ユニーク率の実測 | ✅ Phase 4 |
 
 **Phase 2 で全コマンドが実装済みになった。**
@@ -240,6 +245,39 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 都道府県4本しか叩いていなかった SUUMO・HOMES・EHEYA の母集団が増える
 （SUUMO は一覧で2,248件しか見ておらず、APAMAN の37,163件の**1/17**だった）。
 
+### 5.1.2 通勤時間
+
+**✅ Phase 5C で導入。** 設計判断は [ADR 0016](./adr/0016-commute-time-rail-graph.md)、
+実装は `src/house_search/commute/`。
+
+エリア帯で相場の違う範囲を混ぜる問題は解けたが、**帯の中でどこが通いやすいか**は
+依然として順位に現れなかった。通勤時間を MUST と WANT の両方へ配線してこれを埋める。
+
+| 項目 | 内容 |
+|---|---|
+| 測る区間 | **駅から駅まで**。駅までの徒歩は含めない（`walk_minutes` が別に効くため） |
+| 目的地 | `commute.destination_station`（＋ `destination_prefecture`） |
+| MUST | `commute_minutes_max`（実運用は両帯とも60分） |
+| WANT | `commute_minutes` weight 25（`walk_minutes` を 15→10 に下げて捻出） |
+| 算出 | 駅データ.jp の駅間接続をグラフにしてダイクストラ → 距離と乗換回数から回帰式 |
+| 保存 | `t_station_commutes`（駅グループのペアごとに1行）。採点はキャッシュを読むだけ |
+
+- ⚠ **Google Maps は日本の公共交通経路を返さない。** Routes API に TRANSIT を投げると
+  HTTP 200 のまま本文が `{}` になる（同じ呼び出しが米国では経路を返し、日本でも DRIVE なら返る）。
+  Directions API も日本は ZERO_RESULTS。駅すぱあと API はフリープランに経路探索が無い
+- 所要時間は `8.7 + 1.14 × 距離km + 5.6 × 乗換回数`（分）。係数は NAVITIME の
+  実測12ペア（芝公園ゆき・水曜08:30発）で最小二乗した。**平均誤差5.6分・最大16.0分**
+- ⚠ **一律の表定速度では長距離が過大になる**（平均18.2分・最大72分のずれ）。優等列車を表現できないため
+- **駅の同定率は99.4%**（10,259/10,322掲載）。同名駅は掲載の所在都道府県で絞ると
+  曖昧が168件→23件に減る。残る23件（浅草・早稲田・弘明寺）は unknown 扱い
+- **通勤時間はグループ内の最短を採る**（設備の和集合と同じ）。サイトによって挙げる駅が違うため
+- ⚠ **`best`/`worst` は帯ごとに母集団の分布へ合わせる**（→ 課題#31）。
+  帯1の母集団は 18〜47分・帯2は 30〜60分で、MUST の60分に機械的に合わせると
+  帯1は全件が上半分に固まって weight 25 が死ぬ。`commute-stats` が分布と
+  0点張り付き率を出す（実測で両帯とも0点は0件）
+- ⚠ **駅の接続情報CSVは再配布不可でGit管理外。** 無い環境では通勤時間を更新できないが、
+  `scan` はエラーとして記録するだけで処理を止めない（通勤時間が unknown になる）
+
 ### 5.2 スキーマ
 
 型定義は `src/house_search/config/pattern.py`。`property_type` を discriminator にした
@@ -260,8 +298,13 @@ search:                             # サイト側へ渡す唯一の条件
     axes: ["area_min", "walk_minutes_max", "layouts"]
     exclude_sites: []
 
+commute:                            # 通勤時間の基準（→ ADR 0016）
+  destination_station: "芝公園"       # 勤務先の最寄り駅
+  destination_prefecture: "東京都"    # 同名異駅を避けるため指定を推奨
+
 must:                               # 未充足なら除外
   rent_total_max: 70000
+  commute_minutes_max: 60           # 駅から駅まで（徒歩は walk_minutes_max で別に効く）
   layouts: ["1LDK", "2K", "2DK", "2LDK", "3LDK"]
   area_min: 30.0
   walk_minutes_max: 20
@@ -278,6 +321,8 @@ want:
   numeric:                          # best〜worst で線形正規化
     - { metric: rent_total, weight: 10, best: 50000, worst: 70000 }
     - { metric: area_sqm,   weight: 6,  best: 45,    worst: 30 }
+    # best/worst は MUST の上限ではなく**母集団の分布**に合わせる（→ 課題#31）
+    - { metric: commute_minutes, weight: 25, best: 35, worst: 60 }
 
 ranking:
   top_n: 15
@@ -299,6 +344,7 @@ YAMLは読み込み時にこのレジストリと突き合わせて検証され�
 | `land_area_sqm` | 高いほど良 | - | - | - | ○ | ○ |
 | `age_years` | 低いほど良 | ○ | - | ○ | - | ○ |
 | `walk_minutes` | 低いほど良 | ○ | ○ | ○ | ○ | ○ |
+| `commute_minutes`（勤務先の最寄り駅まで） | 低いほど良 | ○ | ○ | ○ | ○ | ○ |
 
 - **戸建てに `area_sqm` を流用しない。** 専有面積が存在せず土地面積・建物面積の2軸になるため
 - **坪単価・㎡単価は metric にしない。** price と area に既に weight を配れる以上、
@@ -490,6 +536,7 @@ DDLは Alembic（`migrations/`）、マスタデータは `db/seed/*.sql`（冪�
 | `m_condition_synonyms` | **設備抽出辞書**（条件コード → 表記パターン） |
 | `m_cities` | 市区町村（**1,918行・47都道府県**。総務省の全国地方公共団体コードが正典 → ADR 0014。`canonical_name` がYAML指定値の正典） |
 | `m_site_search_params` | **サイト側の絞り込みパラメータ定義**（MUST限定・サイト×物件種別×軸 → ADR 0015） |
+| `m_stations` | **駅マスタ**（駅データ.jp 無料版が正典・10,465駅 / 8,766駅グループ → ADR 0016） |
 | `m_city_site_values` | 市区町村×サイトの検索値（**縦持ち**・1833行。JIS系サイトは `m_cities.jis_code` から導出するのでこの表を引かない） |
 | `t_listings` | **掲載**（1行=1サイトの1件の募集）|
 | `t_listing_features` | 掲載から抽出した設備・特性 |
@@ -499,6 +546,8 @@ DDLは Alembic（`migrations/`）、マスタデータは `db/seed/*.sql`（冪�
 | `t_ranking_digests` | ダイジェスト送信履歴（追記専用） |
 | `t_scrape_runs` | 実行チェックポイント（中断・再開用） |
 | `t_scrape_logs` | 実行ログ（全件永久保持・追記専用） |
+| `t_listing_stations` | 掲載の駅表記と駅マスタの同定結果 |
+| `t_station_commutes` | 駅ペアの通勤所要時間キャッシュ |
 | `t_unknown_tokens` | 辞書未登録の設備表記 |
 
 DB規約準拠: `m_`/`t_` 接頭辞、全テーブル・全カラムに日本語コメント、

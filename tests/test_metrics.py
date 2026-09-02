@@ -52,6 +52,7 @@ def test_metrics_forの並びは決定的() -> None:
         "area_sqm",
         "age_years",
         "walk_minutes",
+        "commute_minutes",
     ]
 
 
@@ -85,7 +86,13 @@ def test_bestとworstが同値ならエラー() -> None:
 def test_一覧だけで判定できないMUST項目が明示されている() -> None:
     """2段判定の要。ここが誤っていると詳細取得を不当にスキップする。"""
     list_only = {i.name for i in m.MUST_ITEMS if not i.available_on_list}
-    assert list_only == {"monthly_cost_max", "floor_min", "features"}
+    # commute_minutes_max は駅の同定と所要時間キャッシュの解決が要るため一覧では判定できない。
+    assert list_only == {
+        "monthly_cost_max",
+        "floor_min",
+        "features",
+        "commute_minutes_max",
+    }
 
 
 def test_全種別にファミリが割り当てられている() -> None:

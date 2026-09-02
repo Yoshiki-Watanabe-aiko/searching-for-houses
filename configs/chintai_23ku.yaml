@@ -74,12 +74,23 @@ search:
     axes: ["area_min", "walk_minutes_max", "layouts"]
     exclude_sites: []
 
+# ---- 通勤時間の基準（→ Phase 5C・ADR 0016）----
+# ⚠ 測るのは**駅から駅まで**。駅までの徒歩は walk_minutes_max（MUST）と
+# walk_minutes（WANT weight 15）で独立に効いており、足すと二重に不利になる。
+# ⚠ 所要時間は Google Maps ではなく駅データ.jp の接続情報からの自前計算。
+# Routes API・Directions API とも日本の公共交通経路を返さない（実測）。
+commute:
+  destination_station: "芝公園"
+  destination_prefecture: "東京都"
+
 # ---- MUST: 未充足なら除外 ----
 must:
   rent_total_max: 100000   # 実測で確定（2026-09-02）
   layouts: ["1LDK", "2K", "2DK", "2LDK", "3LDK"]
   area_min: 30.0
   walk_minutes_max: 20
+  # 通勤時間の上限（分・駅から駅）。徒歩は walk_minutes_max で別に効く
+  commute_minutes_max: 60
   features: []
   unknown_policy: keep
 
@@ -124,7 +135,13 @@ want:
     # worst は母集団の実態に合わせる。30年にすると築30年以上が全部0点になり、
     # 母集団の9割（中央値 築38〜40年）が張り付いて weight 15 が死ぬ（実測）
     - { metric: age_years,    weight: 15, best: 0,     worst: 50 }
-    - { metric: walk_minutes, weight: 15, best: 3,     worst: 20 }
+    # 徒歩は 15 → 10 へ下げ、その分を通勤時間へ回した。どちらも「移動時間」の軸で、
+    # 別々に大きな重みを持たせると二重に効く（→ 2026-09-03 ユーザー確定）
+    - { metric: walk_minutes, weight: 10, best: 3,     worst: 20 }
+    # 通勤時間（芝公園まで・駅から駅）。best/worst は**母集団の分布に合わせる**。
+    # MUST の 60分に合わせると 23区の掲載（最短18分・中央35分・最長47分）が
+    # 上半分に固まって差がつかない（課題#31 と同じ失敗になる）
+    - { metric: commute_minutes, weight: 25, best: 20, worst: 45 }
 
 ranking:
   top_n: 15

@@ -8,9 +8,9 @@ import sys
 import textwrap
 
 import pytest
-from house_search.scoring.listing_view import ListingView, normalize_layout
 
 from house_search.config.pattern import parse_pattern
+from house_search.scoring.listing_view import ListingView, normalize_layout
 from house_search.scoring.must import FAIL, PASS, UNKNOWN, evaluate_must
 from house_search.scoring.score import STATUS_UNKNOWN, calculate_score, rank
 

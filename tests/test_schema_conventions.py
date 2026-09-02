@@ -24,6 +24,7 @@ EXPECTED_MASTER_TABLES = {
     "m_property_types",
     "m_site_search_params",
     "m_sites",
+    "m_stations",
 }
 EXPECTED_TRANSACTION_TABLES = {
     "t_notifications",
@@ -31,9 +32,11 @@ EXPECTED_TRANSACTION_TABLES = {
     "t_listing_features",
     "t_listing_groups",
     "t_listing_scores",
+    "t_listing_stations",
     "t_ranking_digests",
     "t_scrape_logs",
     "t_scrape_runs",
+    "t_station_commutes",
     "t_unknown_tokens",
 }
 # 追記専用のため updated_at を持たないテーブル。

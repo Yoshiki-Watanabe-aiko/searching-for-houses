@@ -35,6 +35,7 @@ _VALUE_METRIC: dict[str, str] = {
     "building_area_min": "building_area_sqm",
     "age_max": "age_years",
     "walk_minutes_max": "walk_minutes",
+    "commute_minutes_max": "commute_minutes",
     "floor_min": "floor_num",
 }
 
