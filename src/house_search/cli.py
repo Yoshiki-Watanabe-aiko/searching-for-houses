@@ -179,7 +179,25 @@ def _cmd_validate_config(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def _skipped_by_lock(command: str) -> None:
+    print(
+        f"{command}: 他の取得処理が実行中のためスキップしました。"
+        "レート制御は SiteFetcher のプロセス内にしかないため並走させません。",
+        file=sys.stderr,
+    )
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
+    from house_search.db.session import scraping_lock
+
+    with scraping_lock() as acquired:
+        if not acquired:
+            _skipped_by_lock("scan")
+            return 0
+        return _run_scan(args)
+
+
+def _run_scan(args: argparse.Namespace) -> int:
     from house_search.pipeline.runtime import build_runtime
     from house_search.pipeline.scan import scan_pattern
 
@@ -222,10 +240,18 @@ def _cmd_scan(args: argparse.Namespace) -> int:
 
 
 def _cmd_check_sold(args: argparse.Namespace) -> int:
+    from house_search.db.session import scraping_lock
     from house_search.pipeline.runtime import build_runtime
     from house_search.pipeline.tasks import check_sold
 
-    runtime = build_runtime()
+    with scraping_lock() as acquired:
+        if not acquired:
+            _skipped_by_lock("check-sold")
+            return 0
+        return _run_check_sold(args, build_runtime(), check_sold)
+
+
+def _run_check_sold(args: argparse.Namespace, runtime, check_sold) -> int:
     for pattern in _load_patterns(args.pattern):
         result = check_sold(runtime, pattern, limit=args.limit)
         print(f"{pattern.name}: 確認 {result.checked}件 / 成約・掲載終了 {result.sold}件")
