@@ -22,6 +22,7 @@ EXPECTED_MASTER_TABLES = {
     "m_condition_synonyms",
     "m_conditions",
     "m_property_types",
+    "m_site_search_params",
     "m_sites",
 }
 EXPECTED_TRANSACTION_TABLES = {

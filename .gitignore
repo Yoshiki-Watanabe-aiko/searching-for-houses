@@ -40,3 +40,10 @@ tmp_query.sql
 
 # Claude Codeのローカル権限設定（個人環境固有のため管理外）
 .claude/settings.local.json
+
+# 駅データ.jp の無料版データ（通勤時間の算出に使う）
+# ⚠ 再配布不可のためGit管理外。取得手順は data/train_master/README.md
+# ⚠ ディレクトリごと除外すると、配下のファイルは否定パターンで戻せない。
+#   中身を除外してから README だけ戻す
+data/train_master/*
+!data/train_master/README.md

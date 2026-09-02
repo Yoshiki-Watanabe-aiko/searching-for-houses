@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from urllib.parse import urlencode
 
 from sqlalchemy import text
 
@@ -166,6 +167,43 @@ def _site_areas(runtime: Runtime, scraper, pattern) -> list[AreaTarget]:
         )
 
 
+def site_filter_query(scraper, pattern, site_params) -> dict[str, list[str]]:
+    """MUST から、そのサイトへ渡せるフィルタのクエリを作る（→ ADR 0015）。
+
+    足すのは **``site_filters.enabled`` が真で、アダプタが対応を宣言していて、
+    そのサイトが除外指定に入っていない**ときだけ。クエリ文字列を持たないURL体系の
+    サイト（賃貸EX・スモッカ）へ機械的に付けても効かないので、対応の可否は
+    アダプタの宣言（``supports_site_filters``）に委ねる。
+
+    渡すのは MUST だけなので、サイト側で落ちる掲載はローカルでも ``fail`` になる。
+    取得量が減るだけで順位も通知も変わらない。
+    """
+    filters = pattern.search.site_filters
+    if not filters.enabled or site_params is None:
+        return {}
+    if not getattr(scraper, "supports_site_filters", False):
+        return {}
+    if scraper.site_code in filters.exclude_sites:
+        return {}
+    return site_params.build_query(
+        site_code=scraper.site_code,
+        property_type=pattern.property_type,
+        must=pattern.must,
+        axes=filters.axes,
+    )
+
+
+def _with_site_filters(scraper, pattern, areas: list[AreaTarget], site_params) -> list[str]:
+    """一覧URLに、サイト側フィルタのクエリを足して返す。"""
+    urls = scraper.list_urls(pattern, areas)
+    query = site_filter_query(scraper, pattern, site_params)
+    if not query:
+        return list(urls)
+    suffix = urlencode([(key, value) for key, values in query.items() for value in values])
+    # list_urls が返すURLは必ずクエリ付き。ページ番号も & で足している
+    return [f"{url}&{suffix}" for url in urls]
+
+
 def _collect_listings(
     scraper,
     fetcher: SiteFetcher,
@@ -174,10 +212,11 @@ def _collect_listings(
     areas: list[AreaTarget],
     max_pages: int,
     outcome: SiteOutcome,
+    site_params=None,
 ) -> list[ScrapedListing]:
     """一覧ページを辿って掲載を集める。"""
     collected: list[ScrapedListing] = []
-    for base_url in scraper.list_urls(pattern, areas):
+    for base_url in _with_site_filters(scraper, pattern, areas, site_params):
         for page in range(1, max_pages + 1):
             url = scraper.page_url(base_url, page)
             try:
@@ -535,7 +574,13 @@ def scan_pattern(
         status = "completed"
         try:
             listings = _collect_listings(
-                scraper, fetcher, pattern, areas=areas, max_pages=max_pages, outcome=outcome
+                scraper,
+                fetcher,
+                pattern,
+                areas=areas,
+                max_pages=max_pages,
+                outcome=outcome,
+                site_params=runtime.site_params,
             )
             outcome.listings_seen = len(listings)
 

@@ -104,6 +104,9 @@ class SuumoScraper:
     city_value_source = CITY_VALUE_JIS
     user_agent = None
     ignore_robots = False
+    # MUST の数値条件と間取りを検索URLへ載せられる（→ ADR 0015）。
+    # 実測でキーと選択肢を確定済み（data/site_search_params.yaml）
+    supports_site_filters = True
 
     def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
         """検索パターンと対象エリアから一覧ページのURL（1ページ目）を組み立てる。"""
@@ -143,6 +146,7 @@ class SuumoScraper:
         建物側（住所・駅・築年）を読んでから住戸行を回す。
         """
         doc = lxml_html.fromstring(html_text)
+        _reject_error_page(doc)
         listings: list[ScrapedListing] = []
 
         for building in doc.cssselect("div.cassetteitem"):
@@ -344,3 +348,23 @@ def _detail_fields(doc) -> dict[str, str]:
             if value:
                 fields[key] = value
     return fields
+
+
+def _reject_error_page(doc) -> None:
+    """SUUMO のエラーページを掴んだら例外にする。
+
+    ⚠ **絞り込みパラメータに選択肢外の値を渡すと、SUUMO は HTTP 200 のまま
+    エラーページを返す**（実測 2026-09-03: ``et=12`` で title が
+    「エラー｜SUUMO(スーモ)」の 11KB のページ）。そのまま解析すると
+    **掲載0件になるだけで例外にならない**ので、「取れているつもり」で気づけない
+    （→ 課題#29）。ATHOME の認証ページと同じ扱いで例外にする。
+
+    ``scan`` は1ページの失敗でサイト全体を止めないため、エラーとして記録され
+    実行サマリに出る。
+    """
+    titles = doc.cssselect("title")
+    if titles and "エラー" in (titles[0].text_content() or ""):
+        raise ValueError(
+            "SUUMO がエラーページを返しました（絞り込みパラメータに"
+            "選択肢外の値を渡した可能性があります）"
+        )

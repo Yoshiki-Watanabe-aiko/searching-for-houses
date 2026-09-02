@@ -13,11 +13,14 @@ from pathlib import Path
 from sqlalchemy import Engine
 
 from house_search.config.settings import Settings, load_settings
+from house_search.config.site_params import SITE_PARAMS_FILENAME, load_site_params
+from house_search.config.site_params import load_from_db as load_site_params_from_db
 from house_search.db.session import create_db_engine
 from house_search.extract.dictionary import FeatureDictionary, load_dictionary, load_from_db
 from house_search.notify.discord import DiscordSender, build_sender
 from house_search.pipeline import persist
 from house_search.scrape.fetch import build_client
+from house_search.scrape.params import SiteParamTable
 
 DICTIONARY_FILENAME = "feature_dictionary.yaml"
 
@@ -38,6 +41,9 @@ class Runtime:
     city_index: persist.CityIndex = field(
         default_factory=lambda: persist.CityIndex.build([])
     )
+    # サイト側へ渡す MUST の定義（→ ADR 0015）。既定は空で、
+    # 検索パターンが site_filters を有効にしたときだけ使われる
+    site_params: SiteParamTable = field(default_factory=SiteParamTable)
     _sender: DiscordSender | None = None
 
     @property
@@ -98,6 +104,14 @@ def build_runtime(*, use_test_db: bool = False, prefer_db_dictionary: bool = Tru
         property_type_ids = persist.load_lookup(conn, "m_property_types")
         city_index = persist.load_city_index(conn)
 
+    # 設備抽出辞書と同じ構成。正典は data/site_search_params.yaml で、
+    # sync-site-params で同期したDBの内容を実行時に読む
+    site_params = load_site_params_from_db(engine)
+    if not site_params.specs:
+        params_path = settings.data_dir / SITE_PARAMS_FILENAME
+        if params_path.exists():
+            site_params = load_site_params(params_path)
+
     return Runtime(
         settings=settings,
         engine=engine,
@@ -107,4 +121,5 @@ def build_runtime(*, use_test_db: bool = False, prefer_db_dictionary: bool = Tru
         site_ids=site_ids,
         property_type_ids=property_type_ids,
         city_index=city_index,
+        site_params=site_params,
     )

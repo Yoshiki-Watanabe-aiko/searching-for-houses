@@ -96,6 +96,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("dedup-stats", help="サイト別の名寄せ実測（クロスサイト重複率・ユニーク率）")
 
     sub.add_parser(
+        "sync-site-params",
+        help="data/site_search_params.yaml を m_site_search_params へ同期する",
+    )
+
+    sub.add_parser(
         "resolve-cities",
         help="既存掲載の市区町村IDを現在のマスタで引き直す（ネットワーク不要）",
     )
@@ -447,6 +452,28 @@ def _cmd_coverage(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_sync_site_params(args: argparse.Namespace) -> int:
+    from house_search.config.settings import load_settings
+    from house_search.config.site_params import (
+        SITE_PARAMS_FILENAME,
+        load_site_params,
+        sync_site_params,
+    )
+    from house_search.db.session import get_engine
+
+    path = load_settings().data_dir / SITE_PARAMS_FILENAME
+    if not path.exists():
+        print(f"正典が見つかりません: {path}")
+        return 1
+    table = load_site_params(path)
+    applied, deleted = sync_site_params(get_engine(), table)
+    print(f"同期しました: {applied}件（YAMLから消えた定義を削除: {deleted}件）")
+    for spec in table.specs:
+        state = "有効" if spec.is_enabled else "無効"
+        print(f"  {spec.site_code}/{spec.property_type}/{spec.axis} -> {spec.param_name} [{state}]")
+    return 0
+
+
 def _cmd_resolve_cities(args: argparse.Namespace) -> int:
     from house_search.pipeline.runtime import build_runtime
     from house_search.pipeline.tasks import resolve_cities
@@ -532,6 +559,7 @@ _COMMANDS = {
     "regroup": _cmd_regroup,
     "dedup-stats": _cmd_dedup_stats,
     "resolve-cities": _cmd_resolve_cities,
+    "sync-site-params": _cmd_sync_site_params,
 }
 
 

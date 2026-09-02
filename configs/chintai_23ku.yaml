@@ -64,6 +64,16 @@ search:
   # MUST上限 100,000円 の約1.3倍
   price_max_hint: 130000
 
+  # MUST をサイト側のフォームにも渡す（→ ADR 0015）。
+  # WANT は渡さない（渡すと加点対象の掲載が除外されて順位に現れない）。
+  # 実測（2026-09-03・足立区）: SUUMO の母集団が 62,030 → 27,150件（57%削減）。
+  # ⚠ 無効値は HTTP 200 のまま0件やエラーページになる（→ 課題#29）ので、
+  #   事故が起きたら enabled: false に戻せば全サイトが従来の動作へ戻る。
+  site_filters:
+    enabled: true
+    axes: ["area_min", "walk_minutes_max", "layouts"]
+    exclude_sites: []
+
 # ---- MUST: 未充足なら除外 ----
 must:
   rent_total_max: 100000   # 実測で確定（2026-09-02）
