@@ -590,12 +590,19 @@ def load_property_views(
     property_ids: list[int] | None = None,
     property_type_code: str | None = None,
     site_codes: list[str] | None = None,
+    city_names: list[str] | None = None,
     active_only: bool = True,
 ) -> dict[int, PropertyView]:
     """採点に必要な物件ビューをまとめて読み出す。
 
     設備は1クエリでまとめて引いてから物件ごとに畳む（物件ごとに引くと
     数千件で往復が効いてくる）。
+
+    ``city_names`` は検索パターンのエリア帯。**採点範囲を帯に閉じるために要る。**
+    エリア帯は取得URLを絞るだけなので、これが無いとDBに残っている帯外の掲載
+    （帯を変える前に取ったもの）にも帯のスコアが付き、23区のランキングが
+    群馬県境の掲載で埋まる。市区を解決できなかった掲載は帯の取得URLから
+    来たものとみなして残す（除くと新規の取りこぼしになる）。
     """
     where = ["TRUE"]
     params: dict[str, Any] = {}
@@ -610,6 +617,14 @@ def load_property_views(
     if site_codes:
         where.append("s.code = ANY(:site_codes)")
         params["site_codes"] = site_codes
+    if city_names:
+        where.append(
+            "(p.city_id IS NULL OR EXISTS ("
+            "  SELECT 1 FROM m_cities c"
+            "  WHERE c.id = p.city_id AND c.canonical_name = ANY(:city_names)"
+            "))"
+        )
+        params["city_names"] = city_names
     if active_only:
         where.append("p.status = 'active'")
 

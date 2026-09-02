@@ -78,7 +78,11 @@ def rescore(runtime: Runtime, pattern) -> RescoreResult:
 
     with runtime.engine.connect() as conn:
         views = persist.load_property_views(
-            conn, property_type_code=pattern.property_type, site_codes=list(pattern.sites)
+            conn,
+            property_type_code=pattern.property_type,
+            site_codes=list(pattern.sites),
+            # scan と同じくエリア帯に閉じる（帯外の既存データを採点しない）
+            city_names=list(pattern.search.cities) or None,
         )
 
     with runtime.engine.begin() as conn:

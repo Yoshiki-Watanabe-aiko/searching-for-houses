@@ -46,3 +46,19 @@ def test_都道府県だけ判る住所は市区をNoneにする() -> None:
 def test_住所が無ければ何も返さない() -> None:
     assert resolve_city(None, INDEX) == (None, None)
     assert resolve_city("", INDEX) == (None, None)
+
+
+def test_エリア帯で絞る採点クエリが実行できる(test_engine) -> None:
+    """``city_names`` を渡したときのSQLが壊れていないことを固定する。
+
+    エリア帯は取得URLを絞るだけなので、採点側でも閉じないと帯外の既存データに
+    帯のスコアが付き、23区のランキングが群馬県境の掲載で埋まる。
+    絞り込みの効き目そのものは実データで確認する（掲載0件でも構文は検証できる）。
+    """
+    from house_search.pipeline import persist
+
+    with test_engine.connect() as conn:
+        views = persist.load_property_views(
+            conn, property_type_code="CHINTAI", city_names=["足立区", "本庄市"]
+        )
+    assert isinstance(views, dict)

@@ -270,6 +270,9 @@ def _score_pattern(runtime: Runtime, pattern, summary: ScanSummary) -> dict[int,
             conn,
             property_type_code=pattern.property_type,
             site_codes=list(pattern.sites),
+            # 採点をエリア帯に閉じる。帯は取得URLを絞るだけなので、
+            # これが無いと帯外の既存データにも帯のスコアが付いてしまう
+            city_names=list(pattern.search.cities) or None,
         )
 
     with runtime.engine.begin() as conn:
