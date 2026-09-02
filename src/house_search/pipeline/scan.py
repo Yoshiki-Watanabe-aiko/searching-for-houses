@@ -291,6 +291,8 @@ def _score_pattern(runtime: Runtime, pattern, summary: ScanSummary) -> dict[int,
             summary.scored += 1
             if must.passes(pattern.must.unknown_policy):
                 summary.must_pass += 1
+        # エリア帯から外れた掲載の古いスコア行を消す（残すと二重採点になる）
+        persist.prune_scores(conn, pattern.name, list(views))
         persist.update_ranks(conn, pattern.name)
     return views
 

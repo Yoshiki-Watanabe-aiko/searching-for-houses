@@ -66,6 +66,17 @@ def load_city_index(conn: Connection) -> list[tuple[str, str, int]]:
     return [(pref, name, city_id) for pref, name, city_id in rows]
 
 
+def normalize_city_key(text: str) -> str:
+    """市区名を照合するためのキー。小書き仮名の表記ゆれを吸収する。
+
+    ``m_cities`` は「鎌ケ谷市」（大書き）だが、サイトの住所は「鎌ヶ谷市」
+    （小書き）で来ることがある。NFKC 正規化ではこの2文字は区別されるため、
+    そのまま照合すると **city_id が NULL のまま残る**。実測（2026-09-02）で
+    SUUMO の新規485件中34件がこれで落ちていた。
+    """
+    return text.replace("ヶ", "ケ").replace("ヵ", "カ").replace("之", "ノ")
+
+
 def resolve_city(
     address: str | None, index: list[tuple[str, str, int]]
 ) -> tuple[str | None, int | None]:
@@ -77,25 +88,28 @@ def resolve_city(
     """
     if not address:
         return None, None
+    key = normalize_city_key(address)
     for prefecture, canonical, city_id in index:
-        if address.startswith(prefecture) and canonical in address:
+        if key.startswith(prefecture) and normalize_city_key(canonical) in key:
             return prefecture, city_id
     for prefecture, _canonical, _city_id in index:
-        if address.startswith(prefecture):
+        if key.startswith(prefecture):
             return prefecture, None
 
     unique = _unique_city_names(index)
     for prefecture, canonical, city_id in index:
-        if canonical in unique and canonical in address:
+        normalized = normalize_city_key(canonical)
+        if normalized in unique and normalized in key:
             return prefecture, city_id
     return None, None
 
 
 def _unique_city_names(index: list[tuple[str, str, int]]) -> frozenset[str]:
-    """全国で1つしか存在しない市区町村名の集合。"""
+    """全国で1つしか存在しない市区町村名の集合（照合キーで数える）。"""
     counts: dict[str, int] = {}
     for _prefecture, canonical, _city_id in index:
-        counts[canonical] = counts.get(canonical, 0) + 1
+        key = normalize_city_key(canonical)
+        counts[key] = counts.get(key, 0) + 1
     return frozenset(name for name, count in counts.items() if count == 1)
 
 
@@ -387,6 +401,24 @@ def save_score(
     )
 
 
+def prune_scores(conn: Connection, pattern_name: str, keep_ids: list[int]) -> int:
+    """そのパターンの採点対象から外れた掲載のスコア行を消す。
+
+    ``save_score`` は upsert なので、対象外になった掲載の行は放っておくと
+    残り続ける。エリア帯を絞ったり市区の解決が直ったりすると、
+    **かつて採点した掲載が両方の帯に残って二重採点になる**
+    （2026-09-02 実測で93件。両帯のランキング1位が同じ掲載になった）。
+    """
+    result = conn.execute(
+        text(
+            "DELETE FROM t_property_scores "
+            "WHERE pattern_name = :pattern_name AND NOT (property_id = ANY(:keep_ids))"
+        ),
+        {"pattern_name": pattern_name, "keep_ids": keep_ids or [0]},
+    )
+    return result.rowcount or 0
+
+
 def update_ranks(conn: Connection, pattern_name: str) -> int:
     """パターン内のスコア降順順位を振り直す。
 
@@ -601,8 +633,7 @@ def load_property_views(
     ``city_names`` は検索パターンのエリア帯。**採点範囲を帯に閉じるために要る。**
     エリア帯は取得URLを絞るだけなので、これが無いとDBに残っている帯外の掲載
     （帯を変える前に取ったもの）にも帯のスコアが付き、23区のランキングが
-    群馬県境の掲載で埋まる。市区を解決できなかった掲載は帯の取得URLから
-    来たものとみなして残す（除くと新規の取りこぼしになる）。
+    群馬県境の掲載で埋まる。
     """
     where = ["TRUE"]
     params: dict[str, Any] = {}
@@ -618,11 +649,15 @@ def load_property_views(
         where.append("s.code = ANY(:site_codes)")
         params["site_codes"] = site_codes
     if city_names:
+        # 市区を解決できなかった掲載は**どの帯にも属さない**ので採点しない。
+        # 通したことがあるが、帯1と帯2の双方に入って93件が二重採点され、
+        # 両帯のランキング1位が同じ掲載になった（2026-09-02 実測）。
+        # 取りこぼしは resolve_city の表記ゆれ吸収で潰す方が筋がよい
         where.append(
-            "(p.city_id IS NULL OR EXISTS ("
+            "EXISTS ("
             "  SELECT 1 FROM m_cities c"
             "  WHERE c.id = p.city_id AND c.canonical_name = ANY(:city_names)"
-            "))"
+            ")"
         )
         params["city_names"] = city_names
     if active_only:
