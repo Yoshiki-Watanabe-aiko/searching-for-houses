@@ -111,3 +111,37 @@ def test_同じ条件なら並び順が変わらない(test_engine: Engine) -> N
 def test_値の無いエリアは返さない(test_engine: Engine, source: str) -> None:
     areas = _resolve(test_engine, site_code="HOMES", city_value_source=source)
     assert all(a.value for a in areas)
+
+
+def test_行政区を持つ政令市の親行は展開対象から外れる(test_engine: Engine) -> None:
+    """マスタは横浜市（14100）と横浜市西区（14103）の両方を持つ。
+
+    親行を外さないと、同じ掲載を市と区で二重に取りに行くことになる。
+    全国マスタの投入で政令市の親行が20市ぶん入ったので、ここを外さないと
+    神奈川県の取得URLが実際に増える（→ ADR 0014）。
+    """
+    areas = _resolve(test_engine, prefectures=["神奈川県"], cities=[])
+    names = {a.city_name for a in areas}
+    assert "横浜市西区" in names
+    assert "横浜市" not in names
+    assert "川崎市" not in names
+    # 政令市でない市はそのまま残る
+    assert "藤沢市" in names
+
+
+def test_政令市名を指定したらその行政区へ展開される(test_engine: Engine) -> None:
+    """「横浜市」と書いたときに市そのもの（14100）を送るか区を送るかは
+    サイトごとに違って確かめようがないので、確実に引ける区へ寄せる。
+    """
+    areas = _resolve(test_engine, prefectures=["神奈川県"], cities=["横浜市"])
+    names = sorted(a.city_name or "" for a in areas)
+    assert names, "横浜市の行政区が1つも返っていない"
+    assert all(n.startswith("横浜市") and n != "横浜市" for n in names)
+    assert "横浜市西区" in names
+
+
+def test_全国マスタでも対象外の都道府県は返さない(test_engine: Engine) -> None:
+    """マスタを全国化しても、取りに行くのは search.prefectures の範囲だけ。"""
+    areas = _resolve(test_engine, prefectures=["東京都"], cities=[])
+    assert areas
+    assert {a.prefecture for a in areas} == {"東京都"}

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -51,11 +52,59 @@ def load_lookup(conn: Connection, table: str) -> dict[str, int]:
     return {code: row_id for code, row_id in conn.execute(text(f"SELECT code, id FROM {table}"))}
 
 
-def load_city_index(conn: Connection) -> list[tuple[str, str, int]]:
-    """住所から市区町村IDを引くための索引。
+@dataclass(frozen=True, slots=True)
+class CityIndex:
+    """住所から市区町村IDを引くための索引。``scan`` の開始時に1度だけ組む。
+
+    ``rows`` は全国分。都道府県を前置した住所はこちらで照合する（検索対象外の
+    県の掲載がサイトから返ってくることは普通にあり、落とす理由がない）。
+
+    ``scoped_rows`` は検索パターンが対象にしている都道府県だけに絞ったもので、
+    **都道府県を前置しない住所**（賃貸EX は「足立区竹の塚６」と書く）の
+    フォールバック照合に使う。マスタを全国化すると全国で一意な市区名は
+    1,861/1,918 まで減り、「府中市」（東京都/広島県）のように衝突が生まれる。
+    パターンの検索範囲へ絞れば、その中では一意なので引き当てられる。
+    """
+
+    rows: tuple[tuple[str, str, int], ...]
+    scoped_rows: tuple[tuple[str, str, int], ...]
+    unique_names: frozenset[str]
+
+    @classmethod
+    def build(
+        cls,
+        rows: Sequence[tuple[str, str, int]],
+        *,
+        search_prefectures: Sequence[str] | None = None,
+    ) -> CityIndex:
+        """索引を組む。``rows`` は正規名の長い順に並んでいること。
+
+        「横浜市西区」と「西区」のように短い名前が先に当たると誤判定するため、
+        並び順は呼び出し側（``load_city_index``）の責務にしてある。
+        """
+        allowed = frozenset(search_prefectures) if search_prefectures else None
+        scoped = tuple(row for row in rows if allowed is None or row[0] in allowed)
+        return cls(
+            rows=tuple(rows),
+            scoped_rows=scoped,
+            unique_names=_unique_city_names(scoped),
+        )
+
+    def scoped_to(self, prefectures: Sequence[str] | None) -> CityIndex:
+        """検索範囲の都道府県へ絞り直した索引を返す。
+
+        ``Runtime`` は実行ごとに1つだが検索パターンは複数あり、対象の
+        都道府県はパターンごとに違う。全国分を読み直さずに絞れるようにする。
+        """
+        return CityIndex.build(self.rows, search_prefectures=prefectures)
+
+
+def load_city_index(
+    conn: Connection, *, search_prefectures: Sequence[str] | None = None
+) -> CityIndex:
+    """``m_cities`` を読んで索引を組む。
 
     ``(都道府県, 正規名, city_id)`` を正規名の長い順に並べる。
-    「横浜市西区」と「西区」のように短い名前が先に当たると誤判定するため。
     """
     rows = conn.execute(
         text(
@@ -63,7 +112,10 @@ def load_city_index(conn: Connection) -> list[tuple[str, str, int]]:
             "ORDER BY length(canonical_name) DESC"
         )
     ).all()
-    return [(pref, name, city_id) for pref, name, city_id in rows]
+    return CityIndex.build(
+        [(pref, name, city_id) for pref, name, city_id in rows],
+        search_prefectures=search_prefectures,
+    )
 
 
 def normalize_city_key(text: str) -> str:
@@ -77,37 +129,35 @@ def normalize_city_key(text: str) -> str:
     return text.replace("ヶ", "ケ").replace("ヵ", "カ").replace("之", "ノ")
 
 
-def resolve_city(
-    address: str | None, index: list[tuple[str, str, int]]
-) -> tuple[str | None, int | None]:
+def resolve_city(address: str | None, index: CityIndex) -> tuple[str | None, int | None]:
     """住所から都道府県名と市区町村IDを解決する。
 
     都道府県から始まらない住所（賃貸EX は「足立区竹の塚６」と書く）にも効くよう、
-    前置の都道府県が無いときは**市区名が全国で一意なものだけ**を引き当てる。
-    「北区」「西区」のように複数県にある名前は取り違えるので解決しない。
+    前置の都道府県が無いときは**検索対象の都道府県の中で一意な市区名**を
+    引き当てる。「北区」「西区」のように範囲内に複数ある名前は取り違えるので
+    解決しない。
     """
     if not address:
         return None, None
     key = normalize_city_key(address)
-    for prefecture, canonical, city_id in index:
+    for prefecture, canonical, city_id in index.rows:
         if key.startswith(prefecture) and normalize_city_key(canonical) in key:
             return prefecture, city_id
-    for prefecture, _canonical, _city_id in index:
+    for prefecture, _canonical, _city_id in index.rows:
         if key.startswith(prefecture):
             return prefecture, None
 
-    unique = _unique_city_names(index)
-    for prefecture, canonical, city_id in index:
+    for prefecture, canonical, city_id in index.scoped_rows:
         normalized = normalize_city_key(canonical)
-        if normalized in unique and normalized in key:
+        if normalized in index.unique_names and normalized in key:
             return prefecture, city_id
     return None, None
 
 
-def _unique_city_names(index: list[tuple[str, str, int]]) -> frozenset[str]:
-    """全国で1つしか存在しない市区町村名の集合（照合キーで数える）。"""
+def _unique_city_names(rows: Sequence[tuple[str, str, int]]) -> frozenset[str]:
+    """与えた範囲の中で1つしか存在しない市区町村名の集合（照合キーで数える）。"""
     counts: dict[str, int] = {}
-    for _prefecture, canonical, _city_id in index:
+    for _prefecture, canonical, _city_id in rows:
         key = normalize_city_key(canonical)
         counts[key] = counts.get(key, 0) + 1
     return frozenset(name for name, count in counts.items() if count == 1)
@@ -166,7 +216,7 @@ def upsert_listings(
     *,
     site_id: int,
     property_type_id: int,
-    city_index: list[tuple[str, str, int]],
+    city_index: CityIndex,
 ) -> list[UpsertOutcome]:
     """一覧の掲載をまとめて upsert し、新着・再掲載・価格変動を判定する。
 

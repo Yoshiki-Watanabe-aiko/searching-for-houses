@@ -433,3 +433,59 @@ def measure_dedup(runtime: Runtime) -> list[dedup.SiteDedupStats]:
     """
     with runtime.engine.connect() as conn:
         return dedup.dedup_stats(conn)
+
+
+@dataclass(slots=True)
+class ResolveCitiesResult:
+    """市区町村の引き直し結果。"""
+
+    total: int
+    resolved_before: int
+    resolved_after: int
+    changed: int
+
+
+def resolve_cities(runtime: Runtime, patterns: list) -> ResolveCitiesResult:
+    """既存掲載の ``city_id`` を現在の ``m_cities`` で引き直す（ネットワーク不要）。
+
+    市区町村マスタを入れ替えたあとのバックフィル。全国化で新しく登録された市区や、
+    誤っていた jis_code の訂正は、既に保存済みの掲載には自動では反映されない。
+
+    都道府県を前置しない住所（賃貸EX 形式）の照合は検索パターンの対象都道府県に
+    依存するため、**全パターンの都道府県を合わせた範囲**で引く。パターンごとに
+    引き直すと、同じ掲載が最後に処理したパターンの範囲で上書きされてしまう。
+
+    ⚠ **解決済みの city_id を NULL では上書きしない。** 範囲が狭まったせいで
+    引けなくなった掲載の情報を捨てる理由がない。
+    """
+    prefectures = sorted({pref for p in patterns for pref in p.search.prefectures})
+    with runtime.engine.begin() as conn:
+        index = persist.load_city_index(conn, search_prefectures=prefectures)
+        rows = conn.execute(
+            text("SELECT id, address, city_id FROM t_listings WHERE address IS NOT NULL")
+        ).all()
+        updates: list[dict[str, object]] = []
+        resolved_before = resolved_after = 0
+        for listing_id, address, city_id in rows:
+            if city_id is not None:
+                resolved_before += 1
+            _prefecture, resolved = persist.resolve_city(address, index)
+            new_city_id = resolved if resolved is not None else city_id
+            if new_city_id is not None:
+                resolved_after += 1
+            if new_city_id != city_id:
+                updates.append({"listing_id": listing_id, "city_id": new_city_id})
+        if updates:
+            conn.execute(
+                text(
+                    "UPDATE t_listings SET city_id = :city_id, updated_at = now()"
+                    " WHERE id = :listing_id"
+                ),
+                updates,
+            )
+    return ResolveCitiesResult(
+        total=len(rows),
+        resolved_before=resolved_before,
+        resolved_after=resolved_after,
+        changed=len(updates),
+    )

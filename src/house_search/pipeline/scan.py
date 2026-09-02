@@ -479,6 +479,10 @@ def scan_pattern(
     family = pattern.family.value
     property_type_id = runtime.property_type_ids[pattern.property_type]
     all_outcomes: list[persist.UpsertOutcome] = []
+    # 都道府県を前置しない住所の照合は、このパターンが対象にしている都道府県の
+    # 中でだけ行う。全国マスタでは「府中市」（東京都/広島県）のように名前が
+    # 衝突し、範囲を絞らないと引き当てられない（→ ADR 0014）。
+    city_index = runtime.city_index.scoped_to(pattern.search.prefectures)
 
     target_sites = [s for s in pattern.sites if site_filter is None or s == site_filter]
     # 無効化されたサイト（観測モード待ちの賃貸EX など）は通常の実行では取りに行かない。
@@ -551,7 +555,7 @@ def scan_pattern(
                     kept,
                     site_id=site_id,
                     property_type_id=property_type_id,
-                    city_index=runtime.city_index,
+                    city_index=city_index,
                 )
                 dedup.refresh_dedup_keys(conn, [o.listing_id for o in outcomes])
             outcome.listings_new = sum(1 for o in outcomes if o.is_new)

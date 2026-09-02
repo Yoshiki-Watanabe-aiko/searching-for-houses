@@ -15,6 +15,11 @@ JIS系を ``m_city_site_values`` に依存させないのは実測上の理由�
 対象4都県は ``m_cities`` に253市区あるのに ``m_city_site_values`` の行は67件しかなく、
 マッピングに頼ると八王子市のような市部が丸ごと検索対象から漏れる
 （ABLE で JIS ``13201`` を直接指定すると一覧が返ることを実測で確認した）。
+
+**政令指定都市はマスタが市と行政区の両方を持つ**（横浜市 14100 と横浜市西区 14103）。
+サイトによって指定できる粒度が違うので両方を保持するが、取得URLを組み立てるときは
+行政区を持つ市の親行を必ず外す。外さないと同じ掲載を市と区で二重に取りに行く。
+``search.cities`` に市名だけを書いた場合は、その市の行政区へ展開する（→ ADR 0014）。
 """
 
 from __future__ import annotations
@@ -90,7 +95,10 @@ def _city_rows(
     params: dict[str, object] = {"site_code": site_code, "prefectures": prefectures}
     condition = "c.prefecture = ANY(:prefectures)"
     if cities:
-        condition += " AND c.canonical_name = ANY(:cities)"
+        # 政令市名を1つ書いたらその行政区へ展開する。「横浜市」と指定したときに
+        # 市そのもの（14100）を送るか区を送るかはサイトごとに違い、確かめようが
+        # ないので区に寄せる。区は m_city_site_values にも登録があり確実に引ける。
+        condition += " AND (c.canonical_name = ANY(:cities) OR c.parent_city = ANY(:cities))"
         params["cities"] = cities
     rows = conn.execute(
         text(
@@ -101,6 +109,14 @@ def _city_rows(
                    ON v.city_id = c.id
                   AND v.site_id = (SELECT id FROM m_sites WHERE code = :site_code)
             WHERE {condition}
+              -- 行政区を持つ政令市の「親の行」は取得対象から外す。マスタは
+              -- 横浜市（14100）と横浜市西区（14103）の両方を持つため、外さないと
+              -- 同じ掲載を市と区で二重に取りに行くことになる（→ ADR 0014）。
+              AND NOT EXISTS (
+                    SELECT 1 FROM m_cities w
+                     WHERE w.prefecture = c.prefecture
+                       AND w.parent_city = c.canonical_name
+              )
             ORDER BY c.jis_code
             """
         ),
