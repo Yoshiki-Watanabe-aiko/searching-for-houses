@@ -155,6 +155,7 @@ def _cmd_validate_config(args: argparse.Namespace) -> int:
         return 1
 
     failures = 0
+    known_names: list[str] = []
     for path in files:
         try:
             pattern = load_pattern_file(path)
@@ -175,8 +176,46 @@ def _cmd_validate_config(args: argparse.Namespace) -> int:
             f"OK  {path.name}  name={pattern.name} "
             f"type={pattern.property_type} config_hash={pattern.config_hash()[:12]}"
         )
+        known_names.append(pattern.name)
 
+    failures += _warn_orphan_scores(known_names)
     return 1 if failures else 0
+
+
+def _warn_orphan_scores(known_names: list[str]) -> int:
+    """configs に無いパターン名のスコア行が残っていないか調べる。
+
+    スコア行はパターン名ごとに持つが、パターンを廃止しても消えない。
+    残っていても digest / check-sold はパターン名で絞るので実害は無いが、
+    **パターン名で絞らずに集計すると順位が重複して見える**（実際に読み違えた）。
+    DBへ繋げないときは黙って何もしない（検証そのものはDB無しでも通したい）。
+    """
+    if not known_names:
+        return 0
+    try:
+        from sqlalchemy import text
+
+        from house_search.db.session import get_engine
+
+        with get_engine().connect() as conn:
+            rows = conn.execute(
+                text(
+                    "SELECT pattern_name, count(*) FROM t_property_scores "
+                    "WHERE NOT (pattern_name = ANY(:names)) GROUP BY 1 ORDER BY 2 DESC"
+                ),
+                {"names": known_names},
+            ).all()
+    except Exception:  # noqa: BLE001 - DBが無くてもYAML検証は通す
+        return 0
+
+    for name, count in rows:
+        print(
+            f"警告  configs に無いパターン '{name}' のスコア行が {count} 件残っています。"
+            " DELETE FROM t_property_scores WHERE pattern_name = '"
+            f"{name}'; で消せます",
+            file=sys.stderr,
+        )
+    return 0
 
 
 def _skipped_by_lock(command: str) -> None:
