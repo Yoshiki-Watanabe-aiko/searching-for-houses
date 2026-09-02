@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import httpx
 import pytest
-from house_search.scoring.listing_view import ListingView
 
 from house_search.config.pattern import parse_pattern
 from house_search.notify.discord import MAX_EMBEDS_PER_MESSAGE, DiscordSender
@@ -17,6 +16,7 @@ from house_search.notify.format import (
     build_error_message,
     build_listing_message,
 )
+from house_search.scoring.listing_view import ListingView
 from house_search.scoring.score import calculate_score
 
 PATTERN = parse_pattern(

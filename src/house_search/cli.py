@@ -104,6 +104,19 @@ def build_parser() -> argparse.ArgumentParser:
         "resolve-cities",
         help="既存掲載の市区町村IDを現在のマスタで引き直す（ネットワーク不要）",
     )
+
+    sub.add_parser(
+        "sync-stations",
+        help="data/train_master/*.csv を m_stations へ同期する（ネットワーク不要）",
+    )
+
+    p_stations = sub.add_parser(
+        "resolve-stations",
+        help="掲載の駅表記を駅マスタと突き合わせる（ネットワーク不要）",
+    )
+    p_stations.add_argument(
+        "--limit", type=int, default=30, help="同定できなかった表記の表示件数（既定30）"
+    )
     return parser
 
 
@@ -474,6 +487,62 @@ def _cmd_sync_site_params(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_sync_stations(args: argparse.Namespace) -> int:
+    from house_search.commute.stations import load_station_rows, sync_stations
+    from house_search.config.settings import load_settings
+    from house_search.db.session import get_engine
+
+    settings = load_settings()
+    loaded = load_station_rows(settings.data_dir)
+    engine = get_engine()
+    applied, deleted = sync_stations(engine, loaded.rows)
+    groups = len({row.station_g_cd for row in loaded.rows})
+    print(
+        f"同期しました: {applied}駅 / {groups}駅グループ"
+        f"（CSVから消えた駅を削除: {deleted}件）"
+    )
+    print(
+        f"  対象外: 営業中でない駅 {loaded.skipped_closed}件 / "
+        f"営業中の路線に紐づかない駅 {loaded.skipped_no_line}件"
+    )
+    return 0
+
+
+def _cmd_resolve_stations(args: argparse.Namespace) -> int:
+    from house_search.commute.resolve import (
+        listing_prefecture_codes,
+        load_station_index,
+        resolve_listing_stations,
+        unmatched_station_names,
+    )
+    from house_search.db.session import get_engine
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        prefectures = listing_prefecture_codes(conn)
+        index = load_station_index(conn, prefectures)
+        if not index.by_key:
+            print("駅マスタが空です。先に sync-stations を実行してください")
+            return 1
+        stats = resolve_listing_stations(conn, index)
+        unmatched = unmatched_station_names(conn, args.limit)
+
+    print(f"照合スコープ: 都道府県コード {list(prefectures)} / {len(index.by_key)}駅名")
+    print(f"{'サイト':<12}{'掲載':>7}{'駅あり':>8}{'率':>8}{'同定':>7}{'曖昧':>7}{'不明':>7}")
+    for stat in stats.per_site:
+        print(
+            f"{stat.site_code:<12}{stat.listings:>7}{stat.with_station:>8}"
+            f"{stat.rate:>7.1f}%{stat.matched_rows:>7}"
+            f"{stat.ambiguous_rows:>7}{stat.unmatched_rows:>7}"
+        )
+    print(f"\n全体: {stats.with_station}/{stats.listings} = {stats.rate:.1f}%")
+    if unmatched:
+        print("\n同定できなかった表記（出現回数順）:")
+        for name, count in unmatched:
+            print(f"  {count:>6}  {name}")
+    return 0
+
+
 def _cmd_resolve_cities(args: argparse.Namespace) -> int:
     from house_search.pipeline.runtime import build_runtime
     from house_search.pipeline.tasks import resolve_cities
@@ -560,6 +629,8 @@ _COMMANDS = {
     "dedup-stats": _cmd_dedup_stats,
     "resolve-cities": _cmd_resolve_cities,
     "sync-site-params": _cmd_sync_site_params,
+    "sync-stations": _cmd_sync_stations,
+    "resolve-stations": _cmd_resolve_stations,
 }
 
 

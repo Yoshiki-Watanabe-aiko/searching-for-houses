@@ -65,6 +65,13 @@ class Settings(BaseSettings):
         default="house-search/2.0 (personal property watcher)",
         description="スクレイピング時に名乗るUser-Agent",
     )
+    google_maps_api_key: str | None = Field(
+        default=None,
+        description=(
+            "Google Maps Routes API のキー。通勤時間の取得（resolve-commutes）にだけ使う。"
+            "採点・再採点はDBキャッシュを読むだけなので、未設定でも運用は止まらない"
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
