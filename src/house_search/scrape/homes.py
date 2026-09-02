@@ -91,8 +91,10 @@ class HomesScraper:
         search = pattern.search  # type: ignore[attr-defined]
         params: dict[str, str] = {"cond[sortby]": "newdate"}
         if search.price_max_hint:
-            # 万円単位・小数1桁。セレクトの選択肢が 0.5 刻みのため丸める
-            params["cond[monthmoneyroomh]"] = f"{search.price_max_hint / 10_000:.1f}"
+            # 万円単位でセレクトの選択肢は 0.5 刻み。**端数をそのまま渡すと
+            # 掲載0件になる**（SUUMO の ct で実測。HTTP 200 で返るため
+            # エラーにならない）。0.5 刻みへ切り上げて取りこぼさない
+            params["cond[monthmoneyroomh]"] = f"{-(-search.price_max_hint // 5_000) / 2:.1f}"
 
         urls: list[str] = []
         for area in areas:

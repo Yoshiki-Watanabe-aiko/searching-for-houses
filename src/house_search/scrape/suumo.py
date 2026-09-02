@@ -110,8 +110,11 @@ class SuumoScraper:
         search = pattern.search  # type: ignore[attr-defined]
         params = {"sort": "2"}  # 新着順
         if search.price_max_hint:
-            # ct は万円単位。10円単位の端数は切り上げて取りこぼさない
-            params["ct"] = f"{search.price_max_hint / 10_000:.1f}"
+            # ct は万円単位だが**選択肢が決まっており、端数を渡すと
+            # HTTP 200 のまま掲載0件になる**（実測: ct=15.6 で0件 /
+            # ct=16.0 で100件 / ct無しで160件）。エラーにならないので
+            # 「取れているつもり」で気づけない。整数の万円へ切り上げる
+            params["ct"] = f"{-(-search.price_max_hint // 10_000):.1f}"
 
         urls: list[str] = []
         for area in areas:

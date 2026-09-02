@@ -180,3 +180,19 @@ def test_詳細から管理費と敷金礼金が取れる(detail) -> None:
     assert detail.mgmt_fee_monthly == 20000
     assert detail.deposit_amount == 270000
     assert detail.key_money_amount == 270000
+
+
+@pytest.mark.parametrize(
+    ("hint", "expected"),
+    [(90000, "=9.0"), (156000, "=16.0"), (93000, "=9.5"), (91000, "=9.5")],
+)
+def test_賃料上限は05刻みへ切り上げる(scraper: HomesScraper, hint, expected) -> None:
+    """セレクトの選択肢が 0.5 刻みなので、端数のまま渡すと掲載0件になる。
+
+    SUUMO の ``ct`` で同じ事故を実測している（→ 課題#29）。
+    従来のコメントは「丸める」と書いていたが実際は丸めておらず、
+    運用中の 90,000 円が偶然 9.0 になっていたため表面化していなかった。
+    """
+    p = _pattern(price_max_hint=hint)
+    url = scraper.list_urls(p, prefecture_targets(p.search.prefectures))[0]
+    assert f"monthmoneyroomh%5D{expected}" in url
