@@ -40,6 +40,7 @@ uv run house-search re-extract             # 設備の再抽出（ネットワ�
 uv run house-search report-unknown         # 辞書未登録の表記
 uv run house-search coverage               # サイト別の抽出充足率（ネットワーク不要）
 uv run house-search regroup                # 名寄せの再構築（ネットワーク不要・通知なし）
+uv run house-search resolve-cities         # 市区町村IDの引き直し（マスタ入替後・ネットワーク不要）
 uv run house-search dedup-stats            # サイト別の重複率・ユニーク率（ネットワーク不要）
 uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観測モード
 uv run house-search scan --detail-limit 800         # 詳細取得の上限を上書き（既定40 / --full時400）
@@ -81,6 +82,13 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
 - `scan` の前に `sync-dict` が要る（辞書が空だとエラー終了する）
 - **市区の検索値が JIS5桁のサイトは `m_cities.jis_code` から導く。**
   `m_city_site_values` に縛ると対象4都県で 67/253市区しか指定できない（東京は23区のみ）
+- **市区町村マスタの正典は総務省の全国地方公共団体コード**（`data/city_master/`）。
+  `db/seed/06_cities.sql` は `scripts/tools/generate_city_seed.py` の生成物なので手で編集しない。
+  ⚠ **サイトのエリア索引から部分文字列一致で補完してはいけない。**
+  実際に名古屋市へ北名古屋市の `23234`、大阪市へ東大阪市の `27227` が混入していた。
+  **別の市の一覧が返るだけで取得は成功しエラーにもならない**（→ ADR 0014）
+- **政令指定都市はマスタが市と行政区の両方を持つ。** 取得URLを組み立てるときは
+  行政区を持つ市の親行を外さないと、同じ掲載を市と区で二重に取りに行く
 - **詳細ページに「非該当」条件を並べるサイトがある**（HOMES の `sr-only`、goo の `td` が `-`）。
   そのまま `raw_features_text` に載せると辞書が非該当の条件を拾う
 - **`m_sites.is_active = false` のサイトは通常の `scan` では取りに行かない。**

@@ -94,6 +94,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="名寄せキーを全件作り直してグループを同期する（ネットワーク不要・通知なし）",
     )
     sub.add_parser("dedup-stats", help="サイト別の名寄せ実測（クロスサイト重複率・ユニーク率）")
+
+    sub.add_parser(
+        "resolve-cities",
+        help="既存掲載の市区町村IDを現在のマスタで引き直す（ネットワーク不要）",
+    )
     return parser
 
 
@@ -442,6 +447,23 @@ def _cmd_coverage(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_resolve_cities(args: argparse.Namespace) -> int:
+    from house_search.pipeline.runtime import build_runtime
+    from house_search.pipeline.tasks import resolve_cities
+
+    patterns = _load_patterns(None)
+    result = resolve_cities(build_runtime(), patterns)
+    print(f"住所を持つ掲載: {result.total}件")
+    print(f"市区町村ID あり: {result.resolved_before}件 -> {result.resolved_after}件")
+    print(f"引き直した掲載: {result.changed}件")
+    if result.resolved_after < result.resolved_before:
+        # 解決済みを NULL で上書きしない作りなので、本来ここは通らない
+        print("⚠ 解決率が下がりました。市区町村マスタの入れ替えを確認してください")
+    print()
+    print("スコアへ反映するには `house-search rescore` を実行してください。")
+    return 0
+
+
 def _cmd_regroup(args: argparse.Namespace) -> int:
     from house_search.pipeline.runtime import build_runtime
     from house_search.pipeline.tasks import regroup
@@ -509,6 +531,7 @@ _COMMANDS = {
     "coverage": _cmd_coverage,
     "regroup": _cmd_regroup,
     "dedup-stats": _cmd_dedup_stats,
+    "resolve-cities": _cmd_resolve_cities,
 }
 
 

@@ -33,7 +33,11 @@ class Runtime:
     condition_ids: dict[str, int]
     site_ids: dict[str, int]
     property_type_ids: dict[str, int]
-    city_index: list[tuple[str, str, int]] = field(default_factory=list)
+    # 全国分の索引。検索パターンごとの都道府県への絞り込みは
+    # scan 側で scoped_to() して行う（パターンごとに対象県が違うため）。
+    city_index: persist.CityIndex = field(
+        default_factory=lambda: persist.CityIndex.build([])
+    )
     _sender: DiscordSender | None = None
 
     @property
