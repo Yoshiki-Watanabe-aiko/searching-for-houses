@@ -33,6 +33,8 @@ EXPECTED_TRANSACTION_TABLES = {
     "t_listing_groups",
     "t_listing_scores",
     "t_listing_stations",
+    "t_navitime_routes",
+    "t_rail_segments",
     "t_ranking_digests",
     "t_scrape_logs",
     "t_scrape_runs",
