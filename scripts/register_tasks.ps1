@@ -283,6 +283,29 @@ if (-not (Test-Path $tempDir)) {
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 }
 
+# ---- 実行アカウントの確認 -------------------------------------------------
+# 手動で「管理者として実行」した PowerShell から動かす場合、その窓が
+# 別の管理者アカウントで開かれていると $TaskUser が管理者名になってしまい、
+# タスクがその管理者名義で登録される（意図した利用者の環境で動かなくなる）。
+# 黙って進むと気づけないので、登録の直前に必ず表示する
+if (-not $DryRun) {
+    $current = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    Write-Host ""
+    Write-Host "タスクの実行アカウント: $TaskUser" -ForegroundColor Cyan
+    if ($TaskUser -ne $current) {
+        Write-Host "  （このウィンドウの実行者は $current。-TaskUser の指定が効いています）" -ForegroundColor DarkGray
+    }
+    elseif ($Elevated) {
+        Write-Host "  （昇格前の利用者を引き継いでいます）" -ForegroundColor DarkGray
+    }
+    else {
+        Write-Host "  ⚠ このウィンドウの実行者をそのまま使います。別の管理者アカウントで" -ForegroundColor Yellow
+        Write-Host "    開いた PowerShell から実行している場合は、いったん中断して" -ForegroundColor Yellow
+        Write-Host "    -TaskUser で本来の利用者を指定し直してください。" -ForegroundColor Yellow
+    }
+    Write-Host ""
+}
+
 $failed = 0
 foreach ($task in $Tasks) {
     $xml     = New-TaskXml -Task $task
