@@ -314,7 +314,7 @@ MUST判定は `pass` / `fail` / `unknown` の3値。**詳細ページの取得�
 - **欠損metricは分子・分母の双方から除外して再正規化**し、内訳に `"missing": true` を記録
 - WANTの判定不能は0点＋「未確認」表示。中間値補完はしない
 - 決定性: 条件コード順にソートしてから加算する
-- 内訳は `t_property_scores.score_breakdown`(JSONB) に全項目を保存する
+- 内訳は `t_listing_scores.score_breakdown`(JSONB) に全項目を保存する
 - **`any_of`**: 同時に満たしえない条件（RC / SRC）は排他グループで1項目にまとめる。
   別々に weight を振ると片方が必ず miss になるのに分母には両方が乗り、
   全物件のスコア上限が構造的に下がる
@@ -336,9 +336,9 @@ SHA256 を `config_hash` として保存し、不一致なら自動再スコア�
 詳細は [`詳細設計書/02_設備抽出辞書設計.md`](./詳細設計書/02_設備抽出辞書設計.md)。
 辞書初版は賃貸 **80条件 / 257パターン**。
 
-1. **原文保存**: 詳細ページの設備ブロックを**テキストのまま** `t_properties.raw_features_text` へ
+1. **原文保存**: 詳細ページの設備ブロックを**テキストのまま** `t_listings.raw_features_text` へ
    （詳細HTML全体は保存しない）
-2. **辞書マッチング**: NFKC正規化 → 小文字化 → トークン化 → 辞書照合 → `t_property_features` 生成
+2. **辞書マッチング**: NFKC正規化 → 小文字化 → トークン化 → 辞書照合 → `t_listing_features` 生成
 
 原文保存が要。辞書を改善したら再スクレイピングせずDB内の原文から全件再抽出できる（`re-extract`）。
 
@@ -375,7 +375,7 @@ SHA256 を `config_hash` として保存し、不一致なら自動再スコア�
 - **構成要素が1つでも欠けたらキーを作らない**（グループ化せず単独で残す）
 - **完全一致のみ自動グループ化。** 曖昧一致の候補フラグは作っていない
 - **代表選定**: 月額（`rent_total`）最安 → 設備抽出数 → `m_sites.representative_priority`
-  → `property_id`（同点でも順位が揺れないように）
+  → `listing_id`（同点でも順位が揺れないように）
 - **スコアはグループ内の抽出情報の和集合**で計算する。
   `detail_fetched` も「グループ内の誰かが取れていれば真」にする
 - **順位は代表と未グループ物件にだけ振る。** `digest` は `rank_in_pattern` を
@@ -446,6 +446,25 @@ SHA256 を `config_hash` として保存し、不一致なら自動再スコア�
 
 ---
 
+## 10.1 用語（掲載・住戸・グループ）
+
+**✅ Phase 5 で整理。** 正典は [CONTEXT.md](../CONTEXT.md)、経緯は課題#30。
+
+| 用語 | 意味 |
+|---|---|
+| **掲載** | 1つのサイトに載っている1件の募集。`t_listings` の1行 |
+| **住戸** | 現実の1部屋。複数サイトに、同じサイト内にも重複して掲載される |
+| **グループ** | 同一の住戸と判定した掲載の束。`t_listing_groups` |
+| **代表** | グループの中で順位と通知に出す1件 |
+
+**「物件」は使わない。** 掲載と住戸のどちらを指すか曖昧で、
+名寄せの導入で「301掲載 → 253グループ」のように両者を区別する場面が
+日常になったため。ただし**「物件種別」（賃貸／新築M／中古M…）は残す**。
+業界用語で曖昧さが無く、掲載でも住戸でもない概念のため
+（`m_property_types` / `property_type` / `property_family`）。
+
+---
+
 ## 11. データベース
 
 DB名は `searching_for_houses`、テストDBは `searching_for_houses_test`。
@@ -463,10 +482,10 @@ DDLは Alembic（`migrations/`）、マスタデータは `db/seed/*.sql`（冪�
 | `m_condition_synonyms` | **設備抽出辞書**（条件コード → 表記パターン） |
 | `m_cities` | 市区町村（947行。`canonical_name` がYAML指定値の正典） |
 | `m_city_site_values` | 市区町村×サイトの検索値（**縦持ち**・1833行。JIS系サイトは `m_cities.jis_code` から導出するのでこの表を引かない） |
-| `t_properties` | 物件（1行=1サイト掲載） |
-| `t_property_features` | 設備・特性の抽出結果 |
-| `t_property_scores` | パターン別スコア（内訳JSONB・`config_hash`） |
-| `t_property_groups` | クロスサイト名寄せグループ |
+| `t_listings` | **掲載**（1行=1サイトの1件の募集）|
+| `t_listing_features` | 掲載から抽出した設備・特性 |
+| `t_listing_scores` | パターン別スコア（内訳JSONB・`config_hash`） |
+| `t_listing_groups` | 同一**住戸**と判定した掲載のグループ（クロスサイト名寄せ）|
 | `t_notifications` | 個別通知の送信履歴（追記専用） |
 | `t_ranking_digests` | ダイジェスト送信履歴（追記専用） |
 | `t_scrape_runs` | 実行チェックポイント（中断・再開用） |
@@ -519,7 +538,7 @@ JIS系は `m_city_site_values` に行が無くても値を作れる。マッピ�
 > ⚠ ATHOME はボット検知が発動したため**東京都ぶんしか集まっていない**（→ 課題#21）。
 > `requires_city=False` なので都道府県単位の検索は動く。
 
-### 11.3 `t_properties` の主要カラム
+### 11.3 `t_listings` の主要カラム
 
 metric・MUST判定の入力になる数値は型付き列、正規化が未確立の文字列系は JSONB
 （`type_specific_attrs`）に置くハイブリッド方式。
@@ -685,7 +704,7 @@ f:\searching-for-houses\
 │   │   ├── key.py              # dedup_key の合成
 │   │   └── groups.py           # グループ同期・代表選定・実測
 │   ├── scoring/
-│   │   ├── property_view.py    # 採点の入力（不変オブジェクト）
+│   │   ├── listing_view.py    # 採点の入力（不変オブジェクト）
 │   │   ├── must.py             # MUST 3値判定
 │   │   └── score.py            # WANTスコア
 │   ├── notify/
