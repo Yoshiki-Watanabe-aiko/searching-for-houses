@@ -47,7 +47,7 @@ INSERT INTO m_sites (
     ('ATHOME',     'アットホーム',     'https://www.athome.co.jp',  'HTTP',       FALSE, 6.0, 5, NULL,  30, 'Phase 3 でHTTP取得を確認。ただしパズル認証のボット検知があり、3秒間隔で47件連続取得したら発動した。間隔を6秒に広げたが発動したままのため Phase 5 で is_active=false（--site で名指しすれば回復を観測できる → 課題#20）'),
     ('NIFTY',      'ニフティ不動産',   'https://myhome.nifty.com',  'HTTP',       TRUE,  3.0, 5, NULL,  40, '他社サイトの掲載を集約するポータル。市区指定が必須。外部ドメインへ飛ぶ掲載は取り込まない'),
     ('GOO',        'goo不動産',        'https://house.goo.ne.jp',   'HTTP',       TRUE,  2.5, 5, NULL,  50, '掲載重複が多い'),
-    ('CHINTAI_EX', '賃貸EX',          'https://chintai-ex.jp',     'HTTP',       TRUE,  2.5, 50, NULL, 60, 'robots.txtがクエリ付きURLを全面禁止。価格上限を渡せず市区の全掲載を取る'),
+    ('CHINTAI_EX', '賃貸EX',          'https://chintai-ex.jp',     'HTTP',       TRUE,  2.5, 5, NULL,  60, 'robots.txtがクエリ付きURLを全面禁止。価格上限を渡せず市区の全掲載を取る'),
     ('ABLE',       'エイブル',         'https://www.able.co.jp',    'HTTP',       TRUE,  2.5, 5, NULL,  70, '市区指定が必須。都道府県のみだと0件になるため市区へ自動展開する'),
     ('MINIMINI',   'minimini',        'https://minimini.jp',       'HTTP',       FALSE, 2.5, 5, NULL,  80, '一覧ページがreCAPTCHAのボット判定下。HTTPでも素のブラウザでも取得不可（Phase 3 で実測）。取得手段が無いと確定したため Phase 4 で is_active=false（--site で名指しすれば回復の観測はできる）'),
     ('APAMAN',     'アパマンショップ', 'https://www.apamanshop.com','HTTP',       TRUE,  4.0, 5, NULL,  90, 'robots.txtが全パスを禁止（Disallow: /）。ユーザーの明示的判断で取得する（ADR 0011）。市区指定が必須'),
