@@ -28,6 +28,7 @@
 #
 # 登録されるタスク:
 #   HouseSearch-Scan       2時間ごと 01:15起点  増分スキャン（一覧1ページ＋詳細40件/サイト）
+#   HouseSearch-Sweep      毎週日曜 02:00      在庫棚卸し（一覧5ページ＋詳細400件/サイト）
 #   HouseSearch-CheckSold  毎日 09:00           成約・掲載終了の確認
 #   HouseSearch-Digest     毎日 20:00           日次ランキングダイジェスト
 #   HouseSearch-Backup     毎日 03:30           pg_dump（課題#8）
@@ -150,6 +151,18 @@ $Tasks = @(
         TimeLimit   = "PT1H50M"
     },
     @{
+        Name        = "HouseSearch-Sweep"
+        Description = "物件検索通知システム: 週次の在庫棚卸し（一覧5ページ）。増分が拾うのは各市区の先頭だけなので、週に一度だけ在庫を舐め直す。"
+        TaskArg     = "sweep"
+        Scraping    = $true
+        # 日曜 02:00 起点。増分スキャンとはDBのアドバイザリロックで排他される
+        # （重なった側がスキップされる）ので、時刻の分離だけに頼らない
+        StartAt     = "2026-09-06T02:00:00"
+        Repeat      = $null
+        Weekly      = $true
+        TimeLimit   = "PT10H"
+    },
+    @{
         Name        = "HouseSearch-CheckSold"
         Description = "物件検索通知システム: 成約・掲載終了の確認。scan の実行帯と重ならない 09:00 に置く。"
         TaskArg     = "check-sold"
@@ -225,6 +238,22 @@ function New-TaskXml {
     # 初回スキャンの完了後に -EnableScraping で有効化する
     $enabled = if ($Task.Scraping -and -not $EnableScraping) { "false" } else { "true" }
 
+    # 在庫棚卸しだけ週次。ScheduleByDay と ScheduleByWeek は排他なので切り替える
+    $schedule = if ($Task.Weekly) {
+        @"
+      <ScheduleByWeek>
+        <DaysOfWeek><Sunday /></DaysOfWeek>
+        <WeeksInterval>1</WeeksInterval>
+      </ScheduleByWeek>
+"@
+    } else {
+        @"
+      <ScheduleByDay>
+        <DaysInterval>1</DaysInterval>
+      </ScheduleByDay>
+"@
+    }
+
     return @"
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
@@ -236,9 +265,7 @@ function New-TaskXml {
     <CalendarTrigger>
       <StartBoundary>$($Task.StartAt)</StartBoundary>
       <Enabled>true</Enabled>$repetition
-      <ScheduleByDay>
-        <DaysInterval>1</DaysInterval>
-      </ScheduleByDay>
+$schedule
     </CalendarTrigger>
   </Triggers>
   <Principals>
@@ -363,6 +390,7 @@ if (-not $EnableScraping) {
     Write-Host ""
     Write-Host "⚠ HouseSearch-Scan と HouseSearch-CheckSold は無効で登録しました。" -ForegroundColor Yellow
     Write-Host "  初回全件スキャン（run_initial_scan.ps1）が終わってから有効化してください:" -ForegroundColor Yellow
-    Write-Host "    .\scriptsegister_tasks.ps1 -EnableScraping"
+    Write-Host "    .\scripts
+egister_tasks.ps1 -EnableScraping"
 }
 exit 0

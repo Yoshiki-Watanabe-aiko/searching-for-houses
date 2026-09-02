@@ -25,7 +25,7 @@
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("scan", "check-sold", "digest", "backup")]
+    [ValidateSet("scan", "sweep", "check-sold", "digest", "backup")]
     [string]$Task,
 
     # ログの保持日数。超過した task_*.log を起動時に掃除する
@@ -61,6 +61,13 @@ $errLog = Join-Path $LogDir "task_$Task`_$stamp.err.log"
 
 switch ($Task) {
     "scan"       { $exe = $Python; $argv = @("-m", "house_search.cli", "scan") }
+    # 在庫棚卸し。増分（一覧1ページ）が拾えるのは各市区の先頭だけなので、
+    # 週に一度は5ページまで辿って在庫を舐め直す。scan とはDBのアドバイザリ
+    # ロックで排他されるため、重なった側がスキップされて並走しない
+    "sweep"      {
+        $exe = $Python
+        $argv = @("-m", "house_search.cli", "scan", "--full", "--detail-limit", "400")
+    }
     "check-sold" { $exe = $Python; $argv = @("-m", "house_search.cli", "check-sold") }
     "digest"     { $exe = $Python; $argv = @("-m", "house_search.cli", "digest") }
     "backup"     {
