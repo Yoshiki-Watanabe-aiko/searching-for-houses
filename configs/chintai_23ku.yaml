@@ -111,7 +111,9 @@ want:
   numeric:
     - { metric: rent_total,   weight: 40, best: 70000, worst: 100000 }
     - { metric: area_sqm,     weight: 20, best: 45,    worst: 30 }
-    - { metric: age_years,    weight: 15, best: 0,     worst: 30 }
+    # worst は母集団の実態に合わせる。30年にすると築30年以上が全部0点になり、
+    # 母集団の9割（中央値 築38〜40年）が張り付いて weight 15 が死ぬ（実測）
+    - { metric: age_years,    weight: 15, best: 0,     worst: 50 }
     - { metric: walk_minutes, weight: 15, best: 3,     worst: 20 }
 
 ranking:
