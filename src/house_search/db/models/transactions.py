@@ -11,6 +11,7 @@ import uuid
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Computed,
     Date,
@@ -22,6 +23,7 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    Time,
     UniqueConstraint,
     func,
     text,
@@ -681,4 +683,139 @@ class StationCommute(TimestampMixin, Base):
         DateTime(timezone=True),
         nullable=False,
         comment="算出した時刻。パラメータを変えて計算し直したときの区別に使う",
+    )
+
+
+class NavitimeRoute(TimestampMixin, Base):
+    """NAVITIME の乗換案内が返した経路の原文（Phase 5D）。
+
+    **原文をそのまま残す**のは設備の ``raw_features_text`` と同じ考え方で、
+    パーサを直したときに再取得せず DB 内から作り直せるようにするため。
+    1回の検索で候補が4〜5本返るので、その全部を rank 付きで持つ。
+
+    ⚠ **``origin_label`` を必ず見ること。** NAVITIME は同名異駅を黙って別の駅として
+    処理し、HTTP 200 で普通の結果を返す（``大久保`` → ``大久保（東京都）``）。
+    どの駅として解決されたかを残しておかないと、間違った所要時間だと気づけない。
+    """
+
+    __tablename__ = "t_navitime_routes"
+    __table_args__ = (
+        UniqueConstraint(
+            "origin_station_g_cd",
+            "destination_station_g_cd",
+            "depart_on",
+            "depart_at",
+            "rank",
+        ),
+        {"comment": "NAVITIME の乗換案内が返した経路候補の原文"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, comment="経路ID")
+    origin_station_g_cd: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="出発駅の駅グループコード"
+    )
+    destination_station_g_cd: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="到着駅の駅グループコード（勤務先の最寄り駅）"
+    )
+    depart_on: Mapped[dt.date] = mapped_column(
+        Date, nullable=False, comment="検索した出発日。曜日でダイヤが変わるため条件の一部"
+    )
+    depart_at: Mapped[dt.time] = mapped_column(
+        Time, nullable=False, comment="検索した出発時刻（この時刻以降の便を探す）"
+    )
+    rank: Mapped[int] = mapped_column(
+        SmallInteger, nullable=False, comment="NAVITIME が並べた順（1始まり）"
+    )
+    total_minutes: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="所要時間（分）。乗換の待ち時間を含む"
+    )
+    transfers: Mapped[int] = mapped_column(Integer, nullable=False, comment="乗換回数")
+    distance_km: Mapped[float | None] = mapped_column(Numeric(7, 2), comment="経路の距離（km）")
+    fare_yen: Mapped[int | None] = mapped_column(Integer, comment="きっぷ運賃（円）")
+    route_depart_at: Mapped[str] = mapped_column(
+        String(5), nullable=False, comment="実際の出発時刻（HH:MM）"
+    )
+    route_arrive_at: Mapped[str] = mapped_column(
+        String(5), nullable=False, comment="実際の到着時刻（HH:MM）"
+    )
+    origin_label: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        comment=(
+            "NAVITIME が解決した出発駅の表記。同名異駅では『大久保（東京都）』のように"
+            "都道府県が付く。意図した駅かを人が確かめるために残す"
+        ),
+    )
+    destination_label: Mapped[str] = mapped_column(
+        String(100), nullable=False, comment="NAVITIME が解決した到着駅の表記"
+    )
+    origin_node_code: Mapped[str | None] = mapped_column(
+        String(20), comment="NAVITIME の駅ノードコード。次回以降の厳密指定に使える"
+    )
+    destination_node_code: Mapped[str | None] = mapped_column(
+        String(20), comment="到着駅の NAVITIME 駅ノードコード"
+    )
+    route_text: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="経路の原文（発着時刻・路線・区間所要が1本のテキストで並ぶ）。再解析の入力",
+    )
+    fetched_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, comment="取得した時刻"
+    )
+
+
+class RailSegment(TimestampMixin, Base):
+    """乗車区間（駅間）の実所要時間（Phase 5D）。
+
+    NAVITIME の経路から「乗った駅 → 降りた駅」を1本の辺として採る。急行が通過する
+    駅を飛ばした区間はそのまま1本の辺になるので、**種別を表現する列を持たなくても
+    優等列車が経路に乗る**。目的地を変えたときは、この辺の重みでダイクストラを
+    回し直せば取得のやり直しが要らない。
+
+    ⚠ **重みに待ち時間は入っていない**（発→着はひと続きの乗車のため）。
+    足し合わせても二重計上にならない代わりに、**乗換の待ちは別に足す必要がある**。
+    ⚠ **直通運転で列車が変わる地点でも辺は切れる**（``（直通）東京``）。
+    その地点の停車時間は辺に含まれないので、辺の合計は実所要をわずかに下回る。
+    """
+
+    __tablename__ = "t_rail_segments"
+    __table_args__ = (
+        UniqueConstraint("from_station_g_cd", "to_station_g_cd", "line_name"),
+        {"comment": "乗車区間（駅間）の実所要時間"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, comment="区間ID")
+    from_station_g_cd: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="乗車駅の駅グループコード"
+    )
+    to_station_g_cd: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="降車駅の駅グループコード"
+    )
+    line_name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        comment="路線名。種別を含む表記のまま持つ（『都営三田線急行』）。徒歩は『徒歩』",
+    )
+    ride_minutes: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        comment="乗車時間（分）の最小観測値。辺の重みに使う代表値",
+    )
+    ride_minutes_max: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        comment="同区間で観測した最大値。ばらつきを人が確かめるために持つ",
+    )
+    samples: Mapped[int] = mapped_column(
+        Integer, nullable=False, comment="観測回数。1件しか無い区間は信用度が低い"
+    )
+    is_walk: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, comment="乗換の徒歩区間か（列車ではない）"
+    )
+    source: Mapped[str] = mapped_column(
+        String(20), nullable=False, comment="採取元（navitime=乗換案内の経路から採取）"
+    )
+    observed_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, comment="最後に観測した時刻"
     )

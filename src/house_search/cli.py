@@ -9,6 +9,7 @@ Phase 1 で ``scan`` / ``check-sold`` / ``digest`` / ``rescore`` / ``sync-dict``
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -17,6 +18,13 @@ from house_search import __version__
 
 # 未実装サブコマンドと、実装予定の Phase。Phase 2 ですべて実装済みになった。
 PLANNED: dict[str, str] = {}
+
+# NAVITIME から実ダイヤを取るときの既定の基準（Phase 5D）。
+# ⚠ **固定値にしてある。** 出発日は t_navitime_routes の一意キーの一部なので、
+# 「次の水曜」のように動かすと再実行のたびに全駅を取り直すことになる。
+# 2026-09-09 は水曜で、Phase 5C の校正もこの日で行った。
+DEFAULT_DEPART_ON = "2026-09-09"
+DEFAULT_DEPART_AT = "08:30"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -69,9 +77,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_digest = sub.add_parser("digest", help="日次ランキングダイジェストの送信")
     p_digest.add_argument("--pattern", help="対象の検索パターン名")
-    p_digest.add_argument(
-        "--dry-run", action="store_true", help="送信せず件数だけ確認する"
-    )
+    p_digest.add_argument("--dry-run", action="store_true", help="送信せず件数だけ確認する")
 
     p_rescore = sub.add_parser("rescore", help="DB内の物件属性から再採点（ネットワーク不要）")
     p_rescore.add_argument("--pattern", help="対象の検索パターン名")
@@ -85,9 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_unknown = sub.add_parser("report-unknown", help="辞書未登録の表記を出現回数順に一覧")
     p_unknown.add_argument("--limit", type=int, default=50, help="表示件数（既定50）")
 
-    sub.add_parser(
-        "coverage", help="サイト別の設備抽出数分布・数値カラム非NULL率を実測する"
-    )
+    sub.add_parser("coverage", help="サイト別の設備抽出数分布・数値カラム非NULL率を実測する")
 
     sub.add_parser(
         "regroup",
@@ -125,6 +129,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_commutes.add_argument("--pattern", help="対象を1つの検索パターンに絞る")
     p_commutes.add_argument("--destination", help="目的地の駅名（既定はパターンの commute）")
     p_commutes.add_argument("--destination-prefecture", help="目的地の都道府県名")
+
+    p_fetch = sub.add_parser(
+        "fetch-commutes",
+        help="NAVITIME の乗換案内から実ダイヤの通勤時間を取得する（要ネットワーク）",
+    )
+    p_fetch.add_argument("--pattern", help="対象を1つの検索パターンに絞る")
+    p_fetch.add_argument("--destination", help="目的地の駅名（既定はパターンの commute）")
+    p_fetch.add_argument("--destination-prefecture", help="目的地の都道府県名")
+    p_fetch.add_argument(
+        "--depart-on",
+        default=DEFAULT_DEPART_ON,
+        help=f"出発日 YYYY-MM-DD（既定 {DEFAULT_DEPART_ON}・平日）",
+    )
+    p_fetch.add_argument(
+        "--depart-at", default=DEFAULT_DEPART_AT, help=f"出発時刻 HH:MM（既定 {DEFAULT_DEPART_AT}）"
+    )
+    p_fetch.add_argument(
+        "--limit", type=int, help="取得する駅数の上限（試し取りに使う。既定は残り全部）"
+    )
+    p_fetch.add_argument(
+        "--station", action="append", help="駅名を名指しで取得する（検証用・複数指定可）"
+    )
+    p_fetch.add_argument(
+        "--refetch", action="store_true", help="取得済みの駅もやり直す（既定は未取得のみ）"
+    )
 
     p_cstats = sub.add_parser(
         "commute-stats",
@@ -388,8 +417,7 @@ def _cmd_sync_dict(args: argparse.Namespace) -> int:
     if result.has_unknown_refs:
         if result.unknown_condition_codes:
             print(
-                "  [警告] マスタに無い条件コード: "
-                f"{', '.join(result.unknown_condition_codes)}",
+                f"  [警告] マスタに無い条件コード: {', '.join(result.unknown_condition_codes)}",
                 file=sys.stderr,
             )
         if result.unknown_site_codes:
@@ -511,10 +539,7 @@ def _cmd_sync_stations(args: argparse.Namespace) -> int:
     engine = get_engine()
     applied, deleted = sync_stations(engine, loaded.rows)
     groups = len({row.station_g_cd for row in loaded.rows})
-    print(
-        f"同期しました: {applied}駅 / {groups}駅グループ"
-        f"（CSVから消えた駅を削除: {deleted}件）"
-    )
+    print(f"同期しました: {applied}駅 / {groups}駅グループ（CSVから消えた駅を削除: {deleted}件）")
     print(
         f"  対象外: 営業中でない駅 {loaded.skipped_closed}件 / "
         f"営業中の路線に紐づかない駅 {loaded.skipped_no_line}件"
@@ -575,8 +600,7 @@ def _commute_destination(args: argparse.Namespace) -> tuple[str, str | None]:
         )
     if len(specs) > 1:
         raise ValueError(
-            f"検索パターンごとに目的地が違います: {sorted(specs)}。"
-            "--pattern で1つに絞ってください"
+            f"検索パターンごとに目的地が違います: {sorted(specs)}。--pattern で1つに絞ってください"
         )
     return specs.pop()
 
@@ -594,6 +618,7 @@ def _cmd_resolve_commutes(args: argparse.Namespace) -> int:
         save_commutes,
     )
     from house_search.commute.stations import resolve_station_group
+    from house_search.commute.timetable import SOURCE_NAVITIME, origins_with_source
     from house_search.config.settings import load_settings
     from house_search.db.session import get_engine
 
@@ -615,6 +640,11 @@ def _cmd_resolve_commutes(args: argparse.Namespace) -> int:
         destination_g_cd, destination_name = found
         nodes = load_station_nodes(conn)
         groups = referenced_station_groups(conn, pattern_name=args.pattern)
+        # ⚠ 実ダイヤ（NAVITIME）で埋まっている駅は回帰式で塗り替えない。
+        # 素朴に全件書き直すと、時間をかけて採った実測値が見積もりへ戻る。
+        measured = origins_with_source(
+            conn, destination_g_cd=destination_g_cd, source=SOURCE_NAVITIME
+        )
 
     if not nodes:
         print("駅マスタが空です。先に sync-stations を実行してください")
@@ -628,6 +658,8 @@ def _cmd_resolve_commutes(args: argparse.Namespace) -> int:
 
     rows = []
     for group_code in groups:
+        if group_code in measured:
+            continue
         estimate = estimates.get(group_code)
         if estimate is None:
             # 線路がつながっておらず到達できない。欠損と区別して明示的に残す
@@ -651,13 +683,248 @@ def _cmd_resolve_commutes(args: argparse.Namespace) -> int:
 
     print(f"目的地: {destination_name}（駅グループ {destination_g_cd}）")
     print(f"算出しました: {saved}駅（到達可 {summary.ok} / 到達不可 {summary.no_route}）")
+    if measured:
+        print(f"  実ダイヤ済みのためそのままにした駅: {len(measured)}駅")
     if distribution:
         lowest, median, upper, highest = distribution
         print(
-            f"所要時間の分布: 最短 {lowest}分 / 中央 {median}分 / "
-            f"75% {upper}分 / 最長 {highest}分"
+            f"所要時間の分布: 最短 {lowest}分 / 中央 {median}分 / 75% {upper}分 / 最長 {highest}分"
         )
     return 0
+
+
+def _cmd_fetch_commutes(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0912, PLR0915
+    """NAVITIME の乗換案内から実ダイヤの通勤時間を取ってキャッシュへ落とす。
+
+    ⚠ **1駅あたり15秒の間隔を空ける**（robots.txt の Crawl-delay 10 秒に対し、
+    ±30%のジッタが下振れしても割らない値）。1,000駅なら4時間強かかるので、
+    **エージェントのバックグラウンドからではなく ``Start-Process`` で切り離して**
+    起動すること。1駅ごとにコミットするので途中で止めても続きから再開できる。
+    """
+    import datetime as dt
+
+    from house_search.commute.navitime import (
+        MIN_INTERVAL_SEC,
+        build_search_url,
+        parse_search,
+    )
+    from house_search.commute.normalize import normalize_key
+    from house_search.commute.resolve import (
+        STATUS_NO_ROUTE,
+        STATUS_OK,
+        listing_prefecture_codes,
+        prefecture_code_of,
+        referenced_station_groups,
+        save_commutes,
+    )
+    from house_search.commute.stations import resolve_station_group
+    from house_search.commute.timetable import (
+        SOURCE_NAVITIME,
+        build_station_resolver,
+        fetched_origins,
+        harvest_segments,
+        merge_observations,
+        origin_stations,
+        save_routes,
+        save_segments,
+        segment_stats,
+    )
+    from house_search.config.settings import load_settings
+    from house_search.db.session import get_engine
+    from house_search.scrape.fetch import (
+        BROWSER_USER_AGENT,
+        RateLimit,
+        SiteAborted,
+        SiteFetcher,
+        build_client,
+    )
+
+    try:
+        depart_on = dt.date.fromisoformat(args.depart_on)
+        depart_at = dt.time.fromisoformat(args.depart_at)
+    except ValueError as error:
+        print(f"日付・時刻の書式が不正です: {error}")
+        return 1
+    if depart_on < dt.date.today():
+        print(
+            f"出発日 {depart_on} は過去です。NAVITIME は過去日のダイヤを返さないので "
+            "--depart-on に将来の平日を指定してください"
+        )
+        return 1
+
+    station_name, prefecture_name = _commute_destination(args)
+    settings = load_settings()
+    engine = get_engine()
+
+    with engine.connect() as conn:
+        pref_cd = prefecture_code_of(conn, prefecture_name) if prefecture_name else None
+        if prefecture_name and pref_cd is None:
+            print(f"都道府県 '{prefecture_name}' を m_cities から解決できません")
+            return 1
+        found = resolve_station_group(conn, station_name, pref_cd)
+        if found is None:
+            print(
+                f"目的地の駅 '{station_name}' を一意に決められません。"
+                "--destination-prefecture で都道府県を指定してください"
+            )
+            return 1
+        destination_g_cd, destination_name = found
+
+        if args.station:
+            groups = []
+            for name in args.station:
+                hit = resolve_station_group(conn, name, None)
+                if hit is None:
+                    print(f"駅 '{name}' を一意に決められません")
+                    return 1
+                groups.append(hit[0])
+        else:
+            groups = list(referenced_station_groups(conn, pattern_name=args.pattern))
+        targets = origin_stations(conn, groups)
+        done = (
+            frozenset()
+            if args.refetch
+            else fetched_origins(
+                conn,
+                destination_g_cd=destination_g_cd,
+                depart_on=depart_on,
+                depart_at=depart_at,
+            )
+        )
+        resolver = build_station_resolver(conn, listing_prefecture_codes(conn))
+
+    pending = [
+        t for t in targets if t.station_g_cd not in done and t.station_g_cd != destination_g_cd
+    ]
+    if args.limit is not None:
+        pending = pending[: args.limit]
+    if not pending:
+        print(f"取得対象がありません（取得済み {len(done)}駅）")
+        return 0
+
+    destination_query = _navitime_destination_query(destination_name, prefecture_name)
+    print(f"目的地: {destination_name}（駅グループ {destination_g_cd}）")
+    print(
+        f"{len(pending)}駅を取得します（取得済み {len(done)}駅をスキップ）。"
+        f"1駅あたり約{MIN_INTERVAL_SEC:.0f}秒・"
+        f"見込み {len(pending) * MIN_INTERVAL_SEC / 3600:.1f}時間"
+    )
+
+    # ⚠ NAVITIME は自己申告のUAを 403 で拒否する（実測）。robots.txt は /transfer を
+    # User-agent: * に許可しており、UAの選別だけが別の関門になっている。
+    # LIFULL HOME'S と同じ扱いでブラウザ相当UAを使い、間隔と robots.txt の尊重は変えない。
+    client = build_client(user_agent=BROWSER_USER_AGENT, timeout_sec=settings.request_timeout_sec)
+    fetcher = SiteFetcher(
+        site_code="NAVITIME",
+        client=client,
+        rate_limit=RateLimit(min_interval_sec=MIN_INTERVAL_SEC, max_pages_per_run=10**6),
+    )
+    ok = failed = no_route = segments_saved = dropped_total = 0
+    mismatched: list[str] = []
+    try:
+        for target in pending:
+            url = build_search_url(
+                origin=target.query_name,
+                destination=destination_query,
+                depart_on=depart_on,
+                depart_at=depart_at,
+            )
+            try:
+                response = fetcher.get(url)
+                search = parse_search(response.text, expected_date=depart_on)
+            except SiteAborted:
+                # 連続失敗による打ち切り。1駅の失敗と違い、続けても無駄なので抜ける。
+                raise
+            except Exception as error:  # noqa: BLE001
+                # 1駅の失敗で数時間の実行を落とさない。件数として必ず報告する。
+                failed += 1
+                print(f"  × {target.query_name}: {type(error).__name__}: {error}")
+                continue
+
+            # ⚠ 意図した駅として解決されたかを必ず確かめる。NAVITIME は同名異駅を
+            # 黙って別の駅で処理し、HTTP 200 で普通の結果を返す。
+            if normalize_key(_strip_prefecture(search.origin_label)) != normalize_key(
+                target.station_name
+            ):
+                mismatched.append(f"{target.station_name} → {search.origin_label}")
+                failed += 1
+                continue
+
+            fastest = search.fastest
+            fetched_at = dt.datetime.now(dt.UTC)
+            observations = []
+            for route in search.routes:
+                found_segments, dropped = harvest_segments(route, resolver)
+                observations.extend(found_segments)
+                dropped_total += dropped
+
+            with engine.begin() as conn:
+                save_routes(
+                    conn,
+                    origin_g_cd=target.station_g_cd,
+                    destination_g_cd=destination_g_cd,
+                    depart_on=depart_on,
+                    depart_at=depart_at,
+                    search=search,
+                    fetched_at=fetched_at,
+                )
+                segments_saved += save_segments(
+                    conn, merge_observations(observations), observed_at=fetched_at
+                )
+                if fastest is None:
+                    no_route += 1
+                    rows = [(target.station_g_cd, STATUS_NO_ROUTE, None, None, None)]
+                else:
+                    ok += 1
+                    rows = [
+                        (
+                            target.station_g_cd,
+                            STATUS_OK,
+                            fastest.total_minutes,
+                            fastest.transfers,
+                            fastest.distance_km,
+                        )
+                    ]
+                save_commutes(
+                    conn,
+                    destination_g_cd=destination_g_cd,
+                    rows=rows,
+                    source=SOURCE_NAVITIME,
+                )
+    except KeyboardInterrupt:
+        print("\n中断しました。取得済みぶんは保存されています（再実行で続きから）")
+    except SiteAborted as error:
+        # 連続失敗による打ち切り。続けても無駄なので抜けるが、
+        # 例外を素通しにせず「何駅まで進んだか」を必ず出す。
+        print(f"\n⚠ 連続失敗で打ち切りました: {error}")
+        print("  取得済みぶんは保存されています（原因を直してから再実行で続きから）")
+    finally:
+        client.close()
+
+    with engine.connect() as conn:
+        total, rides, walks = segment_stats(conn)
+
+    print(f"取得: {ok}駅（経路なし {no_route} / 失敗 {failed}）")
+    print(f"乗車区間: 累計 {total}本（列車 {rides} / 徒歩 {walks}）。今回 {segments_saved}本を反映")
+    if dropped_total:
+        print(f"  駅名を駅マスタと結び付けられず捨てた区間: {dropped_total}本")
+    if mismatched:
+        print("⚠ 意図と違う駅として解決されたため保存しませんでした:")
+        for line in mismatched[:10]:
+            print(f"  {line}")
+    return 0 if failed == 0 else 1
+
+
+def _strip_prefecture(label: str) -> str:
+    """``大久保（東京都）`` から都道府県の括弧を落とす。"""
+    return re.sub(r"[（(][^）)]*[）)]\s*$", "", label).strip()
+
+
+def _navitime_destination_query(station_name: str, prefecture: str | None) -> str:
+    """目的地の検索語（都道府県つき）。"""
+    from house_search.commute.navitime import station_query_name
+
+    return station_query_name(station_name, prefecture)
 
 
 def _percentile(values: list[int], ratio: float) -> int:
@@ -704,8 +971,7 @@ def _cmd_commute_stats(args: argparse.Namespace) -> int:
         unknown = len(passing) - len(known)
         print(f"  目的地: {pattern.commute.destination_station}")
         print(
-            f"  母集団: MUST通過 {len(passing)}件"
-            f"（うち通勤時間あり {len(known)} / 不明 {unknown}）"
+            f"  母集団: MUST通過 {len(passing)}件（うち通勤時間あり {len(known)} / 不明 {unknown}）"
         )
         if not known:
             continue
@@ -814,6 +1080,7 @@ _COMMANDS = {
     "sync-stations": _cmd_sync_stations,
     "resolve-stations": _cmd_resolve_stations,
     "resolve-commutes": _cmd_resolve_commutes,
+    "fetch-commutes": _cmd_fetch_commutes,
     "commute-stats": _cmd_commute_stats,
 }
 

@@ -6,7 +6,8 @@ MUST（未充足なら除外）＋WANT（重み付き加点）のスコアでラ
 新着・成約・価格変動・日次ランキングをDiscordへ通知するシステム。
 
 **v2（Python）へ全面再設計中。Phase 5（賃貸の本運用）を再設計中。**
-Phase 5C で**通勤時間**をランキングへ組み込んだ（→ ADR 0016）。
+Phase 5C で**通勤時間**をランキングへ組み込み（→ ADR 0016）、
+Phase 5D で回帰式から **NAVITIME の実ダイヤ**へ置き換えた（→ ADR 0017）。
 初回全件スキャンの実測でランキング上位が群馬/栃木県境と外房で埋まったため、
 **エリア帯**（23区／近郊45分圏）で検索パターンを2つに分割した（→ ADR 0013・課題#24）。
 進捗と残作業は `docs/再設計計画.md` を参照。
@@ -46,6 +47,7 @@ uv run house-search sync-site-params       # サイト側フィルタ定義の�
 uv run house-search sync-stations          # 駅マスタ（data/train_master/*.csv）→ DB
 uv run house-search resolve-stations       # 掲載の駅表記を駅マスタと突き合わせる（ネットワーク不要）
 uv run house-search resolve-commutes       # 駅ペアの通勤所要時間を算出しキャッシュ（ネットワーク不要）
+uv run house-search fetch-commutes         # NAVITIMEから実ダイヤの通勤時間を取得（要ネットワーク・約15秒/駅）
 uv run house-search commute-stats          # 通勤時間の分布（best/worst を決める材料）
 uv run house-search dedup-stats            # サイト別の重複率・ユニーク率（ネットワーク不要）
 uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観測モード
@@ -57,6 +59,7 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
 ```powershell
 .\scripts\run_initial_scan.ps1                # 初回全件スキャン（切り離して起動・約6.5〜9時間）
 .\scripts\run_initial_scan.ps1 -Drain         # 2晩目以降の詳細キュー掃き出し
+.\scripts\run_fetch_commutes.ps1              # 通勤時間の実ダイヤ取得（切り離して起動・約4.8時間）
 .\scripts\backup_db.ps1                       # pg_dump（14世代保持）
 .\scripts\register_tasks.ps1 -DryRun          # タスクXMLの生成と検証（権限不要）
 .\scripts\register_tasks.ps1                  # タスク登録（★管理者権限が要る → 課題#23）
@@ -177,7 +180,25 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
   `commute-stats` が分布と0点張り付き率を出す
 - **通勤時間はグループ内の最短を採る**（設備の和集合と同じ）。サイトによって挙げる駅が違う
 - **NAVITIME の月指定は `2026/09` 形式。** `202609` を渡すと**黙って無視され現在時刻**になる
-  （深夜に実行すると始発帯の値が返り、朝の通勤時間だと思い込む）
+  （深夜に実行すると始発帯の値が返り、朝の通勤時間だと思い込む）。
+  応答の前後便リンクに検索日が載っているので `parse_search` が突き合わせて例外にする
+- **NAVITIME は同名異駅を黙って別の駅で検索する。** `orvStationName=大久保` は
+  「大久保（東京都）」として処理され **HTTP 200 で普通の結果が返る**。
+  `駅名（都道府県名）` の形式で厳密に指定し、**応答が解決した駅名を照合してから保存する**
+  （→ ADR 0017）
+- **NAVITIME は自己申告のUAを 403 で拒否する。** robots.txt は `/transfer/` を
+  `User-agent: *` に許可しており、UAの選別だけが別の関門になっている。
+  HOME'S と同じ扱いでブラウザ相当UA（`BROWSER_USER_AGENT`）を使い、間隔と robots は変えない。
+  ⚠ 取得間隔は **15秒**。`SiteFetcher` が ±30% のジッタを掛けるので、
+  11秒にすると下振れ7.7秒で `ClaudeBot` の `Crawl-delay: 10` を破る
+- **NAVITIME の経路は「発」から「着」までが1区間とは限らない。** 直通運転で列車が変わると
+  `（直通）東京` の行が挟まり、その前後で路線名と分が別々に出る。1区間として読むと
+  辺の重みが実際より5分短くなる（実測: 赤羽→新橋は18分ではなく18分＋2分＋停車）
+- **回帰式（`resolve-commutes`）で実ダイヤの行を上書きしない。** 掲載が挙げる駅を
+  全部まとめて書き直すため、素朴に流すと4.8時間かけて採った実測値が見積もりへ戻る。
+  `t_station_commutes.source='navitime'` の駅は対象から外している
+- **`fetch-commutes` の `--depart-on` を動かさない。** 出発日は `t_navitime_routes` の
+  一意キーの一部なので、変えると再実行のたびに全駅を取り直すことになる
 
 ## AI回答方針
 - 複数実装がある場合はトレードオフを説明してから推奨案を提示する
