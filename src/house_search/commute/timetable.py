@@ -33,6 +33,7 @@ from house_search.commute.navitime import (
     strip_station_note,
 )
 from house_search.commute.normalize import normalize_key
+from house_search.commute.resolve import STATUS_OK
 
 SOURCE_NAVITIME = "navitime"
 
@@ -448,6 +449,51 @@ class RebuildResult:
     saved: int
     dropped: int
     failed: int
+
+
+_RESTORE_COMMUTES = text(
+    """
+    INSERT INTO t_station_commutes (
+        origin_station_g_cd, destination_station_g_cd, status,
+        commute_minutes, transfers, distance_km, source, computed_at,
+        created_at, updated_at
+    )
+    SELECT DISTINCT ON (r.origin_station_g_cd)
+           r.origin_station_g_cd, r.destination_station_g_cd, :status,
+           r.total_minutes, r.transfers, r.distance_km, :source, now(),
+           now(), now()
+      FROM t_navitime_routes r
+     WHERE r.destination_station_g_cd = :dest
+       AND r.total_minutes IS NOT NULL
+     ORDER BY r.origin_station_g_cd, r.total_minutes, r.rank
+    ON CONFLICT (origin_station_g_cd, destination_station_g_cd) DO UPDATE SET
+        status          = EXCLUDED.status,
+        commute_minutes = EXCLUDED.commute_minutes,
+        transfers       = EXCLUDED.transfers,
+        distance_km     = EXCLUDED.distance_km,
+        source          = EXCLUDED.source,
+        computed_at     = now(),
+        updated_at      = now()
+    """
+)
+
+
+def restore_commutes(conn: Connection, *, destination_g_cd: int) -> int:
+    """保存済みの経路原文から所要時間キャッシュを作り直す（ネットワーク不要）。
+
+    ⚠ **回帰式に上書きされた実ダイヤを取り戻すための復旧口。** 取り直すと
+    1駅15秒（芝公園ゆき1,155駅で4.8時間）かかるが、``t_navitime_routes`` に
+    候補ごとの所要時間が残っているので**再取得は要らない**。
+
+    ⚠ **候補の中から最短を採る**（``fetch-commutes`` と同じ規則）。
+    NAVITIME の並び順の1本目が最短とは限らない（実測で rank 1 が43分・
+    別候補が39分）ため、``rank`` ではなく ``total_minutes`` で選ぶ。
+    """
+    result = conn.execute(
+        _RESTORE_COMMUTES,
+        {"dest": destination_g_cd, "status": STATUS_OK, "source": SOURCE_NAVITIME},
+    )
+    return int(result.rowcount or 0)
 
 
 def rebuild_segments(

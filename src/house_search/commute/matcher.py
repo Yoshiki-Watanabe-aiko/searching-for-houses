@@ -67,6 +67,16 @@ _BUS_SEGMENTS = (
 # ここで外しておかないと「駅」の直前が「）」になり第1パスが拾えない。
 _PAREN_BEFORE_STATION = re.compile(r"[（(][^）)]{0,24}[）)](?=駅)")
 
+# ⚠ **駅名を鉤括弧で囲むサイトがある**（ATHOME ``ＪＲ京浜東北線 「北浦和」駅 徒歩10分`` /
+# UR の交通欄 ``JR中央線｢高尾｣駅バス7分``）。鉤括弧は区切り文字なので、囲みを外さないと
+# 「駅」の直前が「」になり**第1パスが1件も拾えない**。第2パスもアンカー無しでは
+# 「駅」という語しか取れずマスタに当たらないため、**同定結果が0件になり
+# `t_listing_stations` に行すら残らない**（unmatched としても記録されない）。
+# ⚠ 実測（2026-09-04）で ATHOME の52掲載**全件**がこれで通勤時間 unknown になっていた。
+# ⚠ 削除ではなく**囲みだけ外す**（中身が駅名そのもの）。直後が「駅」のときに限るので、
+# goo の ``「品の木・ハイランドホテル前」バス停`` のようなバス停名には掛からない。
+_QUOTED_BEFORE_STATION = re.compile(r"[「｢]([^」｣]{1,24})[」｣](?=\s*駅)")
+
 # 第1パス。「◯◯駅」を拾う。中黒は駅名の一部になりうる（元町・中華街 / 大塚・帝京大学）ので、
 # 区切りではなく駅名の構成文字として扱う。
 _WITH_SUFFIX = re.compile(rf"([^{_BOUNDARY}・]{{1,24}}(?:・[^{_BOUNDARY}・]{{1,24}})*)駅")
@@ -147,6 +157,7 @@ def extract_station_names(station_info: str) -> tuple[tuple[str, ...], tuple[str
     """
     masked = mask_bus_stops(station_info)
     masked = _PAREN_BEFORE_STATION.sub("", masked)
+    masked = _QUOTED_BEFORE_STATION.sub(r"\1", masked)
     return _dedupe(_WITH_SUFFIX.findall(masked)), _dedupe(_BEFORE_TIME.findall(masked))
 
 

@@ -128,7 +128,12 @@ def parse_access(access: str | None) -> tuple[str | None, int | None]:
             walk = _WALK_RANGE.search(choice)
             if walk:
                 walk_candidates.append(int(walk.group(1)))
-    station_info = " / ".join(dict.fromkeys(stations)) or None
+    # ⚠ **「駅」を落としてはいけない。** 同定器（``commute/matcher.py``）は
+    # 「◯◯駅」というアンカーの有無で確度を分けており、アンカーが無いと
+    # 第2パス（時間表記の直前）にも掛からず**同定結果が0件**になる。
+    # 実測（2026-09-04）で UR の掲載は駅が1件も同定できず、通勤時間が
+    # unknown → MUST の ``commute_minutes_max`` が判定不能になっていた。
+    station_info = " / ".join(f"{name}駅" for name in dict.fromkeys(stations)) or None
     return station_info, (min(walk_candidates) if walk_candidates else None)
 
 
@@ -343,8 +348,11 @@ class UrScraper:
         if _text(room.get("requirement")) in _NO_GUARANTOR_VALUES:
             parts.append(NO_GUARANTOR_TOKEN)
 
-        # ⚠ ``year`` は築年月ではなく**築年数（年）**。日付列へは入れられないので
-        # ``type_specific_attrs`` に残し、採点は age_years の導出に任せる
+        # ⚠ ``year`` は築年月ではなく**築年数（年）**。日付列（``built_on``）へは
+        # 入れられないので、**築年月が取れないサイト向けの ``age_years`` 列**へ渡す。
+        # ⚠ ここを ``type_specific_attrs`` に置くだけにすると採点から見えず、
+        # ``age_years`` が weight 15 のまま永久に unknown になる（実測 2026-09-04）。
+        # 原文の値も追跡できるよう ``ur_age_years`` は残す。
         age_years = _as_int(room.get("year")) or None
         attrs: dict[str, Any] = {"ur_age_years": age_years} if age_years else {}
         available = _text(room.get("availableDate"))
@@ -354,6 +362,7 @@ class UrScraper:
         floor_text = _text(room.get("floor"))
         return ScrapedDetail(
             raw_features_text="、".join(dict.fromkeys(parts)) or None,
+            age_years=age_years,
             floor_num=parse_floor(floor_text),
             total_floors=parse_total_floors(floor_text) or _last_floor(floor_text),
             mgmt_fee_monthly=parse_fee(_text(room.get("commonfee_sp"))),

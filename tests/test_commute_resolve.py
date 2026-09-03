@@ -203,3 +203,73 @@ def test_掲載のある都道府県だけを照合スコープにする(conn: C
 
 def test_駅マスタが空なら索引も空になる(conn: Connection) -> None:
     assert load_station_index(conn, []).by_key == {}
+
+
+# --- 回帰式に踏み潰された実ダイヤの復旧 -----------------------------------
+
+
+def _insert_route(
+    conn: Connection,
+    *,
+    origin: int,
+    destination: int,
+    rank: int,
+    total_minutes: int,
+) -> None:
+    conn.execute(
+        text(
+            """
+            INSERT INTO t_navitime_routes (
+                origin_station_g_cd, destination_station_g_cd, depart_on, depart_at,
+                rank, total_minutes, transfers, distance_km, route_text,
+                route_depart_at, route_arrive_at,
+                origin_label, destination_label,
+                fetched_at, created_at, updated_at
+            )
+            VALUES (
+                :origin, :destination, DATE '2026-09-09', TIME '08:30',
+                :rank, :total_minutes, 1, 12.5, 'dummy',
+                '08:30', '09:13',
+                '出発駅', '到着駅',
+                now(), now(), now()
+            )
+            """
+        ),
+        {
+            "origin": origin,
+            "destination": destination,
+            "rank": rank,
+            "total_minutes": total_minutes,
+        },
+    )
+
+
+def test_経路の原文から所要時間を実ダイヤへ戻せる(conn: Connection) -> None:
+    """⚠ ``scan`` が回帰式で踏み潰しても、再取得せずに戻せることの回帰テスト。
+
+    実測（2026-09-04）で芝公園ゆき1,155駅すべてが ``rail_graph`` に戻っていた。
+    取り直すと4.8時間かかるが、原文に所要時間が残っているので不要。
+    """
+    from house_search.commute.resolve import save_commutes
+    from house_search.commute.timetable import restore_commutes
+
+    origin, destination = 9_999_001, 9_999_002
+    # 実ダイヤ。**並び順の1本目が最短とは限らない**ので rank ではなく分で選ぶ
+    _insert_route(conn, origin=origin, destination=destination, rank=1, total_minutes=43)
+    _insert_route(conn, origin=origin, destination=destination, rank=2, total_minutes=39)
+    # 回帰式が上書きしてしまった状態を作る
+    save_commutes(conn, destination_g_cd=destination, rows=[(origin, "ok", 55, 2, 20.0)])
+
+    assert restore_commutes(conn, destination_g_cd=destination) == 1
+
+    row = conn.execute(
+        text(
+            """
+            SELECT commute_minutes, source FROM t_station_commutes
+             WHERE origin_station_g_cd = :o AND destination_station_g_cd = :d
+            """
+        ),
+        {"o": origin, "d": destination},
+    ).one()
+    assert row.commute_minutes == 39
+    assert row.source == "navitime"
