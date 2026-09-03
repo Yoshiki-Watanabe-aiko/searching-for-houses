@@ -91,6 +91,11 @@ class GooScraper:
     user_agent = None
     ignore_robots = False
 
+    # MUST の面積下限・駅徒歩・間取りを検索URLへ載せられる（→ ADR 0015）。
+    # 実測でキーと選択肢を確定済み（data/site_search_params.yaml）。
+    # ⚠ GOO は総件数を出さないので、効果は**返る掲載の中身**で確かめてある
+    supports_site_filters = True
+
     def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
         """``/rent/{地方}_ap/area_{都道府県}/{JIS5}.html`` を組み立てる。"""
         search = pattern.search  # type: ignore[attr-defined]

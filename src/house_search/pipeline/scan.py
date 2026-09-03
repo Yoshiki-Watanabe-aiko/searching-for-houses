@@ -206,8 +206,11 @@ def _with_site_filters(scraper, pattern, areas: list[AreaTarget], site_params) -
     if not query:
         return list(urls)
     suffix = urlencode([(key, value) for key, values in query.items() for value in values])
-    # list_urls が返すURLは必ずクエリ付き。ページ番号も & で足している
-    return [f"{url}&{suffix}" for url in urls]
+    # ⚠ **クエリの有無で区切り文字を変える。** 「list_urls は必ずクエリ付きのURLを返す」
+    # という前提でここを & 固定にしていたが、GOO は price_max_hint が無いと
+    # クエリ無しのURLを返すため ``....html&fl=30`` という壊れたURLになる
+    # （0件になるだけで例外にならない類の事故 → 課題#29）
+    return [f"{url}{'&' if '?' in url else '?'}{suffix}" for url in urls]
 
 
 def _collect_listings(

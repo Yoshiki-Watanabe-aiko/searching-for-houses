@@ -18,6 +18,7 @@ from house_search.commute.navitime import (
     parse_calendar_text,
     parse_duration_minutes,
     parse_search,
+    resolved_station_matches,
     station_query_name,
 )
 from house_search.commute.timetable import (
@@ -226,3 +227,44 @@ def test_同じ区間の観測は最小の分へ畳む():
     assert len(merged) == 2
     by_line = {row.line_name: row.minutes for row in merged}
     assert by_line == {"ＪＲ山手線": 4, "東京メトロ南北線": 6}
+
+
+class TestResolvedStationMatches:
+    """NAVITIME が解決した駅名の照合（→ 課題#34・29駅が弾かれた件）。"""
+
+    def test_strips_line_note(self) -> None:
+        """乗換駅には路線注記が付く。実測で 両国 → 両国〔ＪＲ〕 が返った。"""
+        assert resolved_station_matches("両国〔ＪＲ〕", ("両国",))
+
+    def test_strips_prefecture_note(self) -> None:
+        """同名異駅の解決結果は 大久保（東京都） の形で返る。"""
+        assert resolved_station_matches("大久保（東京都）", ("大久保",))
+
+    def test_matches_any_alias_in_group(self) -> None:
+        """駅グループ内の別表記でも同じ駅として通す。
+
+        実測で 町屋 → 町屋〔千代田線〕、武蔵溝ノ口 → 溝の口 が返った。
+        代表名だけと照合すると同じ駅を取りこぼす。
+        """
+        assert resolved_station_matches("町屋〔千代田線〕", ("町屋", "町屋駅前"))
+        assert resolved_station_matches("溝の口", ("武蔵溝ノ口", "溝の口"))
+        assert resolved_station_matches("京成八幡", ("本八幡", "京成八幡"))
+
+    def test_rejects_different_station(self) -> None:
+        """別の駅が返ったら弾く。ここを緩めると取り違えに気づけなくなる。
+
+        ⚠ **同名異駅そのものは、この照合では検知できない。** 注記を落とすため
+        ``大久保（兵庫県）`` も ``大久保`` と一致してしまう。同名異駅は
+        検索語に都道府県を添えること（``station_query_name``）で防いでいる。
+        """
+        assert not resolved_station_matches("新宿", ("両国", "両国駅前"))
+
+    def test_treats_subname_as_optional(self) -> None:
+        """副名称は付いていなくても同じ駅として通す。
+
+        ``押上〈スカイツリー前〉`` の ``〈〉`` はマスタ側にだけ付く表記で、
+        NAVITIME も掲載も付けないことがある。落とすのは ``normalize_key`` の担当で、
+        **掲載の駅を同定するときと同じ規則**をそのまま使っている。
+        """
+        assert resolved_station_matches("押上", ("押上〈スカイツリー前〉",))
+        assert resolved_station_matches("獨協大学前", ("獨協大学前〈草加松原〉",))

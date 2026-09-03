@@ -780,7 +780,7 @@ uv run house-search db-seed --test-db
   間取りは全項目を表現できるときだけ）、サイト定義には書けないようにしてある。
   正典は `data/site_search_params.yaml` で、`sync-site-params` で
   `m_site_search_params` へ同期し実行時はDBから読む。
-  **配線済みは SUUMO と HOMES**（実測 2026-09-03・足立区）。
+  **配線済みは SUUMO・HOMES・GOO**（実測 2026-09-03・足立区）。
   SUUMO は母集団 62,030 → 27,150件（57%削減）。
   HOMES は総物件数 52,515件に対し面積下限30㎡で 27,689件・徒歩20分で 50,400件・
   間取り5種で 27,029件。⚠ HOMES の間取りは `cond[madori][15]=15` と

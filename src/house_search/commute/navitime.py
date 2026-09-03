@@ -36,6 +36,7 @@ from __future__ import annotations
 import datetime as dt
 import html as html_lib
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -158,6 +159,41 @@ def build_search_url(
         encoding="utf-8",
     )
     return f"{SEARCH_URL}?{query}"
+
+
+_STATION_NOTE_RE = re.compile(r"[（(〔\[][^）)〕\]]*[）)〕\]]\s*$")
+
+
+def strip_station_note(label: str) -> str:
+    """駅名の末尾に付く注記を落とす。
+
+    NAVITIME は2種類の注記を付けて返す。
+
+    - ``大久保（東京都）`` — こちらが**どの駅として解決したか**を示す都道府県
+    - ``両国〔ＪＲ〕`` / ``町屋〔千代田線〕`` — 乗換駅で**どの路線のホームか**を示す路線名
+
+    ⚠ **後者を落とし忘れると、同じ駅なのに「意図と違う駅」として弾いてしまう**
+    （実測で29駅が保存されず回帰式の値のまま残った）。
+
+    副名称（``押上〈スカイツリー前〉`` の ``〈〉``）はここでは触らない。
+    落とすのは ``normalize_key`` の担当で、**掲載の駅を同定するときと同じ規則**を
+    そのまま使うため。ここで二重に処理すると規則が2箇所に散る。
+    """
+    return _STATION_NOTE_RE.sub("", label).strip()
+
+
+def resolved_station_matches(origin_label: str, candidates: Sequence[str]) -> bool:
+    """NAVITIME が解決した駅名が、意図した駅の表記のいずれかと一致するか。
+
+    ⚠ **候補は駅グループ内の全表記にする。** 駅データ.jp のグループは同一駅の
+    別表記を束ねており（``町屋`` / ``町屋駅前``、``本八幡`` / ``京成八幡``、
+    ``武蔵溝ノ口`` / ``溝の口``）、代表1つとしか照合しないと NAVITIME が
+    別表記を返した時点で同じ駅を取りこぼす。
+    """
+    from house_search.commute.normalize import normalize_key
+
+    resolved = normalize_key(strip_station_note(origin_label))
+    return any(resolved == normalize_key(strip_station_note(name)) for name in candidates)
 
 
 def station_query_name(station_name: str, prefecture: str | None) -> str:
