@@ -131,6 +131,13 @@ class AthomeScraper:
     # 単発の疎通確認では再現できない。1回4市区ずつ回して次回は続きから
     # 始めることで、82市区を約1.8日で一巡させる（→ 課題#20・#36）
     city_rotation_limit = 4
+    # MUST をサイト側のフォームへ渡す（→ ADR 0015）。キー名と選択肢は
+    # 一覧ページの検索フォームの実HTMLから採り、実サイトで効くことを確かめてある
+    # （`data/site_search_params.yaml` の ATHOME ブロックに実測値がある）。
+    # ⚠ **これが無いと23区帯で MUST 1段目の通過が0件になる**（→ 課題#39）。
+    # `SORT=7`（賃料が安い順）で1ページ目しか見ないため、面積下限を渡さないと
+    # 相場の高い区では30㎡未満の 1K/1R だけが返る
+    supports_site_filters = True
 
     def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
         """``/chintai/{エリアスラグ}/list/`` を組み立てる。
