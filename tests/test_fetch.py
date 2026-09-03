@@ -144,12 +144,23 @@ def test_拒否系の4xxは再試行せず失敗として数える() -> None:
     assert fetcher.stats.consecutive_failures == 1
 
 
+def test_失敗のメッセージにステータスが載る() -> None:
+    """⚠ 理由が本文に無いと、ログから 405 とタイムアウトを区別できない。
+
+    ``raise ... from`` の連鎖は ``t_scrape_logs`` へ ``str(exc)`` で書かれる
+    時点で落ちる。実際に NIFTY の 405 を調べるのに実サイトを叩き直した。
+    """
+    fetcher = build_fetcher(robots_then(lambda r: httpx.Response(405)))
+    with pytest.raises(RuntimeError, match="405"):
+        fetcher.get("https://example.com/detail")
+
+
 def test_拒否系が連続したらサイトを打ち切る() -> None:
     fetcher = build_fetcher(robots_then(lambda r: httpx.Response(403)))
     for _ in range(CONSECUTIVE_FAILURE_LIMIT - 1):
         with pytest.raises(RuntimeError):
             fetcher.get("https://example.com/detail")
-    with pytest.raises(SiteAborted):
+    with pytest.raises(SiteAborted, match="403"):
         fetcher.get("https://example.com/detail")
 
 
