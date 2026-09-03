@@ -88,3 +88,41 @@ class TestForceUtf8Output:
         monkeypatch.setattr(cli.sys, "stdout", object())
         monkeypatch.setattr(cli.sys, "stderr", object())
         cli._force_utf8_output()
+
+
+class TestSegmentIndexPrefectures:
+    """乗車区間の駅索引の範囲（→ 課題#35）。"""
+
+    @staticmethod
+    def _region(name: str, pref_cds: set[int]):
+        from house_search.commute.regions import RegionDestination
+
+        return RegionDestination(
+            name=name, pref_cds=frozenset(pref_cds), station="県庁前", prefecture="沖縄県"
+        )
+
+    def test_region指定時はその地方の都道府県に絞る(self) -> None:
+        """⚠ 掲載都道府県で索引を作ると地方外の経路で1本も結び付かない。
+
+        実測で沖縄18駅の区間72本すべてが捨てられた（「県庁前」が千葉県にもあるため、
+        掲載都道府県＝1都3県の索引では一意に決まらない）。
+        """
+        region = self._region("沖縄", {47})
+        assert cli._segment_index_prefectures(None, region) == (47,)
+
+    def test_都道府県コードは並べて返す(self) -> None:
+        """⚠ frozenset の反復順は実行ごとに揺れる。"""
+        region = self._region("関東", {13, 8, 14, 11})
+        assert cli._segment_index_prefectures(None, region) == (8, 11, 13, 14)
+
+
+class TestReSegmentArguments:
+    def test_地方と目的地を指定できる(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["re-segment", "--region", "沖縄"])
+        assert (args.command, args.region, args.destination) == ("re-segment", "沖縄", None)
+
+    def test_地方の指定は任意(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["re-segment", "--destination", "芝公園"])
+        assert (args.region, args.destination) == (None, "芝公園")

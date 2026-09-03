@@ -289,3 +289,64 @@ class TestQueryCandidates:
 
         target = OriginStation(station_g_cd=1, station_name="松田", prefecture=None)
         assert target.query_candidates == ("松田",)
+
+
+class TestSegmentStationResolver:
+    """乗車区間の駅名を駅グループへ直す（→ 課題#35・区間が捨てられた件）。"""
+
+    @staticmethod
+    def _resolver(*names: str):
+        from house_search.commute.matcher import StationIndex
+        from house_search.commute.normalize import normalize_key
+        from house_search.commute.timetable import make_station_resolver
+
+        rows = [(normalize_key(name), i + 1, 13) for i, name in enumerate(names)]
+        return make_station_resolver(StationIndex.build(rows))
+
+    def test_路線注記の付いた駅名も引ける(self) -> None:
+        """⚠ NAVITIME は乗換駅に路線注記を付けて返す（``本八幡〔新宿線〕``）。
+
+        落とさないとその駅に接する区間がまるごと捨てられる。実測では
+        芝公園ゆき20,189本のうち942本がこの1点で救えた。
+        """
+        resolve = self._resolver("本八幡", "溝の口", "町屋")
+        assert resolve("本八幡〔新宿線〕") == 1
+        assert resolve("溝の口〔東急線〕") == 2
+        assert resolve("町屋〔千代田線〕") == 3
+
+    def test_角括弧の副名称も引ける(self) -> None:
+        """``押上[スカイツリー前]``。``normalize_key`` は 〈〉 と () しか落とさない。"""
+        resolve = self._resolver("押上")
+        assert resolve("押上[スカイツリー前]") == 1
+
+    def test_注記の無い駅名はそのまま引ける(self) -> None:
+        resolve = self._resolver("赤羽")
+        assert resolve("赤羽") == 1
+        assert resolve("知らない駅") is None
+
+    def test_一意に決まらない名前は捨てる(self) -> None:
+        """⚠ 適当に1つ選ぶと辺の重みが別の路線のものになっても気づけない。"""
+        from house_search.commute.matcher import StationIndex
+        from house_search.commute.normalize import normalize_key
+        from house_search.commute.timetable import make_station_resolver
+
+        key = normalize_key("小川町")
+        resolve = make_station_resolver(StationIndex.build([(key, 1, 13), (key, 2, 11)]))
+        assert resolve("小川町") is None
+
+
+def test_区間の並びから乗車区間を採れる(akabane: str):
+    """``re-segment`` は経路の原文を解析して ``harvest_leg_segments`` へ直接入る。"""
+    from house_search.commute.navitime import parse_calendar_text
+    from house_search.commute.timetable import harvest_leg_segments
+
+    search = parse_search(akabane, expected_date=SEARCHED_ON)
+    fastest = search.fastest
+    assert fastest is not None
+
+    _, _, legs = parse_calendar_text(fastest.raw_text)
+    known = {"赤羽": 1, "東京": 2, "新橋": 3, "三田": 4, "芝公園": 5}
+    from_text, dropped = harvest_leg_segments(legs, known.get)
+    from_route, _ = harvest_segments(fastest, known.get)
+    assert dropped == 0
+    assert from_text == from_route

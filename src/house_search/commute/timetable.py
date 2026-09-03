@@ -24,7 +24,14 @@ from dataclasses import dataclass
 from sqlalchemy import Connection, text
 
 from house_search.commute.matcher import StationIndex, candidate_variants
-from house_search.commute.navitime import Route, RouteSearch, station_query_name
+from house_search.commute.navitime import (
+    Route,
+    RouteLeg,
+    RouteSearch,
+    parse_calendar_text,
+    station_query_name,
+    strip_station_note,
+)
 from house_search.commute.normalize import normalize_key
 
 SOURCE_NAVITIME = "navitime"
@@ -253,11 +260,28 @@ def save_routes(
 StationResolver = Callable[[str], int | None]
 
 
+def note_variants(name: str) -> tuple[str, ...]:
+    """駅名から、末尾の注記を落とした形も候補に加える。
+
+    ⚠ **経路の駅名には注記が付く。** NAVITIME は乗換駅に路線注記を付け
+    （``本八幡〔新宿線〕`` / ``溝の口〔東急線〕``）、副名称を角括弧で返すことがある
+    （``押上[スカイツリー前]``）。落とさないと索引を引けず、その駅に接する区間が
+    まるごと捨てられる（実測で 20,189本中 942本がこれだけで救えた）。
+
+    ⚠ **原文を先に試す。** マスタ側に括弧付きの駅名が実在するため
+    （``成田空港（第１旅客ターミナル）``）、落とした形だけを見ると取りこぼす。
+    """
+    stripped = strip_station_note(name)
+    return (name,) if stripped == name or not stripped else (name, stripped)
+
+
 def build_station_resolver(conn: Connection, prefecture_codes: Sequence[int]) -> StationResolver:
     """経路に出てくる駅名を駅グループコードへ直す関数を作る。
 
-    ⚠ **一意に決まらない名前は None を返す。** 適当に1つ選ぶと、辺の重みが
-    別の路線のものになっても誰も気づけない（同名異駅は実在する）。
+    ⚠ **``prefecture_codes`` は用途に合わせて渡す。** 掲載のある都道府県で固定すると
+    その外の地方では1本も結び付かず（沖縄で区間72本すべてを捨てた）、逆に全国へ広げると
+    同名異駅が一意でなくなって解決率が落ちる。範囲の決め方は cli の
+    ``_segment_index_prefectures`` に置いてある。
     """
     if not prefecture_codes:
         index = StationIndex.build(())
@@ -273,12 +297,22 @@ def build_station_resolver(conn: Connection, prefecture_codes: Sequence[int]) ->
             {"prefs": list(prefecture_codes)},
         ).all()
         index = StationIndex.build((row[0], int(row[1]), int(row[2])) for row in rows)
+    return make_station_resolver(index)
+
+
+def make_station_resolver(index: StationIndex) -> StationResolver:
+    """索引から解決関数を作る（DBに触らない）。
+
+    ⚠ **一意に決まらない名前は None を返す。** 適当に1つ選ぶと、辺の重みが
+    別の路線のものになっても誰も気づけない（同名異駅は実在する）。
+    """
 
     def resolve(name: str) -> int | None:
-        for variant in candidate_variants(name):
-            groups = index.lookup(normalize_key(variant), None)
-            if len(groups) == 1:
-                return next(iter(groups))
+        for candidate in note_variants(name):
+            for variant in candidate_variants(candidate):
+                groups = index.lookup(normalize_key(variant), None)
+                if len(groups) == 1:
+                    return next(iter(groups))
         return None
 
     return resolve
@@ -287,14 +321,21 @@ def build_station_resolver(conn: Connection, prefecture_codes: Sequence[int]) ->
 def harvest_segments(
     route: Route, resolve: StationResolver
 ) -> tuple[tuple[SegmentObservation, ...], int]:
-    """経路から乗車区間を採る。``(採れた区間, 駅名を解決できず捨てた数)``。
+    """経路から乗車区間を採る。``(採れた区間, 駅名を解決できず捨てた数)``。"""
+    return harvest_leg_segments(route.legs, resolve)
+
+
+def harvest_leg_segments(
+    legs: Sequence[RouteLeg], resolve: StationResolver
+) -> tuple[tuple[SegmentObservation, ...], int]:
+    """区間の並びから乗車区間を採る。``re-segment`` は経路の原文からここへ直接入る。
 
     ⚠ **区間の分に待ち時間は入っていない**（発→着はひと続きの乗車のため）。
     足し合わせても二重計上にならない代わりに、乗換の待ちは別に足す必要がある。
     """
     found: list[SegmentObservation] = []
     dropped = 0
-    for leg in route.legs:
+    for leg in legs:
         from_code, to_code = resolve(leg.from_name), resolve(leg.to_name)
         if from_code is None or to_code is None or from_code == to_code:
             dropped += 1
@@ -397,3 +438,58 @@ def segment_stats(conn: Connection) -> tuple[int, int, int]:
         )
     ).first()
     return (int(row[0]), int(row[1]), int(row[2])) if row else (0, 0, 0)
+
+
+@dataclass(frozen=True)
+class RebuildResult:
+    """``re-segment`` の実績。"""
+
+    routes: int
+    saved: int
+    dropped: int
+    failed: int
+
+
+def rebuild_segments(
+    conn: Connection,
+    *,
+    destination_g_cd: int,
+    resolve: StationResolver,
+    observed_at: dt.datetime,
+) -> RebuildResult:
+    """保存済みの経路原文から乗車区間を作り直す（ネットワーク不要）。
+
+    ⚠ **設備の ``re-extract`` と同じ考え方。** 原文を残してあるので、駅名の照合を
+    直したら取り直さずに反映できる。取り直すと1駅15秒で、芝公園ゆき1,155駅なら
+    4.8時間かかる（→ ADR 0017 が原文を残している理由そのもの）。
+
+    ⚠ **区間だけを作り直す。** 所要時間（``t_station_commutes``）は経路の解析結果が
+    変わらない限り同じなので触らない。
+    """
+    rows = (
+        conn.execute(
+            text(
+                """
+                SELECT route_text FROM t_navitime_routes
+                 WHERE destination_station_g_cd = :dest AND route_text IS NOT NULL
+                 ORDER BY id
+                """
+            ),
+            {"dest": destination_g_cd},
+        )
+        .scalars()
+        .all()
+    )
+    observations: list[SegmentObservation] = []
+    dropped = failed = 0
+    for route_text in rows:
+        try:
+            _, _, legs = parse_calendar_text(route_text)
+        except Exception:  # noqa: BLE001 — 1件の解析失敗で全体を止めない
+            failed += 1
+            continue
+        found, missed = harvest_leg_segments(legs, resolve)
+        observations.extend(found)
+        dropped += missed
+    saved = save_segments(conn, merge_observations(observations), observed_at=observed_at)
+    return RebuildResult(routes=len(rows), saved=saved, dropped=dropped, failed=failed)

@@ -49,6 +49,8 @@ uv run house-search resolve-stations       # 掲載の駅表記を駅マスタ�
 uv run house-search resolve-commutes       # 駅ペアの通勤所要時間を算出しキャッシュ（ネットワーク不要）
 uv run house-search fetch-commutes         # NAVITIMEから実ダイヤの通勤時間を取得（要ネットワーク・約15秒/駅）
 uv run house-search fetch-commutes --region 関東   # 全国網羅。その地方の全駅×中心駅（→ ADR 0018）
+uv run house-search re-segment             # 経路の原文から乗車区間を作り直す（ネットワーク不要）
+uv run house-search re-segment --region 沖縄  # 地方ごと。索引もその地方に合わせる（→ 課題#35）
 uv run house-search commute-stats          # 通勤時間の分布（best/worst を決める材料）
 uv run house-search dedup-stats            # サイト別の重複率・ユニーク率（ネットワーク不要）
 uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観測モード
@@ -205,6 +207,15 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
   `t_station_commutes.source='navitime'` の駅は対象から外している
 - **`fetch-commutes` の `--depart-on` を動かさない。** 出発日は `t_navitime_routes` の
   一意キーの一部なので、変えると再実行のたびに全駅を取り直すことになる
+- **乗車区間の駅名索引は用途に合う範囲で作る。** 掲載のある都道府県で固定すると
+  その外の地方では区間が1本も貯まらない（沖縄18駅で72本すべてを捨てた → 課題#35）。
+  ⚠ **全国に広げるのも誤り**で、同名異駅（三田・大手町）が一意でなくなり
+  解決率が 94.8% → 66.3% に落ちる。`--region` のときだけその地方へ切り替える
+- **経路の駅名には注記が付く。** 乗換駅の路線注記（`本八幡〔新宿線〕`）と角括弧の
+  副名称（`押上[スカイツリー前]`）を落とさないと索引を引けない。⚠ `normalize_key` が
+  落とすのは `〈〉` と `()` だけなので、`strip_station_note` を別に通す
+- **駅名の照合を直したら `re-segment`。** 経路の原文から区間を作り直せるので
+  4.8時間の再取得は要らない（設備の `re-extract` と同じ位置づけ）
 
 ## AI回答方針
 - 複数実装がある場合はトレードオフを説明してから推奨案を提示する
