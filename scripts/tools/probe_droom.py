@@ -41,9 +41,17 @@ from house_search.config.settings import Settings  # noqa: E402
 BASE = "https://www.droom-daiwaliving.net"
 CACHE = Path("data/probe/droom")
 
-# MUST の間取り（configs/*.yaml の must.layouts）と D-room の rl[] コードの対応。
-# ⚠ 一覧ページの検索フォームから採った実測値。推測で足さない。
-LAYOUT_CODES = {"1LDK": "6", "2K": "7", "2DK": "8", "3K": "10", "3DK": "11", "3LDK": "12"}
+# D-room の rl[] コード。⚠ 一覧ページの検索フォームから採った**全17件**の実測値。
+# ⚠⚠ 初版は 2LDK=9 を落とし、代わりに MUST に無い 3K=10 を入れていた。
+#    足立区で最多の 2LDK（163/334件）を送らないまま測っていたので、
+#    §12.5 の「埼玉県112室」は過小評価だった（2026-09-04 に訂正）。
+LAYOUT_CODES = {
+    "ワンルーム": "1", "1K": "3", "1DK": "4", "1LDK": "6",
+    "2K": "7", "2DK": "8", "2LDK": "9",
+    "3K": "10", "3DK": "11", "3LDK": "12",
+    "4K": "13", "4DK": "14", "4LDK": "15",
+    "5K": "16", "5DK": "17", "5LDK": "18",
+}
 MUST_LAYOUTS = {"1LDK", "2K", "2DK", "2LDK", "3DK", "3LDK"}
 
 # 本番想定のリクエスト間隔（m_sites.min_interval_sec の既定と同じ）。
@@ -217,7 +225,12 @@ def band2_query() -> str:
     ⚠ 徒歩（``walk``）は送らない。選択肢が15分までで MUST の20分を表現できず、
     送ると ADR 0015 の不変条件（サイト側フィルタは MUST より厳しくしない）を破る。
     """
-    codes = [LAYOUT_CODES[name] for name in sorted(MUST_LAYOUTS) if name in LAYOUT_CODES]
+    missing = sorted(MUST_LAYOUTS - LAYOUT_CODES.keys())
+    if missing:
+        # ⚠ ADR 0015 の不変条件。1つでも表現できない間取りがあれば軸ごと送らない
+        #   （送るとサイト側フィルタが MUST より厳しくなり、通るはずの掲載を落とす）。
+        raise ValueError(f"rl[] に対応の無い間取りがある: {missing}")
+    codes = [LAYOUT_CODES[name] for name in sorted(MUST_LAYOUTS)]
     layouts = "".join(f"&rl%5B%5D={code}" for code in codes)
     return f"?rcu=70000&cff=Y&sqml=30{layouts}&amount=100"
 
@@ -343,12 +356,48 @@ def _card_rents(html: str) -> dict[str, list[int]]:
     return {"先頭賃料": first, "最安賃料": cheapest}
 
 
+def probe_layout(pref: str) -> None:
+    """``rl[]``（間取り）が本当に効いているかを対照実験で確かめる（→ ADR 0015）。
+
+    ⚠ **「MUST 外の間取りが0件」だけでは効いた証拠にならない。**
+    面積下限（``sqml=30``）を同時に送っていると、1K のような狭い間取りは
+    そちらだけで落ちる。**間取り軸だけを動かして件数が変わること**を見る。
+    """
+    base = f"{BASE}/{pref}/list/?rcu=70000&cff=Y&sqml=30&amount=100"
+    cases: list[tuple[str, str]] = [
+        ("間取り指定なし（対照）", ""),
+        ("1LDK だけ", "&rl%5B%5D=6"),
+        ("MUST の6種", "".join(f"&rl%5B%5D={LAYOUT_CODES[n]}" for n in sorted(MUST_LAYOUTS))),
+    ]
+    results: list[tuple[str, int, dict[str, int]]] = []
+    for i, (label, query) in enumerate(cases):
+        html = fetch(f"{base}{query}", f"layout_{pref}_{i}.html")
+        _, rooms = parse_rooms(html)
+        counts = dict(Counter(r["layout"] for r in rooms).most_common())
+        results.append((label, len(rooms), counts))
+        if i < len(cases) - 1:
+            time.sleep(MIN_INTERVAL_SEC)
+    print()
+    for label, count, counts in results:
+        print(f"  {label:<22} 住戸 {count:4}  {counts}")
+    baseline = results[0][1]
+    if results[1][1] == baseline:
+        print("⚠ 1LDK だけに絞っても件数が変わらない。rl[] は黙って無視されている")
+    elif set(results[1][2]) - {"1LDK", "1SLDK"}:
+        print("⚠ 1LDK 以外が返っている。rl[] の意味が想定と違う")
+    else:
+        print("✓ rl[] は効いている（間取り軸だけを動かして件数と内訳が変わった）")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--stage",
         required=True,
-        choices=["robots", "list", "form", "dist", "pager", "detail", "gone", "burst", "order"],
+        choices=[
+            "robots", "list", "form", "dist",
+            "pager", "detail", "gone", "burst", "order", "layout",
+        ],
     )
     parser.add_argument("--pref", default="tokyo", help="都道府県スラグ（tokyo / saitama …）")
     parser.add_argument("--city", help="市区の JIS5桁。省略すると都道府県全域")
@@ -366,6 +415,9 @@ def main() -> int:
         return 0
     if args.stage == "pager":
         probe_pager(args.pref, args.city)
+        return 0
+    if args.stage == "layout":
+        probe_layout(args.pref)
         return 0
     if args.stage == "burst":
         probe_burst(args.pref, BAND1_CITY_JIS[: args.count])
