@@ -44,6 +44,13 @@ param(
     # 中心駅になり、対象が掲載の有無によらず**その地方の全駅**へ広がる。
     # ⚠ 全国8地方で合計約36.5時間。1回で回さず地方ごとに走らせる
     [string]$Region = "",
+    # 複数の地方をカンマ区切りで順に回す（例: -Regions 北海道,東北,中部）。
+    # 1地方ぶんの取得が終わるたびに re-segment まで済ませてから次へ進む。
+    # ⚠ ADR 0018 の「1コマンドで全国を回さない」は CLI の話。ここは地方ごとに
+    #   fetch-commutes を**別々に**呼ぶだけで、1駅ごとにコミットされるため、
+    #   途中で止まっても再実行すれば済んだ地方は即座に次へ進む。
+    # ⚠ -Region（単数）と同時には指定しない
+    [string]$Regions = "",
     # 取得する駅数の上限（試し取り用。0 なら残り全部）
     [int]$Limit = 0,
     # 出発日。⚠ 変えると全駅を取り直すことになる
@@ -82,6 +89,7 @@ if (-not $Worker) {
     # **取得済みの駅しか無いので「取得対象がありません」と出て正常終了する**。
     # エラーにならないため「走ったつもり」で気づけない（実際に起きた）。
     if ($Region -ne "")  { $childArgs += @("-Region", $Region) }
+    if ($Regions -ne "") { $childArgs += @("-Regions", $Regions) }
 
     # out と err は必ず別ファイル（5.1 は同一ファイルを指定できない）
     $proc = Start-Process -FilePath "powershell.exe" `
@@ -94,7 +102,7 @@ if (-not $Worker) {
     Write-Host ""
     Write-Host "通勤時間の実ダイヤ取得を切り離して開始しました（PID $($proc.Id)）" -ForegroundColor Green
     Write-Host "  対象パターン: $(if ($Pattern -ne '') { $Pattern } else { '（全パターン）' })"
-    Write-Host "  地方         : $(if ($Region -ne '') { $Region } else { '（指定なし・パターンの通勤先へ）' })"
+    Write-Host "  地方         : $(if ($Regions -ne '') { $Regions + '（順に回す）' } elseif ($Region -ne '') { $Region } else { '（指定なし・パターンの通勤先へ）' })"
     Write-Host "  出発         : $DepartOn $DepartAt"
     Write-Host "  駅数の上限   : $(if ($Limit -gt 0) { $Limit } else { '（残り全部）' })"
     Write-Host "  標準出力     : $outLog"
@@ -129,14 +137,48 @@ Write-Step "リポジトリ: $RepoRoot"
 Write-Step "出発      : $DepartOn $DepartAt"
 if ($Region -ne "") { Write-Step "地方      : $Region（その地方の全駅・中心駅ゆき）" }
 
-$fetchArgs = @("fetch-commutes", "--depart-on", $DepartOn, "--depart-at", $DepartAt)
-if ($Pattern -ne "") { $fetchArgs += @("--pattern", $Pattern) }
-if ($Region -ne "")  { $fetchArgs += @("--region", $Region) }
-if ($Limit -gt 0)    { $fetchArgs += @("--limit", "$Limit") }
-
 $started = Get-Date
-& $Python -m house_search.cli @fetchArgs
-$code = $LASTEXITCODE
+
+if ($Regions -ne "") {
+    # ---- 複数の地方を順に回す ----------------------------------------------
+    # ⚠ 1地方が失敗しても止めない。NAVITIME のボット検知は断続的なので
+    #   （NIFTY の 405 と同じ形 → 課題#38）、次の地方は通ることがある。
+    #   失敗した地方は最後にまとめて報告し、終了コードを 1 にする。
+    $list = @($Regions.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" })
+    Write-Step "地方      : $($list -join ' / ')（$($list.Count) 地方を順に回す）"
+    $failed = @()
+
+    foreach ($r in $list) {
+        Write-Step "---------- [$r] 取得 開始 ----------"
+        $a = @("fetch-commutes", "--depart-on", $DepartOn, "--depart-at", $DepartAt, "--region", $r)
+        if ($Limit -gt 0) { $a += @("--limit", "$Limit") }
+        & $Python -m house_search.cli @a
+        if ($LASTEXITCODE -ne 0) { $failed += "$r（取得 コード=$LASTEXITCODE）" }
+
+        # ⚠ 乗車区間の駅名索引は「その地方」に合わせないと1本も貯まらない
+        #   （→ 課題#35。沖縄18駅では72区間すべてを捨てていた）。
+        #   取得の直後に作り直す。ネットワークは要らない。
+        Write-Step "---------- [$r] 乗車区間の作り直し ----------"
+        & $Python -m house_search.cli re-segment --region $r
+        if ($LASTEXITCODE -ne 0) { $failed += "$r（re-segment コード=$LASTEXITCODE）" }
+    }
+
+    if ($failed.Count -gt 0) {
+        Write-Step "⚠ 失敗した地方: $($failed -join ' / ')"
+        $code = 1
+    } else {
+        $code = 0
+    }
+} else {
+    $fetchArgs = @("fetch-commutes", "--depart-on", $DepartOn, "--depart-at", $DepartAt)
+    if ($Pattern -ne "") { $fetchArgs += @("--pattern", $Pattern) }
+    if ($Region -ne "")  { $fetchArgs += @("--region", $Region) }
+    if ($Limit -gt 0)    { $fetchArgs += @("--limit", "$Limit") }
+
+    & $Python -m house_search.cli @fetchArgs
+    $code = $LASTEXITCODE
+}
+
 $elapsed = (Get-Date) - $started
 Write-Step ("==== 通勤時間の実ダイヤ取得 終了 コード=$code 所要 {0:hh\:mm\:ss}" -f $elapsed)
 Write-Step "次にやること: commute-stats → rescore"
