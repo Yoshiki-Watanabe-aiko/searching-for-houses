@@ -77,6 +77,11 @@ if (-not $Worker) {
         "-DepartOn", $DepartOn, "-DepartAt", $DepartAt, "-Limit", $Limit
     )
     if ($Pattern -ne "") { $childArgs += @("-Pattern", $Pattern) }
+    # ⚠ ランチャーが受けた引数は、ここで漏れなくワーカーへ渡すこと。
+    # -Region を渡し忘れると目的地が既定（検索パターンの通勤先）に戻り、
+    # **取得済みの駅しか無いので「取得対象がありません」と出て正常終了する**。
+    # エラーにならないため「走ったつもり」で気づけない（実際に起きた）。
+    if ($Region -ne "")  { $childArgs += @("-Region", $Region) }
 
     # out と err は必ず別ファイル（5.1 は同一ファイルを指定できない）
     $proc = Start-Process -FilePath "powershell.exe" `
@@ -89,6 +94,7 @@ if (-not $Worker) {
     Write-Host ""
     Write-Host "通勤時間の実ダイヤ取得を切り離して開始しました（PID $($proc.Id)）" -ForegroundColor Green
     Write-Host "  対象パターン: $(if ($Pattern -ne '') { $Pattern } else { '（全パターン）' })"
+    Write-Host "  地方         : $(if ($Region -ne '') { $Region } else { '（指定なし・パターンの通勤先へ）' })"
     Write-Host "  出発         : $DepartOn $DepartAt"
     Write-Host "  駅数の上限   : $(if ($Limit -gt 0) { $Limit } else { '（残り全部）' })"
     Write-Host "  標準出力     : $outLog"
