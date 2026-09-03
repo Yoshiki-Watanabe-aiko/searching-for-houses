@@ -151,6 +151,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--station", action="append", help="駅名を名指しで取得する（検証用・複数指定可）"
     )
     p_fetch.add_argument(
+        "--region",
+        help=(
+            "地方名（data/commute_destinations.yaml）。目的地をその地方の中心駅にし、"
+            "対象を掲載の有無によらずその地方の全駅へ広げる"
+        ),
+    )
+    p_fetch.add_argument(
         "--refetch", action="store_true", help="取得済みの駅もやり直す（既定は未取得のみ）"
     )
 
@@ -708,6 +715,12 @@ def _cmd_fetch_commutes(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0
         parse_search,
         resolved_station_matches,
     )
+    from house_search.commute.regions import (
+        REGIONS_FILENAME,
+        RegionConfigError,
+        find_region,
+        load_regions,
+    )
     from house_search.commute.resolve import (
         STATUS_NO_ROUTE,
         STATUS_OK,
@@ -716,7 +729,10 @@ def _cmd_fetch_commutes(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0
         referenced_station_groups,
         save_commutes,
     )
-    from house_search.commute.stations import resolve_station_group
+    from house_search.commute.stations import (
+        resolve_station_group,
+        station_groups_in_prefectures,
+    )
     from house_search.commute.timetable import (
         SOURCE_NAVITIME,
         build_station_resolver,
@@ -751,9 +767,27 @@ def _cmd_fetch_commutes(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0
         )
         return 1
 
-    station_name, prefecture_name = _commute_destination(args)
     settings = load_settings()
     engine = get_engine()
+
+    # ⚠ 全国を網羅するときは目的地を1つに固定できない（北海道の駅から芝公園までの
+    # 所要時間には使い道がない）。--region は地方ごとの中心駅を目的地にし、
+    # 対象も「掲載がある駅」ではなく**その地方の全駅**へ広げる。
+    region = None
+    if args.region:
+        try:
+            regions = load_regions(settings.data_dir / REGIONS_FILENAME)
+        except (OSError, RegionConfigError) as error:
+            print(f"地方定義を読めません: {error}")
+            return 1
+        region = find_region(regions, args.region)
+        if region is None:
+            names = " / ".join(r.name for r in regions)
+            print(f"地方 '{args.region}' がありません。指定できるのは: {names}")
+            return 1
+        station_name, prefecture_name = region.station, region.prefecture
+    else:
+        station_name, prefecture_name = _commute_destination(args)
 
     with engine.connect() as conn:
         pref_cd = prefecture_code_of(conn, prefecture_name) if prefecture_name else None
@@ -777,6 +811,8 @@ def _cmd_fetch_commutes(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0
                     print(f"駅 '{name}' を一意に決められません")
                     return 1
                 groups.append(hit[0])
+        elif region is not None:
+            groups = list(station_groups_in_prefectures(conn, region.pref_cds))
         else:
             groups = list(referenced_station_groups(conn, pattern_name=args.pattern))
         targets = origin_stations(conn, groups)
@@ -822,29 +858,40 @@ def _cmd_fetch_commutes(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0
     mismatched: list[str] = []
     try:
         for target in pending:
-            url = build_search_url(
-                origin=target.query_name,
-                destination=destination_query,
-                depart_on=depart_on,
-                depart_at=depart_at,
-            )
-            try:
-                response = fetcher.get(url)
-                search = parse_search(response.text, expected_date=depart_on)
-            except SiteAborted:
-                # 連続失敗による打ち切り。1駅の失敗と違い、続けても無駄なので抜ける。
-                raise
-            except Exception as error:  # noqa: BLE001
-                # 1駅の失敗で数時間の実行を落とさない。件数として必ず報告する。
-                failed += 1
-                print(f"  × {target.query_name}: {type(error).__name__}: {error}")
-                continue
+            # ⚠ 意図した駅として解決されたかを必ず確かめる。NAVITIME は同名異駅も
+            # 名前の近い別駅も、黙って処理して HTTP 200 で普通の結果を返す。
+            # 検索語は「駅名 → 駅名（都道府県）」の順に試す（→ query_candidates）。
+            search = None
+            last_label: str | None = None
+            failure: str | None = None
+            for candidate in target.query_candidates:
+                url = build_search_url(
+                    origin=candidate,
+                    destination=destination_query,
+                    depart_on=depart_on,
+                    depart_at=depart_at,
+                )
+                try:
+                    response = fetcher.get(url)
+                    found = parse_search(response.text, expected_date=depart_on)
+                except SiteAborted:
+                    # 連続失敗による打ち切り。1駅の失敗と違い、続けても無駄なので抜ける。
+                    raise
+                except Exception as error:  # noqa: BLE001
+                    # 1駅の失敗で数時間の実行を落とさない。件数として必ず報告する。
+                    failure = f"{type(error).__name__}: {error}"
+                    continue
+                if resolved_station_matches(found.origin_label, target.match_names):
+                    search = found
+                    break
+                last_label = found.origin_label
 
-            # ⚠ 意図した駅として解決されたかを必ず確かめる。NAVITIME は同名異駅を
-            # 黙って別の駅で処理し、HTTP 200 で普通の結果を返す。
-            if not resolved_station_matches(search.origin_label, target.match_names):
-                mismatched.append(f"{target.station_name} → {search.origin_label}")
+            if search is None:
                 failed += 1
+                if last_label is not None:
+                    mismatched.append(f"{target.station_name} → {last_label}")
+                else:
+                    print(f"  × {target.station_name}: {failure}")
                 continue
 
             fastest = search.fastest

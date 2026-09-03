@@ -268,3 +268,24 @@ class TestResolvedStationMatches:
         """
         assert resolved_station_matches("押上", ("押上〈スカイツリー前〉",))
         assert resolved_station_matches("獨協大学前", ("獨協大学前〈草加松原〉",))
+
+
+class TestQueryCandidates:
+    """検索語の候補（→ 課題#34・都道府県を添えると別駅になる件）。"""
+
+    def test_駅名を先に試し都道府県付きを後に回す(self) -> None:
+        """⚠ 順序が逆だと松田が新松田になる（実測）。
+
+        NAVITIME が ``駅名（都道府県）`` の表記を使うのは**同名異駅があるときだけ**。
+        同名駅の無い駅に県を添えると完全一致に失敗し、近い名前の別駅へ落ちる。
+        """
+        from house_search.commute.timetable import OriginStation
+
+        target = OriginStation(station_g_cd=1, station_name="松田", prefecture="神奈川県")
+        assert target.query_candidates == ("松田", "松田（神奈川県）")
+
+    def test_都道府県が不明なら駅名だけ(self) -> None:
+        from house_search.commute.timetable import OriginStation
+
+        target = OriginStation(station_g_cd=1, station_name="松田", prefecture=None)
+        assert target.query_candidates == ("松田",)

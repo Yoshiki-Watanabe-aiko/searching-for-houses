@@ -51,12 +51,33 @@ class OriginStation:
 
     @property
     def query_name(self) -> str:
-        """NAVITIME へ渡す検索語。
+        """報告に使う代表的な検索語（実際の問い合わせは query_candidates）。"""
+        return self.station_name
 
-        ⚠ **都道府県を必ず添える。** 添えないと同名異駅が黙って別の駅として
-        処理され、HTTP 200 で普通の結果が返る（``大久保`` → ``大久保（東京都）``）。
+    @property
+    def query_candidates(self) -> tuple[str, ...]:
+        """NAVITIME へ渡す検索語を、試す順に返す。
+
+        ⚠ **駅名だけを先に試す。都道府県を添えるのは同名異駅で外したときだけ。**
+        当初は「同名異駅を避けるため必ず県を添える」設計だったが、実測で
+        **添えることが誤りの原因になる**と分かった。
+
+        | 検索語 | 解決された駅 |
+        |---|---|
+        | ``松田（神奈川県）`` | **新松田**（誤り） |
+        | ``松田`` | ``松田``（正しい） |
+        | ``厚木（神奈川県）`` | **本厚木**（誤り） |
+        | ``厚木`` | ``厚木``（正しい） |
+
+        NAVITIME が ``駅名（都道府県）`` の表記を使うのは**同名異駅があるときだけ**で、
+        同名駅の無い駅に県を添えると完全一致に失敗し、近い名前の別駅へ落ちる。
+        逆に ``大久保`` のような同名駅は県付きの表記でしか一意に指せない。
+        そこで**駅名 → 県付き**の順に試し、照合を通った方を採る。
         """
-        return station_query_name(self.station_name, self.prefecture)
+        bare = (self.station_name,)
+        if not self.prefecture:
+            return bare
+        return (*bare, station_query_name(self.station_name, self.prefecture))
 
 
 @dataclass(frozen=True)
