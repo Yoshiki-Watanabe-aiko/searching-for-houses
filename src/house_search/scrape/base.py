@@ -74,6 +74,9 @@ class ScrapedDetail:
     # サイト（賃貸EX）のための逃げ道（→ 課題#19）。
     unknown_token_text: str | None = None
     built_on: dt.date | None = None
+    # 築年数（年）。⚠ **築年月が取れないサイト向け**の逃げ道で、``built_on`` が
+    # 取れるサイトでは使わない。UR は API が築年月ではなく築年数を返す（→ 課題#37）
+    age_years: int | None = None
     floor_num: int | None = None
     total_floors: int | None = None
     mgmt_fee_monthly: int | None = None

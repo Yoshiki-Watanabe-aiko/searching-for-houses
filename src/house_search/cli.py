@@ -1021,6 +1021,7 @@ def _cmd_re_segment(args: argparse.Namespace) -> int:
     from house_search.commute.timetable import (
         build_station_resolver,
         rebuild_segments,
+        restore_commutes,
         segment_stats,
     )
     from house_search.db.session import get_engine
@@ -1056,12 +1057,16 @@ def _cmd_re_segment(args: argparse.Namespace) -> int:
             resolve=build_station_resolver(conn, prefectures),
             observed_at=dt.datetime.now(dt.UTC),
         )
+        # ⚠ 所要時間キャッシュも原文から作り直す。回帰式に踏み潰されていても
+        # ここで実ダイヤへ戻せる（取り直すと芝公園ゆき1,155駅で4.8時間）。
+        restored = restore_commutes(conn, destination_g_cd=destination_g_cd)
     with engine.connect() as conn:
         total, rides, walks = segment_stats(conn)
 
     print(f"目的地: {destination_name}（駅グループ {destination_g_cd}）")
     print(f"駅の索引: {len(prefectures)}都道府県")
     print(f"経路の原文 {result.routes}件から作り直しました")
+    print(f"所要時間キャッシュ: {restored}駅を実ダイヤ（navitime）へ戻しました")
     print(f"乗車区間: 累計 {total}本（列車 {rides} / 徒歩 {walks}）。今回 {result.saved}本を反映")
     if result.dropped:
         print(f"  駅名を駅マスタと結び付けられず捨てた区間: {result.dropped}本")

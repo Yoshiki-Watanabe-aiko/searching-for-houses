@@ -403,6 +403,7 @@ def save_detail(conn: Connection, listing_id: int, detail: ScrapedDetail) -> Non
             UPDATE t_listings SET
                 raw_features_text = COALESCE(:raw_features_text, raw_features_text),
                 built_on = COALESCE(:built_on, built_on),
+                age_years = COALESCE(:age_years, age_years),
                 floor_num = COALESCE(:floor_num, floor_num),
                 total_floors = COALESCE(:total_floors, total_floors),
                 mgmt_fee_monthly = COALESCE(:mgmt_fee_monthly, mgmt_fee_monthly),
@@ -422,6 +423,7 @@ def save_detail(conn: Connection, listing_id: int, detail: ScrapedDetail) -> Non
             "listing_id": listing_id,
             "raw_features_text": detail.raw_features_text,
             "built_on": detail.built_on,
+            "age_years": detail.age_years,
             "floor_num": detail.floor_num,
             "total_floors": detail.total_floors,
             "mgmt_fee_monthly": detail.mgmt_fee_monthly,

@@ -417,6 +417,14 @@ def _refresh_commute(
 
     ⚠ 駅の接続情報CSVは再配布不可でGit管理外なので、無い環境もありうる。
     その場合でも ``scan`` は止めず、エラーとして記録して通勤時間を unknown のままにする。
+
+    ⚠⚠ **回帰式で実ダイヤ（NAVITIME）の行を踏み潰さない。** ここは
+    ``resolve-commutes`` と同じ見積もりを書くので、素朴に全件書き直すと
+    **4.8時間かけて採った実測値が scan のたびに見積もりへ戻る**。
+    しかもエラーにならず ``source`` が rail_graph に変わるだけなので気づけない
+    （実測 2026-09-04: 芝公園ゆき1,155駅すべてが回帰式に戻っていた）。
+    CLI 側（``cli._cmd_resolve_commutes``）には同じ保護が入っていたが、
+    **こちらだけ抜けていた**（→ ADR 0017）。
     """
     from house_search.commute.graph import estimate_from, load_links, station_nodes
     from house_search.commute.resolve import (
@@ -430,6 +438,7 @@ def _refresh_commute(
         resolve_listing_stations,
         save_commutes,
     )
+    from house_search.commute.timetable import SOURCE_NAVITIME, origins_with_source
 
     if pattern.commute is None or not listing_ids:
         return
@@ -444,6 +453,13 @@ def _refresh_commute(
             destination = resolve_destination_group(conn, pattern.commute)
             nodes = load_station_nodes(conn)
             groups = referenced_station_groups(conn)
+            measured = (
+                origins_with_source(
+                    conn, destination_g_cd=destination, source=SOURCE_NAVITIME
+                )
+                if destination is not None
+                else frozenset()
+            )
         if destination is None:
             return  # 目的地の解決失敗は _commute_destination 側で記録する
 
@@ -459,6 +475,7 @@ def _refresh_commute(
                 estimates[group_code].distance_km if group_code in estimates else None,
             )
             for group_code in groups
+            if group_code not in measured
         ]
         with runtime.engine.begin() as conn:
             save_commutes(conn, destination_g_cd=destination, rows=rows)

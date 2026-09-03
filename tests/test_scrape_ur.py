@@ -93,7 +93,7 @@ class TestAccess:
         # バス停からの徒歩なので walk_minutes にしてはいけない
         assert walk is None
         # 駅名は通勤時間の算出に使うので拾う
-        assert stations == "高尾"
+        assert stations == "高尾駅"
 
     def test_徒歩レンジは下限を採る(self) -> None:
         _, walk = parse_access("<li>JR八高線｢北八王子｣駅 徒歩9～12分</li>")
@@ -110,7 +110,7 @@ class TestAccess:
         )
         stations, walk = parse_access(access)
         assert walk == 29
-        assert stations == "高尾"
+        assert stations == "高尾駅"
 
     def test_複数駅は重複を除いて並べる(self) -> None:
         access = (
@@ -119,7 +119,7 @@ class TestAccess:
             "<li>東京メトロ丸ノ内線｢淡路町｣駅 徒歩3分</li>"
         )
         stations, walk = parse_access(access)
-        assert stations == "小川町 / 新御茶ノ水 / 淡路町"
+        assert stations == "小川町駅 / 新御茶ノ水駅 / 淡路町駅"
         assert walk == 2
 
     def test_空欄は両方Noneになる(self) -> None:
@@ -147,7 +147,7 @@ class TestParseDanchiRooms:
         assert first.area_sqm == pytest.approx(42.0)
         assert first.floor_num == 5
         assert first.total_floors == 5
-        assert first.station_info == "高尾"
+        assert first.station_info == "高尾駅"
         # 館ヶ丘の交通欄は「バス7分＋徒歩1～11分」が2本と「徒歩29～38分」が1本。
         # ⚠ バス経由の11分ではなく、徒歩のみの行の下限29分を採るのが正しい
         # （バス停からの徒歩を駅徒歩にすると MUST を不当に通過する）。
@@ -289,12 +289,12 @@ class TestDiscountedRent:
         first = scraper.parse_danchi_rooms(danchi, rooms, prefecture="埼玉県")[0]
         # 「徒歩16～19分 または バス3分 徒歩2～5分」→ バスでない選択肢の下限
         assert first.walk_minutes == 16
-        assert first.station_info == "東浦和 / 浦和"
+        assert first.station_info == "東浦和駅 / 浦和駅"
 
 
 def test_選択肢が並ぶ行ではバス経由だけを落とす() -> None:
     access = "<li>JR武蔵野線「東浦和」駅 徒歩16～19分 または バス3分 徒歩2～5分</li>"
     stations, walk = parse_access(access)
-    assert stations == "東浦和"
+    assert stations == "東浦和駅"
     # バス側の2分を採ってはいけない（バス停からの徒歩なので駅徒歩ではない）
     assert walk == 16
