@@ -163,7 +163,32 @@ class ParamSpec:
         if snapped is None:
             return None
         template = str(self.value_spec.get("format", "{}"))
-        return {self.param_name: [template.format(snapped)]}
+        return {self.param_name: [self._to_code(template.format(snapped))]}
+
+    def _to_code(self, text: str) -> str:
+        """丸めた値を、サイトが受け取る表現へ写す。
+
+        ATHOME のように選択肢が**不透明なコード**（``MENSEKI=kt004`` が30㎡以上、
+        ``EKITOHO=ke006`` が徒歩20分以内）のサイトがある。値から算術で導けない
+        （徒歩は 1→ke102 / 3→ke002 / 7→ke101 と連番ですらない）ので対応表で写す。
+        ``codes`` を持たないサイトは丸めた値をそのまま送る。
+
+        ⚠ **``choices`` と ``codes`` は必ず揃える。** 片方だけ増やすと、丸めは
+        通るのにコードが無い状態になる。黙って送らない（＝母集団が広がるだけ）
+        のではなく例外にする。選択肢を書き足すときの取りこぼしを設定の誤りとして
+        落としたいため（0件事故と違い、こちらは定義の誤りだと確定している）。
+        """
+        raw = self.value_spec.get("codes")
+        if not raw:
+            return text
+        # YAML では ``20: kt002`` のようにキーが数値になる。書式化後の文字列で引く
+        codes = {str(key): str(code) for key, code in raw.items()}
+        code = codes.get(text)
+        if code is None:
+            raise ParamError(
+                f"{self.site_code}/{self.axis}: 選択肢 {text} に対応する codes がありません"
+            )
+        return code
 
     def _snap(self, value: Decimal) -> Decimal | None:
         """選択肢へ丸める。範囲外で送りようがないときは ``None``。"""

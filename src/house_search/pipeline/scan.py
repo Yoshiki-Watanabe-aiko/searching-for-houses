@@ -287,7 +287,13 @@ def _collect_listings(
             # サイトごとに1回だけ行う（掲載が本当に無いエリアで毎回叩かないため）
             if page == 1 and not listings and not control_checked and base_url != plain_url:
                 control_checked = True
-                _check_filter_blackout(scraper, fetcher, plain_url, outcome)
+                # ⚠ **市区ローテーションのサイトでは対照を取らない**（→ 課題#36・#39）。
+                # 取得数の上限（HOMES 5・ATHOME 4）は**リクエスト数**に掛かっており、
+                # 対照の1本がそのまま市区1つぶんの枠を食う。しかも対照自身が
+                # 上限を踏んで検知ページを掴むので、「対照取得に失敗」という
+                # **原因を取り違えたエラー**が出るだけで切り分けの役に立たない
+                if getattr(scraper, "city_rotation_limit", None) is None:
+                    _check_filter_blackout(scraper, fetcher, plain_url, outcome)
             if scraper.is_last_page(len(listings)):
                 break
     return collected

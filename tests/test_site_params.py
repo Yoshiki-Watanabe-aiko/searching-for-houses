@@ -462,3 +462,104 @@ def test_APAMANの面積の選択肢は不等間隔() -> None:
     choices = table.for_site("APAMAN", "CHINTAI")["area_min"].value_spec["choices"]
     assert 55 not in choices
     assert [c for c in choices if c >= 50] == [50, 60, 70, 80, 90, 100]
+
+
+# ---- アットホーム（実測 2026-09-03 → 課題#39）----
+
+
+def test_正典YAMLが読めてATHOMEの2軸がそろっている() -> None:
+    """⚠ 間取り（MADORI[]）は**未測定なので入れていない**。
+
+    キーと選択肢は実HTMLから採れているが、APAMAN の madori のように
+    「送っても黙って無視される」ことがあるため、効きを実測するまで書かない。
+    """
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    axes = set(table.for_site("ATHOME", "CHINTAI"))
+    assert axes == {"area_min", "walk_minutes_max"}
+
+
+def test_正典YAMLの実測値でATHOMEのURLが組める() -> None:
+    """2026-09-03 の実測で確定したキー（MENSEKI/EKITOHO）を固定する。
+
+    ATHOME は総件数を出さないので**返る掲載の中身**で効きと向きを確かめた
+    （MENSEKI=kt004 → 30㎡未満0件 / EKITOHO=ke006 → 20分超0件）。
+    """
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    query = table.build_query(
+        site_code="ATHOME",
+        property_type="CHINTAI",
+        must=_Must(),
+        axes=["area_min", "walk_minutes_max", "layouts"],
+    )
+    # ★12分の要求は選択肢に無いので緩い側（15分＝ke005）へ切り上がる
+    assert query == {"MENSEKI": ["kt004"], "EKITOHO": ["ke005"]}
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [
+        (30.0, "kt004"),  # 選択肢そのもの
+        (32.0, "kt004"),  # 下限は切り下げる
+        (100.0, "kt018"),
+        (19.0, None),  # 最小の選択肢より緩い＝送らない
+    ],
+)
+def test_ATHOMEの面積下限はコードへ写される(requested: float, expected: str | None) -> None:
+    """⚠ 値から算術で導けないので ``codes`` の対応表で写す。"""
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    spec = table.for_site("ATHOME", "CHINTAI")["area_min"]
+    assert spec.render(requested) == ({"MENSEKI": [expected]} if expected else None)
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [
+        (20, "ke006"),
+        (12, "ke005"),  # 上限は切り上げる
+        (7, "ke101"),  # ★連番でない（10=ke004 より後に差し込まれている）
+        (1, "ke102"),  # ★同上
+        (25, None),  # 最大の選択肢より緩い＝送らない
+    ],
+)
+def test_ATHOMEの駅徒歩は連番でないコードへ写される(
+    requested: int, expected: str | None
+) -> None:
+    """⚠ 1→ke102 / 7→ke101 と後から差し込まれており、算術では導けない。"""
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    spec = table.for_site("ATHOME", "CHINTAI")["walk_minutes_max"]
+    assert spec.render(requested) == ({"EKITOHO": [expected]} if expected else None)
+
+
+def test_選択肢とコードの対応が欠けていたら落とす() -> None:
+    """⚠ ``choices`` だけ増やして ``codes`` を足し忘れると黙って壊れる。
+
+    送らない（＝母集団が広がるだけ）で済ませず例外にする。0件事故と違い、
+    これは設定そのものの誤りだと確定しているため。
+    """
+    spec = ParamSpec(
+        site_code="ATHOME",
+        property_type="CHINTAI",
+        axis="area_min",
+        param_name="MENSEKI",
+        value_kind="enum",
+        unit="sqm",
+        value_spec={"choices": [20, 30], "format": "{:.0f}", "codes": {20: "kt002"}},
+    )
+    with pytest.raises(ParamError, match="codes"):
+        spec.render(30.0)
+
+
+def test_コード対応表を持つ軸は全選択肢ぶんそろっている() -> None:
+    """正典YAML全体の回帰。片方だけ増やす事故を実行前に落とす。"""
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    for spec in table.specs:
+        codes = spec.value_spec.get("codes")
+        if not codes:
+            continue
+        template = str(spec.value_spec.get("format", "{}"))
+        keys = {str(key) for key in codes}
+        missing = {
+            template.format(Decimal(str(choice)))
+            for choice in spec.value_spec["choices"]
+        } - keys
+        assert not missing, f"{spec.site_code}/{spec.axis}: codes が欠けています: {missing}"
