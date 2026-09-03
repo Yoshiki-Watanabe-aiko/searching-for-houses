@@ -29,6 +29,8 @@ logs/
 
 # 一時ファイル・ロック
 tmp_query.sql
+# 調査ツールの取得キャッシュ（collect_city_slugs.py / probe_ur.py の既定 --cache-dir）
+tmp/
 .claude/scheduled_tasks.lock
 
 # v1（Go）の成果物。実装は legacy-go ブランチ / v1-go-final タグに保全済み
@@ -53,3 +55,6 @@ data/train_master/*
 #   Git管理外。取得手順は data/odpt/README.md
 data/odpt/*
 !data/odpt/README.md
+
+# セッション引継ぎメモ（一時ファイル。正典は docs/再設計計画.md と docs/課題管理表.md）
+docs/引継ぎ_*.md
