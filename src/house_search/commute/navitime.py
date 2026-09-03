@@ -381,15 +381,24 @@ def parse_search(html: str, *, expected_date: dt.date | None = None) -> RouteSea
     ``expected_date`` を渡すと、応答が本当にその日で検索されたかを検証する。
     ⚠ **この検証を外さないこと。** 月の書式を誤ると NAVITIME は例外を出さず
     現在時刻の結果を返すため、深夜に走らせた値を朝の通勤時間だと思い込む。
+
+    ⚠ **ただし「翌日」だけは正常として通す**（→ 課題#42）。朝の出発で当日中に
+    着かない経路では、応答の前後便リンクが**到着日**を指して翌日になる。
+    要求日ちょうどしか許さないと、正常な応答まで弾いて遠方の駅を取りこぼす
+    （実測: 北海道411駅のうち38駅＝根室本線・釧網本線の末端が該当）。
+    ⚠ **要求日より前は引き続き弾く。** 書式を誤って現在時刻へ落ちた応答は
+    未来日の要求より前になるので、本来の検出力はそのまま保たれる。
     """
     root = lxml.html.fromstring(html)
     origin, destination, origin_code, destination_code = _resolved_stations(root)
 
     if expected_date is not None:
         actual = _searched_date(root)
-        if actual is not None and actual != expected_date:
+        latest = expected_date + dt.timedelta(days=1)
+        if actual is not None and not expected_date <= actual <= latest:
             raise NavitimeError(
-                f"検索日が要求と違います: 要求 {expected_date} / 応答 {actual}。"
+                f"検索日が要求と違います: 要求 {expected_date}"
+                f"（日をまたぐ経路のため {latest} まで許容）/ 応答 {actual}。"
                 "month は YYYY/MM 形式で渡すこと（YYYYMM は黙って無視される）"
             )
 
