@@ -36,6 +36,7 @@ from house_search.scrape.base import (
     parse_built_on,
     parse_floor,
     parse_walk_minutes,
+    query_separator,
 )
 from house_search.scrape.fetch import SiteFetcher
 from house_search.scrape.prefectures import PREFECTURE_ROMAJI
@@ -95,7 +96,7 @@ class EheyaScraper:
         return urls
 
     def page_url(self, base_url: str, page: int) -> str:
-        return f"{base_url}?page={page}"
+        return f"{base_url}{query_separator(base_url)}page={page}"
 
     def is_last_page(self, count: int) -> bool:
         """建物20件で1ページ。住戸数は建物数を下回らないので下限として使える。"""

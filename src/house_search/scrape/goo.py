@@ -35,6 +35,7 @@ from house_search.scrape.base import (
     parse_total_floors,
     parse_walk_minutes,
     parse_yen,
+    query_separator,
 )
 from house_search.scrape.fetch import SiteFetcher
 from house_search.scrape.prefectures import PREFECTURE_ROMAJI
@@ -122,8 +123,7 @@ class GooScraper:
         return urls
 
     def page_url(self, base_url: str, page: int) -> str:
-        separator = "&" if "?" in base_url else "?"
-        return f"{base_url}{separator}p={page}"
+        return f"{base_url}{query_separator(base_url)}p={page}"
 
     def is_last_page(self, count: int) -> bool:
         return count < PAGE_SIZE
