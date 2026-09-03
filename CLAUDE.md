@@ -69,6 +69,7 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
 .\scripts\run_initial_scan.ps1 -Drain         # 2晩目以降の詳細キュー掃き出し
 .\scripts\run_initial_scan.ps1 -Site NIFTY    # 1サイトだけ取り直す（切り離して起動）
 .\scripts\run_fetch_commutes.ps1              # 通勤時間の実ダイヤ取得（切り離して起動・約4.8時間）
+.\scripts\run_fetch_commutes.ps1 -Regions 北海道,東北  # 複数地方を順に（各地方の後に re-segment まで行う）
 .\scripts\backup_db.ps1                       # pg_dump（14世代保持）
 .\scripts\register_tasks.ps1 -DryRun          # タスクXMLの生成と検証（権限不要）
 .\scripts\register_tasks.ps1                  # タスク登録（★管理者権限が要る → 課題#23）
