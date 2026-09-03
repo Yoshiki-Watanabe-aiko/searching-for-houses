@@ -51,12 +51,14 @@ from house_search.scrape.fetch import (
 )
 from house_search.scrape.goo import GooScraper
 from house_search.scrape.homes import HomesScraper
+from house_search.scrape.leopalace import LeopalaceScraper
 from house_search.scrape.nifty import NiftyScraper
 from house_search.scrape.smocca import SmoccaScraper
 from house_search.scrape.suumo import SuumoScraper
 from house_search.scrape.ur import UrScraper
 
-# サイトコード → アダプタ。既存11サイトのうち MINIMINI 以外の10サイト ＋ UR賃貸。
+# サイトコード → アダプタ。既存11サイトのうち MINIMINI 以外の10サイト
+# ＋ UR賃貸（Phase 5F）＋ レオパレス21（Phase 5G）。
 SCRAPERS: dict[str, type] = {
     scraper.site_code: scraper
     for scraper in (
@@ -71,6 +73,7 @@ SCRAPERS: dict[str, type] = {
         ApamanScraper,
         SmoccaScraper,
         UrScraper,
+        LeopalaceScraper,
     )
 }
 
@@ -93,6 +96,7 @@ __all__ = [
     "EheyaScraper",
     "GooScraper",
     "HomesScraper",
+    "LeopalaceScraper",
     "NiftyScraper",
     "RateLimit",
     "RobotsDisallowed",

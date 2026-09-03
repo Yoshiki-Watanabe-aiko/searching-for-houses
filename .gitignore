@@ -31,6 +31,9 @@ logs/
 tmp_query.sql
 # 調査ツールの取得キャッシュ（collect_city_slugs.py / probe_ur.py の既定 --cache-dir）
 tmp/
+# 同上（collect_leopalace_slugs.py / 新規サイトの実測。1サイトで数十MBになる）。
+# ⚠ 回帰テストに使うぶんは tests/fixtures/ へコピーして**そちらを版として残す**。
+data/probe/
 .claude/scheduled_tasks.lock
 
 # v1（Go）の成果物。実装は legacy-go ブランチ / v1-go-final タグに保全済み
