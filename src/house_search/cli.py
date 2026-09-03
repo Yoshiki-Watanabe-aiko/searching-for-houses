@@ -161,6 +161,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--refetch", action="store_true", help="取得済みの駅もやり直す（既定は未取得のみ）"
     )
 
+    p_reseg = sub.add_parser(
+        "re-segment",
+        help="保存済みの経路原文から乗車区間を作り直す（ネットワーク不要）",
+    )
+    p_reseg.add_argument("--pattern", help="対象を1つの検索パターンに絞る")
+    p_reseg.add_argument("--destination", help="目的地の駅名（既定はパターンの commute）")
+    p_reseg.add_argument("--destination-prefecture", help="目的地の都道府県名")
+    p_reseg.add_argument(
+        "--region",
+        help="地方名（data/commute_destinations.yaml）。目的地とその地方の駅索引を使う",
+    )
+
     p_cstats = sub.add_parser(
         "commute-stats",
         help="通勤時間の分布を実測する（best/worst と MUST を決める材料・ネットワーク不要）",
@@ -611,6 +623,52 @@ def _commute_destination(args: argparse.Namespace) -> tuple[str, str | None]:
     return specs.pop()
 
 
+class _CommuteTargetError(ValueError):
+    """地方定義を解決できない。"""
+
+
+def _commute_region(region_name: str | None):
+    """``--region`` から地方定義を引く（未指定なら None）。"""
+    if not region_name:
+        return None
+    from house_search.commute.regions import (
+        REGIONS_FILENAME,
+        RegionConfigError,
+        find_region,
+        load_regions,
+    )
+    from house_search.config.settings import load_settings
+
+    try:
+        regions = load_regions(load_settings().data_dir / REGIONS_FILENAME)
+    except (OSError, RegionConfigError) as error:
+        raise _CommuteTargetError(f"地方定義を読めません: {error}") from error
+    region = find_region(regions, region_name)
+    if region is None:
+        names = " / ".join(r.name for r in regions)
+        raise _CommuteTargetError(f"地方 '{region_name}' がありません。指定できるのは: {names}")
+    return region
+
+
+def _segment_index_prefectures(conn, region) -> tuple[int, ...]:
+    """乗車区間の駅名を引く索引の範囲（都道府県コード）。
+
+    ⚠ **``--region`` のときは掲載の有無で絞ってはいけない。** 経路にはその地方の駅が
+    出てくるので、掲載都道府県（実運用では1都3県）で索引を作ると1本も結び付かない
+    （実測で沖縄18駅の区間72本すべてを捨てた）。
+
+    ⚠ **かといって全国にはしない。** 同名異駅（三田・大手町・日吉）が一意でなくなり、
+    芝公園ゆきの解決率が 94.8% → 66.3% へ落ちる（実測）。一意に決まらない駅名を
+    捨てる安全側の挙動は保ったまま、範囲だけを目的に合わせる。
+    """
+    from house_search.commute.resolve import listing_prefecture_codes
+
+    if region is not None:
+        # ⚠ frozenset の反復順は実行ごとに揺れる。並べてから返す。
+        return tuple(sorted(region.pref_cds))
+    return listing_prefecture_codes(conn)
+
+
 def _cmd_resolve_commutes(args: argparse.Namespace) -> int:
     from house_search.commute.graph import estimate_from, load_links, station_nodes
     from house_search.commute.resolve import (
@@ -715,16 +773,9 @@ def _cmd_fetch_commutes(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0
         parse_search,
         resolved_station_matches,
     )
-    from house_search.commute.regions import (
-        REGIONS_FILENAME,
-        RegionConfigError,
-        find_region,
-        load_regions,
-    )
     from house_search.commute.resolve import (
         STATUS_NO_ROUTE,
         STATUS_OK,
-        listing_prefecture_codes,
         prefecture_code_of,
         referenced_station_groups,
         save_commutes,
@@ -773,18 +824,12 @@ def _cmd_fetch_commutes(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0
     # ⚠ 全国を網羅するときは目的地を1つに固定できない（北海道の駅から芝公園までの
     # 所要時間には使い道がない）。--region は地方ごとの中心駅を目的地にし、
     # 対象も「掲載がある駅」ではなく**その地方の全駅**へ広げる。
-    region = None
-    if args.region:
-        try:
-            regions = load_regions(settings.data_dir / REGIONS_FILENAME)
-        except (OSError, RegionConfigError) as error:
-            print(f"地方定義を読めません: {error}")
-            return 1
-        region = find_region(regions, args.region)
-        if region is None:
-            names = " / ".join(r.name for r in regions)
-            print(f"地方 '{args.region}' がありません。指定できるのは: {names}")
-            return 1
+    try:
+        region = _commute_region(args.region)
+    except _CommuteTargetError as error:
+        print(error)
+        return 1
+    if region is not None:
         station_name, prefecture_name = region.station, region.prefecture
     else:
         station_name, prefecture_name = _commute_destination(args)
@@ -826,7 +871,7 @@ def _cmd_fetch_commutes(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0
                 depart_at=depart_at,
             )
         )
-        resolver = build_station_resolver(conn, listing_prefecture_codes(conn))
+        resolver = build_station_resolver(conn, _segment_index_prefectures(conn, region))
 
     pending = [
         t for t in targets if t.station_g_cd not in done and t.station_g_cd != destination_g_cd
@@ -957,6 +1002,68 @@ def _cmd_fetch_commutes(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0
         for line in mismatched[:10]:
             print(f"  {line}")
     return 0 if failed == 0 else 1
+
+
+def _cmd_re_segment(args: argparse.Namespace) -> int:
+    """保存済みの経路原文から乗車区間を作り直す（ネットワーク不要）。
+
+    設備の ``re-extract`` と同じ位置づけ。駅名の照合を直したときに、
+    1駅15秒の取得をやり直さずに ``t_rail_segments`` へ反映する。
+    """
+    import datetime as dt
+
+    from house_search.commute.resolve import prefecture_code_of
+    from house_search.commute.stations import resolve_station_group
+    from house_search.commute.timetable import (
+        build_station_resolver,
+        rebuild_segments,
+        segment_stats,
+    )
+    from house_search.db.session import get_engine
+
+    try:
+        region = _commute_region(args.region)
+    except _CommuteTargetError as error:
+        print(error)
+        return 1
+    if region is not None:
+        station_name, prefecture_name = region.station, region.prefecture
+    else:
+        station_name, prefecture_name = _commute_destination(args)
+
+    engine = get_engine()
+    with engine.begin() as conn:
+        pref_cd = prefecture_code_of(conn, prefecture_name) if prefecture_name else None
+        if prefecture_name and pref_cd is None:
+            print(f"都道府県 '{prefecture_name}' を m_cities から解決できません")
+            return 1
+        found = resolve_station_group(conn, station_name, pref_cd)
+        if found is None:
+            print(
+                f"目的地の駅 '{station_name}' を一意に決められません。"
+                "--destination-prefecture で都道府県を指定してください"
+            )
+            return 1
+        destination_g_cd, destination_name = found
+        prefectures = _segment_index_prefectures(conn, region)
+        result = rebuild_segments(
+            conn,
+            destination_g_cd=destination_g_cd,
+            resolve=build_station_resolver(conn, prefectures),
+            observed_at=dt.datetime.now(dt.UTC),
+        )
+    with engine.connect() as conn:
+        total, rides, walks = segment_stats(conn)
+
+    print(f"目的地: {destination_name}（駅グループ {destination_g_cd}）")
+    print(f"駅の索引: {len(prefectures)}都道府県")
+    print(f"経路の原文 {result.routes}件から作り直しました")
+    print(f"乗車区間: 累計 {total}本（列車 {rides} / 徒歩 {walks}）。今回 {result.saved}本を反映")
+    if result.dropped:
+        print(f"  駅名を駅マスタと結び付けられず捨てた区間: {result.dropped}本")
+    if result.failed:
+        print(f"  ⚠ 再解析できなかった経路: {result.failed}件")
+    return 0
 
 
 def _navitime_destination_query(station_name: str, prefecture: str | None) -> str:
@@ -1120,6 +1227,7 @@ _COMMANDS = {
     "resolve-stations": _cmd_resolve_stations,
     "resolve-commutes": _cmd_resolve_commutes,
     "fetch-commutes": _cmd_fetch_commutes,
+    "re-segment": _cmd_re_segment,
     "commute-stats": _cmd_commute_stats,
 }
 
