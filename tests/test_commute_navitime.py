@@ -181,10 +181,37 @@ def test_同名異駅は都道府県つきの表記で返る(okubo: str):
     assert (fastest.total_minutes, fastest.transfers) == (31, 2)
 
 
-def test_検索日が要求と違えば例外にする(akabane: str):
-    """⚠ 月の書式を誤ると現在時刻の結果が返る。黙って受け入れない。"""
+def test_応答の検索日が要求より前なら例外にする(akabane: str):
+    """⚠ 月の書式を誤ると現在時刻の結果が返る。黙って受け入れない。
+
+    出発日は未来日を渡すので、現在時刻へ落ちた応答は必ず要求より**前**になる。
+    翌日を許容するようにしても（→ 課題#42）この検出力は失われない。
+    """
     with pytest.raises(NavitimeError, match="検索日が要求と違います"):
         parse_search(akabane, expected_date=dt.date(2026, 9, 10))
+
+
+def _searched_on(html: str, day: int) -> str:
+    """フィクスチャの前後便リンクが指す検索日を差し替える。"""
+    replaced = html.replace("beforeday=09", f"beforeday={day:02d}")
+    assert replaced != html
+    return replaced
+
+
+def test_日をまたぐ経路は翌日の検索日でも通す(akabane: str):
+    """⚠ 朝の出発で当日中に着かない経路では応答が翌日を指す（→ 課題#42）。
+
+    実測で北海道411駅のうち38駅（根室本線・釧網本線の末端）がこれに当たり、
+    正常な応答なのに弾かれていた。
+    """
+    search = parse_search(_searched_on(akabane, 10), expected_date=SEARCHED_ON)
+    assert search.origin_label == "赤羽"
+
+
+def test_翌々日の検索日は例外にする(akabane: str):
+    """許容するのは翌日までにする。それ以上ずれた応答は受け入れない。"""
+    with pytest.raises(NavitimeError, match="検索日が要求と違います"):
+        parse_search(_searched_on(akabane, 11), expected_date=SEARCHED_ON)
 
 
 def test_経路が無いページは例外にする():
