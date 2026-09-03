@@ -38,6 +38,7 @@ sites:
   - "NIFTY"
   - "APAMAN"     # robots.txt を無視する唯一の例外（ADR 0011）
   - "SMOCCA"     # 1ページ90件のみ取得できる（課題#22）
+  - "UR"         # UR賃貸住宅。3段のJSON API(POST)で取る（ADR 0019・Phase 5F）
 
 search:
   prefectures:
@@ -164,6 +165,10 @@ want:
     - { code: SEC_MONITOR_INTERCOM, weight: 5 }    # TVモニタ付きインターホン
     - { code: COMM_NET_FREE,        weight: 5 }    # インターネット無料
     - { code: LOC_FLOOR_2UP,        weight: 5 }    # 2階以上
+    # UR は礼金・仲介手数料・更新料が制度上ゼロ（→ ADR 0019）。⚠ rent_total だけで
+    # 比べると初期費用の有利さがスコアに1点も現れないので、ここで配点する。
+    # UR 専用ではなく、他サイトの礼金なし物件にも同じだけ効く
+    - { code: PRICE_NO_REIKIN,      weight: 5 }    # 礼金なし
     # 小さな加点
     - { code: EQUIP_TRASH_24H,      weight: 4 }    # 24時間ゴミ出し可
     - { code: INT_FLOORING,         weight: 4 }    # フローリング
@@ -171,6 +176,7 @@ want:
     - { code: COMM_FIBER,           weight: 3 }    # 光ファイバー
     - { code: STORAGE_SHOE,         weight: 3 }    # シューズボックス
     - { code: EQUIP_BICYCLE,        weight: 3 }    # 駐輪場あり
+    - { code: PRICE_NO_GUARANTOR,   weight: 3 }    # 保証人不要
     # 誤差程度
     - { code: MOVEIN_IMMEDIATE,     weight: 2 }    # 即入居可
     - { code: FEAT_RENOVATED,       weight: 2 }    # リノベーション物件

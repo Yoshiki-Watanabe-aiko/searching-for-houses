@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import logging
 import random
 import time
 import urllib.robotparser
@@ -15,6 +16,8 @@ from typing import NoReturn
 from urllib.parse import urljoin, urlsplit
 
 import httpx
+
+logger = logging.getLogger(__name__)
 
 # 既定のレート制御値。サイト個別設定が無いときに使う。
 DEFAULT_MIN_INTERVAL_SEC = 2.5
@@ -91,20 +94,41 @@ class SiteFetcher:
             self.sleep(target - elapsed)  # type: ignore[operator]
 
     def _load_robots(self, url: str) -> None:
-        """オリジンごとに robots.txt を1回だけ取得する。"""
+        """オリジンごとに robots.txt を1回だけ取得する。
+
+        ⚠ **取得できなかったときは空ルール（＝全許可）で進む。**
+        標準の ``RobotFileParser.read()`` は 401/403 を ``disallow_all`` に
+        するので、ここは**標準より許可側に倒れている**。
+
+        UR賃貸のAPIホストが実際に **HTTP 403** を返す（不在ではない）ため、
+        黙って全許可になるのを避けて**記録されたうえでの全許可**にする
+        （→ ADR 0019）。取得間隔・日次上限・打ち切りは緩めない。
+        """
         origin = "{0.scheme}://{0.netloc}".format(urlsplit(url))
         if self._robots_origin == origin:
             return
         parser = urllib.robotparser.RobotFileParser()
         try:
             response = self.client.get(urljoin(origin, "/robots.txt"), timeout=15.0)
-            parser.parse(response.text.splitlines() if response.status_code == 200 else [])
-        except httpx.HTTPError:
-            # robots.txt が取れないときは「禁止されていない」とはみなさず、
-            # 空ルール（全許可）で進めるのではなく従来どおり控えめな間隔で進む。
+            if response.status_code == 200:
+                parser.parse(response.text.splitlines())
+            else:
+                self._warn_robots_unavailable(origin, f"HTTP {response.status_code}")
+                parser.parse([])
+        except httpx.HTTPError as exc:
+            self._warn_robots_unavailable(origin, type(exc).__name__)
             parser.parse([])
         self._robots = parser
         self._robots_origin = origin
+
+    def _warn_robots_unavailable(self, origin: str, reason: str) -> None:
+        """robots.txt を読めなかったことをオリジンごとに1回だけ記録する。"""
+        logger.warning(
+            "%s: robots.txt を取得できませんでした（%s）。%s は全許可として進みます",
+            self.site_code,
+            reason,
+            origin,
+        )
 
     def is_allowed(self, url: str) -> bool:
         """robots.txt 上、このURLを取得してよいか。"""
@@ -118,6 +142,22 @@ class SiteFetcher:
 
     def get(self, url: str) -> httpx.Response:
         """1ページ取得する。レート制御・robots判定・リトライを内包する。"""
+        return self.request("GET", url)
+
+    def post(self, url: str, data: dict[str, str]) -> httpx.Response:
+        """フォームPOSTで取得する。``get`` と同じ制御を通る。
+
+        UR賃貸は一覧・詳細ともJSON APIへの POST でしか取れない（→ ADR 0019）。
+        ⚠ **レート制御・robots判定・バックオフ・打ち切り・日次上限は
+        ``get`` と共有する。** メソッドが違うだけで相手にかける負荷は同じなので、
+        ここに別経路を作ってはいけない。
+        """
+        return self.request("POST", url, data=data)
+
+    def request(
+        self, method: str, url: str, *, data: dict[str, str] | None = None
+    ) -> httpx.Response:
+        """取得の本体。レート制御・robots判定・リトライ・打ち切りを内包する。"""
         if self.rate_limit.daily_request_cap is not None and (
             self.stats.requests >= self.rate_limit.daily_request_cap
         ):
@@ -137,7 +177,7 @@ class SiteFetcher:
             self._last_request_at = time.monotonic()
             self.stats.requests += 1
             try:
-                response = self.client.get(url)
+                response = self.client.request(method, url, data=data)
             except httpx.HTTPError as exc:
                 last_error = exc
             else:

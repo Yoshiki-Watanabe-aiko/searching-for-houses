@@ -257,7 +257,19 @@ def _collect_listings(
     outcome: SiteOutcome,
     site_params=None,
 ) -> list[ScrapedListing]:
-    """一覧ページを辿って掲載を集める。"""
+    """一覧ページを辿って掲載を集める。
+
+    ⚠ **GET＋HTML一覧という前提が成り立たないサイトがある。** UR賃貸は
+    JSON API への POST で、しかも団地と住戸の2段になっている（→ ADR 0019）。
+    そこで**任意フック ``collect_listings``** を宣言したアダプタには丸ごと委譲する。
+    ``supports_site_filters`` と同じ宣言ベースの拡張で、既存アダプタは変わらない。
+    """
+    hook = getattr(scraper, "collect_listings", None)
+    if hook is not None:
+        return list(
+            hook(fetcher, pattern, areas, max_pages=max_pages, outcome=outcome)
+        )
+
     collected: list[ScrapedListing] = []
     filtered_urls = _with_site_filters(scraper, pattern, areas, site_params)
     # 対照取得に使う「フィルタを外した同じURL」。_with_site_filters は list_urls の
@@ -338,9 +350,18 @@ def _fetch_details(
     with runtime.engine.connect() as conn:
         queue = persist.detail_queue(conn, site_id=site_id, limit=limit)
 
+    # ⚠ **詳細もGETとは限らない。** UR賃貸は住戸詳細がJSON APIへの POST なので、
+    # 任意フック ``fetch_detail`` を宣言したアダプタには「取得＋解析」を委譲する。
+    # キュー・``--detail-limit``・保存・設備抽出は既存のまま共有する（→ ADR 0019）
+    fetch_detail = getattr(scraper, "fetch_detail", None)
+
     for listing_id, url in queue:
         try:
-            response = fetcher.get(scraper.detail_url(url))
+            if fetch_detail is not None:
+                detail = fetch_detail(fetcher, url)
+            else:
+                response = fetcher.get(scraper.detail_url(url))
+                detail = scraper.parse_detail(response.text)
         except (SiteAborted, RobotsDisallowed):
             raise
         except Exception as exc:  # noqa: BLE001 - 1件の失敗で実行を止めない
@@ -348,7 +369,6 @@ def _fetch_details(
             continue
 
         try:
-            detail = scraper.parse_detail(response.text)
             extraction = extract_from_text(
                 detail.raw_features_text,
                 runtime.dictionary,
