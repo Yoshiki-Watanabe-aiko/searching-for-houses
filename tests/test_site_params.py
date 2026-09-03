@@ -594,3 +594,27 @@ def test_ATHOMEの間取りコードは連番でない() -> None:
     assert mapping["2K"] == "km008"  # km006 ではない
     assert "km006" not in set(mapping.values())
     assert "km007" not in set(mapping.values())
+
+
+def test_コード対応表はキーが文字列でも数値でも引ける() -> None:
+    """⚠ **正典YAMLとDBでキーの型が変わる。**
+
+    YAML では ``20: kt002`` と数値キーになるが、``m_site_search_params`` の
+    ``value_spec`` は JSONB なので**DBから読むと文字列キー**になる。
+    実行時はDBから読むので、片方しか引けないと本番だけ壊れる。
+    """
+    common = {
+        "site_code": "ATHOME",
+        "property_type": "CHINTAI",
+        "axis": "area_min",
+        "param_name": "MENSEKI",
+        "value_kind": "enum",
+        "unit": "sqm",
+    }
+    from_yaml = ParamSpec(
+        **common, value_spec={"choices": [20, 30], "format": "{:.0f}", "codes": {30: "kt004"}}
+    )
+    from_db = ParamSpec(
+        **common, value_spec={"choices": [20, 30], "format": "{:.0f}", "codes": {"30": "kt004"}}
+    )
+    assert from_yaml.render(30.0) == from_db.render(30.0) == {"MENSEKI": ["kt004"]}
