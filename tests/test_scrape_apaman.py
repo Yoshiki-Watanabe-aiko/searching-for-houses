@@ -73,6 +73,18 @@ def test_ページ番号の付与と最終ページ判定(scraper: ApamanScraper
     assert scraper.is_last_page(PAGE_SIZE) is False
 
 
+def test_サイト側フィルタが付いていてもページ送りが壊れない(scraper: ApamanScraper) -> None:
+    """⚠ ``?`` を重ねると page が黙って無視され、1ページ目を返し続ける。
+
+    実測（2026-09-03）: ``...?senyu1=30&ekitoho=20?page=2`` は HTTP 200 で
+    掲載26件を返し、**1ページ目と完全に同じ掲載**だった。例外にならないので
+    ページ送りが死んでいることに気づけない（→ 課題#29）。
+    """
+    filtered = "https://www.apamanshop.com/tokyo/121/?senyu1=30&ekitoho=20"
+    assert scraper.page_url(filtered, 2) == filtered + "&page=2"
+    assert scraper.page_url(filtered, 1) == filtered
+
+
 # --- 一覧パース ----------------------------------------------------------
 
 

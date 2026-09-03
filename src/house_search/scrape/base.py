@@ -127,6 +127,18 @@ class SiteScraper(Protocol):
         ...
 
 
+def query_separator(url: str) -> str:
+    """URLにクエリを足すときの区切り文字を選ぶ。
+
+    ⚠ **`?` を固定で書かない。** サイト側フィルタ（→ ADR 0015）が付くと
+    一覧URLが既にクエリを持つため、`?` を重ねたURLになる。実測では
+    APAMAN が `...?senyu1=30&ekitoho=20?page=2` を **HTTP 200 で受け取り、
+    page を黙って無視して1ページ目を返した**（掲載26件が1ページ目と完全に一致）。
+    ページ送りが死ぬのに例外にならないため気づけない（→ 課題#29）。
+    """
+    return "&" if "?" in url else "?"
+
+
 def parse_yen(text: str | None) -> int | None:
     """「3.5万円」「25000円」などを円の整数へ。取れなければ None。"""
     if not text:

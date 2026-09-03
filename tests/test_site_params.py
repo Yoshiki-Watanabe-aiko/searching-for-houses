@@ -426,3 +426,39 @@ def test_クエリ無しのURLにもフィルタを足せる() -> None:
         "https://example.test/a.html?fl=30",
         "https://example.test/b.html?ru=10&fl=30",
     ]
+
+
+def test_正典YAMLが読めてAPAMANの2軸がそろっている() -> None:
+    """⚠ 間取り（madori）は**送っても効かなかった**ので配線していない。"""
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    axes = set(table.for_site("APAMAN", "CHINTAI"))
+    assert axes == {"area_min", "walk_minutes_max"}
+
+
+def test_正典YAMLの実測値でAPAMANのURLが組める() -> None:
+    """2026-09-03 の実測（足立区 tokyo/121/・基準 掲載28件）で確定したキーを固定する。
+
+    ⚠ APAMAN は総件数を出さないので**返る掲載の中身**で確かめた。
+    senyu1=30 で面積30.6㎡以上・ekitoho=10 で徒歩10分以内だけが返った。
+
+    ⚠ axes に layouts を渡しても**定義が無いので黙って落ちる**。
+    キーと値は実HTMLから採れた（madori14=1LDK 等）が、5種すべてを送っても
+    掲載28件・間取りの内訳とも基準と完全に同一で効かなかったため。
+    """
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    query = table.build_query(
+        site_code="APAMAN",
+        property_type="CHINTAI",
+        must=_Must(),
+        axes=["area_min", "walk_minutes_max", "layouts"],
+    )
+    # ★12分の要求は選択肢に無いので緩い側（15分）へ切り上がる
+    assert query == {"senyu1": ["30"], "ekitoho": ["15"]}
+
+
+def test_APAMANの面積の選択肢は不等間隔() -> None:
+    """⚠ 50㎡以降は10刻み。SUUMO の stepped（5刻み）を流用してはいけない。"""
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    choices = table.for_site("APAMAN", "CHINTAI")["area_min"].value_spec["choices"]
+    assert 55 not in choices
+    assert [c for c in choices if c >= 50] == [50, 60, 70, 80, 90, 100]

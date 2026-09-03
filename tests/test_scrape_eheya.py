@@ -69,6 +69,9 @@ def test_ページ番号の付与と最終ページ判定(scraper: EheyaScraper)
     assert scraper.page_url("https://x/tokyo/search/", 2).endswith("?page=2")
     assert scraper.is_last_page(PAGE_SIZE - 1) is True
     assert scraper.is_last_page(PAGE_SIZE) is False
+    # ⚠ サイト側フィルタを配線したときに ? を重ねないこと（APAMAN で実際に起きた
+    # 「page が黙って無視され1ページ目を返し続ける」事故の予防 → 課題#29）
+    assert scraper.page_url("https://x/tokyo/search/?a=1", 2).endswith("?a=1&page=2")
 
 
 # --- 一覧パース ----------------------------------------------------------

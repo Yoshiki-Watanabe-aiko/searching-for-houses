@@ -42,6 +42,7 @@ from house_search.scrape.base import (
     parse_total_floors,
     parse_walk_minutes,
     parse_yen,
+    query_separator,
 )
 from house_search.scrape.fetch import SiteFetcher
 from house_search.scrape.prefectures import PREFECTURE_ROMAJI
@@ -93,6 +94,11 @@ class ApamanScraper:
     # robots.txt が全パスを禁じているサイト。ユーザーの明示的な判断で取得する
     # （→ ADR 0011）。他のサイトでこのフラグを立ててはいけない
     ignore_robots = True
+    # 面積下限（senyu1）と駅徒歩（ekitoho）を実測で確定済み
+    # （data/site_search_params.yaml）。⚠ APAMAN も総件数を出さないので、
+    # 効果は**返る掲載の中身**で確かめてある。間取り（madori）は送っても
+    # 効かなかったため配線していない
+    supports_site_filters = True
 
     def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
         """``/{都道府県}/{JIS下3桁}/`` を組み立てる。
@@ -110,7 +116,9 @@ class ApamanScraper:
         return urls
 
     def page_url(self, base_url: str, page: int) -> str:
-        return base_url if page <= 1 else f"{base_url}?page={page}"
+        if page <= 1:
+            return base_url
+        return f"{base_url}{query_separator(base_url)}page={page}"
 
     def is_last_page(self, count: int) -> bool:
         """建物20件で1ページ。住戸数は建物数を下回らないので下限として使える。"""
