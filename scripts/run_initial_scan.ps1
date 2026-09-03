@@ -4,6 +4,7 @@
 # 使い方:
 #   .\scripts\run_initial_scan.ps1              # 初回（一覧5ページ＋詳細800件/サイト）
 #   .\scripts\run_initial_scan.ps1 -Drain       # 2晩目以降（詳細キューの掃き出し）
+#   .\scripts\run_initial_scan.ps1 -Site NIFTY  # 1サイトだけ取り直す
 #   .\scripts\run_initial_scan.ps1 -DetailLimit 400
 #
 # 何をするか:
@@ -38,7 +39,9 @@ param(
     # 詳細キューの掃き出しモード。一覧は1ページだけ見て詳細取得に時間を割く
     [switch]$Drain,
     # 詳細ページを取りに行く上限（サイトあたり）
-    [int]$DetailLimit = 800
+    [int]$DetailLimit = 800,
+    # 対象サイトを1つに絞る（例: NIFTY の取り直し）。省略時は全サイト
+    [string]$Site = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -58,6 +61,7 @@ if (-not (Test-Path $LogDir)) {
 if (-not $Worker) {
     $stamp   = Get-Date -Format "yyyyMMdd_HHmmss"
     $prefix  = if ($Drain) { "drain_scan" } else { "initial_scan" }
+    if ($Site) { $prefix = "$prefix`_$($Site.ToLower())" }
     $outLog  = Join-Path $LogDir "$prefix`_$stamp.out.log"
     $errLog  = Join-Path $LogDir "$prefix`_$stamp.err.log"
 
@@ -67,6 +71,7 @@ if (-not $Worker) {
         "-DetailLimit", $DetailLimit
     )
     if ($Drain) { $childArgs += "-Drain" }
+    if ($Site)  { $childArgs += @("-Site", $Site) }
 
     # out と err は必ず別ファイル（5.1 は同一ファイルを指定できない）
     $proc = Start-Process -FilePath "powershell.exe" `
@@ -80,6 +85,7 @@ if (-not $Worker) {
     Write-Host "初回全件スキャンを切り離して開始しました（PID $($proc.Id)）" -ForegroundColor Green
     Write-Host "  モード      : $(if ($Drain) { '掃き出し（一覧1ページ）' } else { '初回（一覧5ページ）' })"
     Write-Host "  詳細の上限  : $DetailLimit 件/サイト"
+    if ($Site) { Write-Host "  対象サイト  : $Site" }
     Write-Host "  標準出力    : $outLog"
     Write-Host "  標準エラー  : $errLog"
     Write-Host ""
@@ -131,11 +137,14 @@ Write-Step "==== 初回全件スキャン開始 ===="
 Write-Step "リポジトリ: $RepoRoot"
 Write-Step "モード    : $(if ($Drain) { '掃き出し（一覧1ページ）' } else { '初回（一覧5ページ）' })"
 Write-Step "詳細上限  : $DetailLimit 件/サイト"
+if ($Site) { Write-Step "対象サイト: $Site" }
 
 Invoke-HouseSearch -Label "辞書の同期" -Arguments @("sync-dict") | Out-Null
 
 $scanArgs = @("scan", "--seed", "--detail-limit", "$DetailLimit")
 if (-not $Drain) { $scanArgs += "--full" }
+# 1サイトだけ取り直す逃げ道（NIFTY の405解消後の取り直しで使った）
+if ($Site) { $scanArgs += @("--site", $Site) }
 Invoke-HouseSearch -Label "全サイトのシードスキャン" -Arguments $scanArgs | Out-Null
 
 Write-Step "==== 初回全件スキャン終了 ===="
