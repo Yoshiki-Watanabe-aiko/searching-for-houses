@@ -1085,8 +1085,24 @@ _COMMANDS = {
 }
 
 
+def _force_utf8_output() -> None:
+    """標準出力・標準エラーを UTF-8 にする。
+
+    ⚠ 日本語Windowsの既定は cp932 で、``⚠`` のような文字を print した時点で
+    ``UnicodeEncodeError`` になる。**例外は print の途中で飛ぶため、その1行だけでなく
+    後続の出力ごと失われる**（実際 fetch-commutes の「意図と違う駅」28件の一覧が
+    報告ごと消えた）。scripts/*.ps1 は stdout をファイルへ向けるので
+    コンソール判定にも頼れない。コマンドの入口で明示的に付け替える。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:  # テストの差し替え先は持たないことがある
+            reconfigure(encoding="utf-8")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """エントリポイント。終了コードを返す。"""
+    _force_utf8_output()
     parser = build_parser()
     args = parser.parse_args(argv)
 
