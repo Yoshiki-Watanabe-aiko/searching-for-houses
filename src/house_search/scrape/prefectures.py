@@ -56,3 +56,11 @@ PREFECTURE_ROMAJI: dict[str, str] = {
     "鹿児島県": "kagoshima",
     "沖縄県": "okinawa",
 }
+
+# 都道府県名 → JIS上2桁（都道府県コード）。
+# ⚠ ``PREFECTURE_ROMAJI`` は北海道01〜沖縄47のJIS順に並んでおり、その位置が
+# そのままコードになる。UR賃貸の ``tdfk`` がこの値なので使う（→ ADR 0019）。
+# 順序に依存するので ``tests/test_scrape_ur.py`` が代表値を回帰テストしている。
+PREFECTURE_JIS: dict[str, str] = {
+    name: f"{index:02d}" for index, name in enumerate(PREFECTURE_ROMAJI, start=1)
+}

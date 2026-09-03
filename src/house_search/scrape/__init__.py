@@ -8,6 +8,11 @@ Playwright が必要なサイトは1つも無いことが分かった（→ ADR 
 未実装は MINIMINI だけ。一覧が reCAPTCHA のボット判定下にあり、
 素のブラウザでも通らないため取得しない（→ 課題#18）。
 
+**UR賃貸住宅（``UR``）だけは取得の形が違う。** JSON API への POST で、
+団地と住戸の2段になっているため、``list_urls`` → ``parse_list`` の経路ではなく
+任意フック ``collect_listings`` / ``fetch_detail`` で ``pipeline.scan`` から
+委譲を受ける（→ ADR 0019）。**既存10アダプタには影響しない。**
+
 ``SCRAPERS`` に載らないサイトは scan が「スキップ（アダプタ未実装）」として
 明示的に報告する。黙って無視すると「実装済みだが未配線」を見逃すため。
 """
@@ -49,8 +54,9 @@ from house_search.scrape.homes import HomesScraper
 from house_search.scrape.nifty import NiftyScraper
 from house_search.scrape.smocca import SmoccaScraper
 from house_search.scrape.suumo import SuumoScraper
+from house_search.scrape.ur import UrScraper
 
-# サイトコード → アダプタ。賃貸11サイトのうち MINIMINI 以外の10サイト。
+# サイトコード → アダプタ。既存11サイトのうち MINIMINI 以外の10サイト ＋ UR賃貸。
 SCRAPERS: dict[str, type] = {
     scraper.site_code: scraper
     for scraper in (
@@ -64,6 +70,7 @@ SCRAPERS: dict[str, type] = {
         NiftyScraper,
         ApamanScraper,
         SmoccaScraper,
+        UrScraper,
     )
 }
 
@@ -96,6 +103,7 @@ __all__ = [
     "SiteScraper",
     "SmoccaScraper",
     "SuumoScraper",
+    "UrScraper",
     "age_years_from_built",
     "build_client",
     "get_scraper",

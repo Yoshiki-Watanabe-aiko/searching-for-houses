@@ -1,5 +1,5 @@
 -- ============================================================
--- m_sites: サイトマスタ（12行 / 賃貸のスクレイピング対象は11サイト）
+-- m_sites: サイトマスタ（13行 / 賃貸のスクレイピング対象は12サイト）
 --
 -- fetch_method: Phase 3 の実測で **全サイト HTTP** になった。
 --   v1 で go-rod / Playwright を使っていた ATHOME / EHEYA / NIFTY / APAMAN /
@@ -56,7 +56,8 @@ INSERT INTO m_sites (
     ('APAMAN',     'アパマンショップ', 'https://www.apamanshop.com','HTTP',       TRUE,  4.0, 5, NULL,  90, 'robots.txtが全パスを禁止（Disallow: /）。ユーザーの明示的判断で取得する（ADR 0011）。市区指定が必須'),
     ('EHEYA',      'いい部屋ネット',   'https://www.eheya.net',     'HTTP',       TRUE,  3.0, 5, NULL, 100, '大東建託グループ・自社物件中心。掲載データは __NEXT_DATA__ のJSONから読む。賃料上限をクエリで渡せない'),
     ('SMOCCA',     'スモッカ',         'https://smocca.jp',         'HTTP',       TRUE,  3.0, 5, NULL, 110, '市区指定が必須。robots.txtがページ送り(/*/page/)を禁止しているため1ページ目90件のみ取得する'),
-    ('SHAMAISON',  'シャーメゾン',     'https://www.shamaison.com', 'HTTP',       FALSE, 2.5, 5, NULL, 120, 'v1から未実装。積水ハウス系の自社物件のみのため対象外')
+    ('SHAMAISON',  'シャーメゾン',     'https://www.shamaison.com', 'HTTP',       FALSE, 2.5, 5, NULL, 120, 'v1から未実装。積水ハウス系の自社物件のみのため対象外'),
+    ('UR',         'UR賃貸住宅',       'https://www.ur-net.go.jp',  'HTTP',       TRUE,  3.0, 5, NULL, 130, '都市再生機構。取得は3段のJSON API(POST)で、団地と住戸が別階層（→ ADR 0019・詳細設計書 §9.3）。市区で検索する手段が無くUR独自のarea区分しかないため、都県の全areaを取って応答のskcsでローカルに絞る。礼金・仲介手数料・更新料が制度上ゼロで保証人も不要なので、合成トークンで既存WANTへ載せる。⚠ APIホストのrobots.txtはHTTP 403（不在ではない）')
 ON CONFLICT (code) DO UPDATE SET
     name                    = EXCLUDED.name,
     base_url                = EXCLUDED.base_url,

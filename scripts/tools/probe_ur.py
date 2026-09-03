@@ -357,7 +357,8 @@ def stage_areas(
         data = _parse(_load(cache_dir, f"area_{area}"))
         summary = _summarize_danchi(data)
         cities = summary.get("市区(skcs)", [])
-        print(f"\n[area={area}] 団地 {summary['件数']} / 空室のある団地 {summary.get('空室のある団地')}")
+        vacant = summary.get("空室のある団地")
+        print(f"\n[area={area}] 団地 {summary['件数']} / 空室のある団地 {vacant}")
         print(f"    市区: {cities}")
 
 

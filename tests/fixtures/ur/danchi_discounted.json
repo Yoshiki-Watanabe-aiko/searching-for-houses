@@ -1,0 +1,29 @@
+[
+ {
+  "id": "50_2530",
+  "name": "うらわイーストシティ　けやき街",
+  "skcs": "さいたま市南区",
+  "roomCount": 10,
+  "rent": "92,300円～127,200円",
+  "commonfee": "（4,000円）",
+  "commonfee_sp": "（共益費：4,000円）",
+  "access": "<li>JR武蔵野線「東浦和」駅 徒歩16～19分 または バス3分 徒歩2～5分</li><li>JR東北本線「浦和」駅バス14分 徒歩2～5分</li>",
+  "image": "https://chintai.r6.ur-net.go.jp/chintai/img_photo/50/50_253/50_253_photo.jpg",
+  "bukkenUrl": "/chintai/kanto/saitama/50_2530.html",
+  "bukkenUrl_sp": "/chintai/sp/kanto/saitama/50_2530.html",
+  "roomUrl": "/chintai/kanto/saitama/50_2530_room.html?JKSS=",
+  "roomUrl_sp": "/chintai/sp/kanto/saitama/50_2530_room.html?JKSS=",
+  "allList": "/chintai/kanto/saitama/50_2530.html#list",
+  "allList_sp": "/chintai/sp/kanto/saitama/50_2530.html#list",
+  "company_toyota": null,
+  "company_orix": null,
+  "company_timescar": null,
+  "company_dshare": null,
+  "company_cariteco": null,
+  "priorityLink": "",
+  "ev_operator": null,
+  "shoplink": null,
+  "netLink": null,
+  "netLink_sp": null
+ }
+]
