@@ -38,6 +38,7 @@ EXPECTED_TRANSACTION_TABLES = {
     "t_ranking_digests",
     "t_scrape_logs",
     "t_scrape_runs",
+    "t_site_scan_cursors",
     "t_station_commutes",
     "t_unknown_tokens",
 }

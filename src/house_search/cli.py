@@ -352,7 +352,11 @@ def _run_scan(args: argparse.Namespace) -> int:
                 f"詳細 {site.details_fetched:3d}件 / 設備 {site.features_extracted:4d}件"
             )
         if summary.skipped_sites:
-            print(f"  スキップ（アダプタ未実装）: {', '.join(summary.skipped_sites)}")
+            # 理由はサイトごとに違う（アダプタ未実装 / is_active=false /
+            # 市区ローテーションの枠を他パターンが使用中）。理由を一括で
+            # 決め打ちすると「実装済みだが未配線」と読み違えるので、
+            # 理由付きの項目はそのまま出す
+            print(f"  スキップ: {', '.join(summary.skipped_sites)}")
         print(f"  採点 {summary.scored}件 / MUST通過 {summary.must_pass}件")
         if not args.seed:
             print(f"  通知 成功 {summary.notified}件 / 失敗 {summary.notify_failed}件")

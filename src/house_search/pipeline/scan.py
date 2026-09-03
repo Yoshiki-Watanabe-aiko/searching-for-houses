@@ -32,6 +32,7 @@ from house_search.scrape import get_scraper, resolve_areas
 from house_search.scrape.area import AreaTarget
 from house_search.scrape.base import ScrapedListing
 from house_search.scrape.fetch import RateLimit, RobotsDisallowed, SiteAborted, SiteFetcher
+from house_search.scrape.rotation import next_cursor, rotate_areas
 
 # 1回の実行で取りに行く詳細ページの上限（サイトあたり）。
 # 詳細取得は1件1リクエストなので、増分実行が何時間も走らないよう頭を押さえる。
@@ -173,6 +174,35 @@ def _site_areas(runtime: Runtime, scraper, pattern) -> list[AreaTarget]:
         )
 
 
+def _rotate_areas(
+    runtime: Runtime, scraper, pattern, areas: list[AreaTarget], *, size: int
+) -> list[AreaTarget] | None:
+    """取得数に上限があるサイトの取得枠を確保し、続きの市区を切り出す。
+
+    枠を確保できなければ ``None``（この実行では別の帯が使う）。
+
+    ⚠ **カーソルは取得を試みる前に進める。** スロットリングやボット検知で
+    失敗した市区を再試行し続けると、そこから先へ永久に進めなくなる。
+    """
+    site_id = runtime.site_ids[scraper.site_code]
+    with runtime.engine.begin() as conn:
+        claim = persist.claim_city_rotation(
+            conn, site_id=site_id, pattern_name=pattern.name, run_id=runtime.run_id
+        )
+    if not claim.claimed:
+        return None
+
+    rotated = rotate_areas(areas, last_city_jis=claim.last_city_jis, size=size)
+    with runtime.engine.begin() as conn:
+        persist.advance_city_rotation(
+            conn,
+            site_id=site_id,
+            pattern_name=pattern.name,
+            last_city_jis=next_cursor(rotated),
+        )
+    return rotated
+
+
 def site_filter_query(scraper, pattern, site_params) -> dict[str, list[str]]:
     """MUST から、そのサイトへ渡せるフィルタのクエリを作る（→ ADR 0015）。
 
@@ -294,6 +324,11 @@ def _fetch_details(
     outcome: SiteOutcome,
 ) -> None:
     """詳細未取得の物件を取りに行き、設備を抽出して保存する。"""
+    if limit < 1:
+        # 市区ローテーションのサイトは一覧で予算を使い切るので詳細を取らない
+        # （→ 課題#36）。キューには残るので、予算の回復窓を実測してから
+        # 「N回に1回の詳細回」を入れるか決める
+        return
     with runtime.engine.connect() as conn:
         queue = persist.detail_queue(conn, site_id=site_id, limit=limit)
 
@@ -668,16 +703,16 @@ def scan_pattern(
 
     for site_code in target_sites:
         if site_code in inactive:
-            summary.skipped_sites.append(site_code)
+            summary.skipped_sites.append(f"{site_code}（is_active=false）")
             continue
         scraper = get_scraper(site_code)
         if scraper is None:
-            summary.skipped_sites.append(site_code)
+            summary.skipped_sites.append(f"{site_code}（アダプタ未実装）")
             continue
 
         site_id = runtime.site_ids.get(site_code)
         if site_id is None:
-            summary.skipped_sites.append(site_code)
+            summary.skipped_sites.append(f"{site_code}（サイトマスタに行が無い）")
             continue
 
         outcome = SiteOutcome(site_code=site_code)
@@ -691,6 +726,21 @@ def scan_pattern(
         rate_limit = _site_rate_limit(runtime, site_code)
         max_pages = rate_limit.max_pages_per_run if full_scan else 1
         detail_limit = resolve_detail_limit(full_scan, detail_limit_override)
+
+        rotation_size = getattr(scraper, "city_rotation_limit", None)
+        if rotation_size:
+            rotated = _rotate_areas(runtime, scraper, pattern, areas, size=rotation_size)
+            if rotated is None:
+                # この実行では別の帯がこのサイトの枠を使う。予算を分け合うと
+                # どちらの帯も上限に当たって取れなくなる（→ 課題#36）
+                summary.skipped_sites.append(f"{site_code}（他パターンが取得枠を使用中）")
+                continue
+            areas = rotated
+            # ⚠ **ページ送りも詳細取得もしない。** 上限は「リクエスト数」に
+            # 掛かっているので、2ページ目や詳細を1件でも取ると一覧の市区が
+            # そのぶん取れなくなる。詳細は予算の回復窓を実測してから検討する
+            max_pages = 1
+            detail_limit = 0
 
         with runtime.engine.begin() as conn:
             run_row = persist.start_run(

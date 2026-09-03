@@ -126,6 +126,11 @@ class AthomeScraper:
     city_value_source = CITY_VALUE_MAPPING
     user_agent = None
     ignore_robots = False
+    # ⚠ **1回の実行で4リクエストが上限**（実測 2026-09-03）。5件目から
+    # パズル認証のページ（HTTP 200・8KB）になる。⚠ **1件目は正常に返る**ので
+    # 単発の疎通確認では再現できない。1回4市区ずつ回して次回は続きから
+    # 始めることで、82市区を約1.8日で一巡させる（→ 課題#20・#36）
+    city_rotation_limit = 4
 
     def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
         """``/chintai/{エリアスラグ}/list/`` を組み立てる。

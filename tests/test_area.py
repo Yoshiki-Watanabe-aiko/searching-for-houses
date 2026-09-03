@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text
 
 from house_search.scrape.area import (
     CITY_VALUE_JIS,
@@ -58,11 +58,40 @@ def test_JIS系サイトはマッピング未登録の市区も指定できる(t
 
 
 def test_マッピング系サイトは登録済みの市区だけを返す(test_engine: Engine) -> None:
+    """⚠ **未登録の市区は黙って落ちる**（エラーにならない → 課題#36）。
+
+    市区ローテーションはこの挙動の上に載るので、スラグが歯抜けだと
+    「一巡した」つもりでその市区を永久に取らないことになる。
+    落とすこと自体は正しい（指定しようがない）ので、
+    **落ちた市区がスラグ未登録のものと一致する**ことを固定する。
+
+    ⚠ 特定の市区名を焼き込まない。Phase 5E で HOMES のスラグを追補し、
+    かつて未登録だった八王子市が登録済みになった（→ 課題#36）。
+    """
     areas = _resolve(test_engine, site_code="HOMES", city_value_source=CITY_VALUE_MAPPING)
     assert areas
     assert all(a.value and "/" in a.value for a in areas)
-    # スラグが未登録の市区は指定しようがないので落ちる
-    assert "八王子市" not in {a.city_name for a in areas}
+
+    with test_engine.connect() as conn:
+        unregistered = {
+            name
+            for name, in conn.execute(
+                text(
+                    """
+                    SELECT c.canonical_name FROM m_cities c
+                    WHERE c.prefecture = ANY(:prefectures)
+                      AND NOT EXISTS (
+                            SELECT 1 FROM m_city_site_values v
+                             WHERE v.city_id = c.id
+                               AND v.site_id = (SELECT id FROM m_sites WHERE code = 'HOMES')
+                      )
+                    """
+                ),
+                {"prefectures": PREFECTURES},
+            )
+        }
+    assert unregistered, "未登録の市区が1つも無いとこのテストは何も検証できない"
+    assert not (unregistered & {a.city_name for a in areas})
 
 
 def test_市区を明示したらその市区だけになる(test_engine: Engine) -> None:
