@@ -58,7 +58,7 @@ INSERT INTO m_sites (
     ('SMOCCA',     'スモッカ',         'https://smocca.jp',         'HTTP',       TRUE,  3.0, 5, NULL, 110, '市区指定が必須。robots.txtがページ送り(/*/page/)を禁止しているため1ページ目90件のみ取得する'),
     ('SHAMAISON',  'シャーメゾン',     'https://www.shamaison.com', 'HTTP',       FALSE, 2.5, 5, NULL, 120, 'v1から未実装。積水ハウス系の自社物件のみのため対象外'),
     ('UR',         'UR賃貸住宅',       'https://www.ur-net.go.jp',  'HTTP',       TRUE,  3.0, 5, NULL, 130, '都市再生機構。取得は3段のJSON API(POST)で、団地と住戸が別階層（→ ADR 0019・詳細設計書 §9.3）。市区で検索する手段が無くUR独自のarea区分しかないため、都県の全areaを取って応答のskcsでローカルに絞る。礼金・仲介手数料・更新料が制度上ゼロで保証人も不要なので、合成トークンで既存WANTへ載せる。⚠ APIホストのrobots.txtはHTTP 403（不在ではない）'),
-    ('LEOPALACE',  'レオパレス21',     'https://www.leopalace21.com', 'HTTP',   TRUE,  2.5, 5, NULL, 140, '自社物件のみ。一覧は建物カードの中に住戸が並ぶ形で、MUST1段目に要る項目が全部ある（→ 詳細設計書 §11）。市区スラグはサイトマップ1本で全国1,000件採れ、末尾にJIS5桁が埋まっている。2.5秒間隔で20市区を連続取得しても検知は出ない。⚠ 掲載終了が404にならないのでタイトルで判別する')
+    ('LEOPALACE',  'レオパレス21',     'https://www.leopalace21.com', 'HTTP',   FALSE, 2.5, 5, NULL, 140, '自社物件のみ。一覧は建物カードの中に住戸が並ぶ形で、MUST1段目に要る項目が全部ある（→ 詳細設計書 §11）。市区スラグはサイトマップ1本で全国1,000件採れ、末尾にJIS5桁が埋まっている。2.5秒間隔で20市区を連続取得しても検知は出ない。⚠ 掲載終了が404にならないのでタイトルで判別する。⚠ **is_active=false**（ユーザー判断 2026-09-04）: 在庫の96.2%が1Kで1LDK以上は0件・面積中央21.9㎡のため、検索パターンの must.layouts と area_min を構造的に1件も満たさない。アダプタは残してあるので --site LEOPALACE で名指しすれば在庫変化を観測できる → 詳細設計書 §11.8')
 ON CONFLICT (code) DO UPDATE SET
     name                    = EXCLUDED.name,
     base_url                = EXCLUDED.base_url,
