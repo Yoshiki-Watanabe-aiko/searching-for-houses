@@ -48,6 +48,7 @@ uv run house-search sync-stations          # 駅マスタ（data/train_master/*.
 uv run house-search resolve-stations       # 掲載の駅表記を駅マスタと突き合わせる（ネットワーク不要）
 uv run house-search resolve-commutes       # 駅ペアの通勤所要時間を算出しキャッシュ（ネットワーク不要）
 uv run house-search fetch-commutes         # NAVITIMEから実ダイヤの通勤時間を取得（要ネットワーク・約15秒/駅）
+uv run house-search fetch-commutes --region 関東   # 全国網羅。その地方の全駅×中心駅（→ ADR 0018）
 uv run house-search commute-stats          # 通勤時間の分布（best/worst を決める材料）
 uv run house-search dedup-stats            # サイト別の重複率・ユニーク率（ネットワーク不要）
 uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観測モード
@@ -187,7 +188,9 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
   応答の前後便リンクに検索日が載っているので `parse_search` が突き合わせて例外にする
 - **NAVITIME は同名異駅を黙って別の駅で検索する。** `orvStationName=大久保` は
   「大久保（東京都）」として処理され **HTTP 200 で普通の結果が返る**。
-  `駅名（都道府県名）` の形式で厳密に指定し、**応答が解決した駅名を照合してから保存する**
+  ⚠ **都道府県を添えるとかえって別の駅になることがある**（`松田（神奈川県）` → 新松田 /
+  `厚木（神奈川県）` → 本厚木。県を外すと正しい）。県付きの表記を使うのは**同名異駅があるときだけ**なので、
+  **`駅名` → `駅名（都道府県）` の順に試し、応答が解決した駅名を照合して通った方を採る**
   （→ ADR 0017）
 - **NAVITIME は自己申告のUAを 403 で拒否する。** robots.txt は `/transfer/` を
   `User-agent: *` に許可しており、UAの選別だけが別の関門になっている。
