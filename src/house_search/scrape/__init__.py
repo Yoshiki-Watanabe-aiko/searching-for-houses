@@ -41,6 +41,7 @@ from house_search.scrape.base import (
     parse_yen,
 )
 from house_search.scrape.chintai_ex import ChintaiExScraper
+from house_search.scrape.droom import DroomScraper
 from house_search.scrape.eheya import EheyaScraper
 from house_search.scrape.fetch import (
     RateLimit,
@@ -58,7 +59,7 @@ from house_search.scrape.suumo import SuumoScraper
 from house_search.scrape.ur import UrScraper
 
 # サイトコード → アダプタ。既存11サイトのうち MINIMINI 以外の10サイト
-# ＋ UR賃貸（Phase 5F）＋ レオパレス21（Phase 5G）。
+# ＋ UR賃貸（Phase 5F）＋ レオパレス21（Phase 5G）＋ D-room（Phase 5H）。
 SCRAPERS: dict[str, type] = {
     scraper.site_code: scraper
     for scraper in (
@@ -74,6 +75,7 @@ SCRAPERS: dict[str, type] = {
         SmoccaScraper,
         UrScraper,
         LeopalaceScraper,
+        DroomScraper,
     )
 }
 
@@ -93,6 +95,7 @@ __all__ = [
     "AreaTarget",
     "AthomeScraper",
     "ChintaiExScraper",
+    "DroomScraper",
     "EheyaScraper",
     "GooScraper",
     "HomesScraper",
