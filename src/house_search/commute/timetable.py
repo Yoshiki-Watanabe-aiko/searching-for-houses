@@ -37,6 +37,17 @@ class OriginStation:
     station_g_cd: int
     station_name: str
     prefecture: str | None
+    alias_names: tuple[str, ...] = ()
+
+    @property
+    def match_names(self) -> tuple[str, ...]:
+        """NAVITIME の応答と照合してよい表記の集合。
+
+        ⚠ **代表名だけで照合しない。** 駅グループは同一駅の別表記を束ねており
+        （``町屋`` / ``町屋駅前``、``本八幡`` / ``京成八幡``）、NAVITIME が
+        別表記を返した時点で同じ駅を取りこぼす。
+        """
+        return (self.station_name, *self.alias_names)
 
     @property
     def query_name(self) -> str:
@@ -63,7 +74,10 @@ _PREFECTURE_OF_STATION = """
     SELECT DISTINCT ON (s.station_g_cd)
            s.station_g_cd,
            s.station_name,
-           c.prefecture
+           c.prefecture,
+           (SELECT array_agg(DISTINCT a.station_name)
+              FROM m_stations a
+             WHERE a.station_g_cd = s.station_g_cd) AS alias_names
       FROM m_stations s
       LEFT JOIN LATERAL (
            SELECT prefecture
@@ -80,14 +94,20 @@ _PREFECTURE_OF_STATION = """
 def origin_stations(conn: Connection, groups: Sequence[int]) -> tuple[OriginStation, ...]:
     """駅グループコードから、検索に使う駅名と都道府県を引く。
 
-    グループには路線ごとの行が並ぶので ``station_cd`` の小さいものを代表にする
-    （どの行でも ``station_name`` は同じだが、順序を固定しないと実行ごとに揺れる）。
+    グループには路線ごとの行が並ぶので ``station_cd`` の小さいものを代表にする。
+    ⚠ **同じグループでも ``station_name`` が同じとは限らない**（``町屋`` / ``町屋駅前``）。
+    代表は検索語に使い、照合には ``alias_names`` を含めた全表記を使う。
     """
     if not groups:
         return ()
     rows = conn.execute(text(_PREFECTURE_OF_STATION), {"groups": list(groups)}).all()
     return tuple(
-        OriginStation(station_g_cd=int(row[0]), station_name=row[1], prefecture=row[2])
+        OriginStation(
+            station_g_cd=int(row[0]),
+            station_name=row[1],
+            prefecture=row[2],
+            alias_names=tuple(row[3] or ()),
+        )
         for row in rows
     )
 

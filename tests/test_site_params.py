@@ -334,3 +334,95 @@ def test_実運用の検索パターンで実際にURLへ載る() -> None:
         assert query, f"{pattern.name}: SUUMO へ渡すクエリが空になっている"
         # 実測（2026-09-03）で確定したキー
         assert set(query) <= {"mb", "mt", "et", "cn", "md"}
+
+
+def test_正典YAMLが読めてGOOの3軸がそろっている() -> None:
+    """⚠ 面積上限 fu と築年数 by は**未測定なので入れていない**。
+
+    by=5 で掲載が基準99件より多い121件になり説明が付かなかった。
+    測っていないものを推測で書かないための固定。
+    """
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    axes = set(table.for_site("GOO", "CHINTAI"))
+    assert axes == {"area_min", "walk_minutes_max", "layouts"}
+
+
+def test_正典YAMLの実測値でGOOのURLが組める() -> None:
+    """2026-09-03 の実測で確定したキー（fl/wm/lo[]）を固定する。
+
+    GOO は総件数を出さないので、**返る掲載の中身**で効きと向きを確かめた
+    （fl=50 → 面積50.1㎡以上だけ / wm=5 → 徒歩5分以内だけ）。
+    """
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    query = table.build_query(
+        site_code="GOO",
+        property_type="CHINTAI",
+        must=_Must(),
+        axes=["area_min", "walk_minutes_max", "layouts"],
+    )
+    assert query == {
+        "fl": ["30"],
+        "wm": ["15"],  # ★12分の要求は緩い側（15分）へ切り上げる
+        "lo[]": ["lo0105", "lo0203"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [
+        (30.0, "30"),  # 選択肢そのもの
+        (32.0, "30"),  # 下限は切り下げる
+        (22.0, "20"),  # ★10〜20は10刻み。5刻みだと思って25を選ぶと22〜24㎡を取りこぼす
+        (55.0, "50"),  # ★50以降は10刻み
+        (9.0, None),  # 最小の選択肢より緩い＝送らない
+    ],
+)
+def test_GOOの面積下限は不等間隔の選択肢へ切り下げる(
+    requested: float, expected: str | None
+) -> None:
+    """⚠ GOO の fl は **5刻みではない**（10/20/25…50/60…150）。
+
+    SUUMO の stepped（20〜100の5刻み）を流用すると、選択肢に無い値を送って
+    しまう。SUUMO はエラーページを返すが、GOO の挙動は未測定なので
+    そもそも作らせないのが安全。
+    """
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    spec = table.for_site("GOO", "CHINTAI")["area_min"]
+    assert spec.render(requested) == ({"fl": [expected]} if expected else None)
+
+
+def test_クエリ無しのURLにもフィルタを足せる() -> None:
+    """⚠ 区切り文字を & で固定しない。
+
+    「list_urls は必ずクエリ付きのURLを返す」という前提だったが、GOO は
+    price_max_hint が無いとクエリ無しのURLを返す。& 固定だと
+    ``....html&fl=30`` という壊れたURLになり、**0件になるだけで例外にならない**。
+    """
+    from house_search.pipeline.scan import _with_site_filters
+
+    class _Scraper:
+        site_code = "GOO"
+        supports_site_filters = True
+
+        def list_urls(self, pattern: object, areas: object) -> list[str]:
+            return ["https://example.test/a.html", "https://example.test/b.html?ru=10"]
+
+    class _Filters:
+        enabled = True
+        axes = ["area_min"]
+        exclude_sites: list[str] = []
+
+    class _Search:
+        site_filters = _Filters()
+
+    class _Pattern:
+        property_type = "CHINTAI"
+        search = _Search()
+        must = _Must()
+
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    urls = _with_site_filters(_Scraper(), _Pattern(), [], table)
+    assert urls == [
+        "https://example.test/a.html?fl=30",
+        "https://example.test/b.html?ru=10&fl=30",
+    ]

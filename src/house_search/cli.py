@@ -9,7 +9,6 @@ Phase 1 で ``scan`` / ``check-sold`` / ``digest`` / ``rescore`` / ``sync-dict``
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -707,8 +706,8 @@ def _cmd_fetch_commutes(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0
         MIN_INTERVAL_SEC,
         build_search_url,
         parse_search,
+        resolved_station_matches,
     )
-    from house_search.commute.normalize import normalize_key
     from house_search.commute.resolve import (
         STATUS_NO_ROUTE,
         STATUS_OK,
@@ -843,9 +842,7 @@ def _cmd_fetch_commutes(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0
 
             # ⚠ 意図した駅として解決されたかを必ず確かめる。NAVITIME は同名異駅を
             # 黙って別の駅で処理し、HTTP 200 で普通の結果を返す。
-            if normalize_key(_strip_prefecture(search.origin_label)) != normalize_key(
-                target.station_name
-            ):
+            if not resolved_station_matches(search.origin_label, target.match_names):
                 mismatched.append(f"{target.station_name} → {search.origin_label}")
                 failed += 1
                 continue
@@ -913,11 +910,6 @@ def _cmd_fetch_commutes(args: argparse.Namespace) -> int:  # noqa: PLR0911, PLR0
         for line in mismatched[:10]:
             print(f"  {line}")
     return 0 if failed == 0 else 1
-
-
-def _strip_prefecture(label: str) -> str:
-    """``大久保（東京都）`` から都道府県の括弧を落とす。"""
-    return re.sub(r"[（(][^）)]*[）)]\s*$", "", label).strip()
 
 
 def _navitime_destination_query(station_name: str, prefecture: str | None) -> str:
