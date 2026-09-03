@@ -1,0 +1,53 @@
+# ============================================================
+# 地方ごとの通勤先（NAVITIME で実ダイヤを取るときの目的地）
+#
+# 全国の駅を網羅するとき、目的地は1つでは意味を成さない（北海道の駅から
+# 芝公園までの所要時間には使い道がない）。地方ごとに中心駅を決めて、
+# その地方の駅はその駅までの所要時間を採る。
+#
+# `pref_cds` は総務省の都道府県コード（JIS X 0401 の1〜47）。
+# `m_stations.pref_cd` と突き合わせて地方を決める。
+#
+# ⚠ **三重県は近畿に入れている**（標準的な8地方区分に従う）。名古屋通勤圏でも
+# あるため、実データを見て中部へ移す判断はありうる。
+# ⚠ **沖縄県は九州と同じ博多ゆきにしている。** 鉄道が本土と繋がっていないので
+# 到達不能（`no_route`）として記録される。事実がそのまま残るので害はない。
+#
+# 目的地の駅名は NAVITIME にそのまま投げる。⚠ **同名異駅があるときだけ
+# 都道府県を添える**（→ commute/timetable.py の query_candidates）。
+# ============================================================
+
+version: 1
+
+regions:
+  - name: 北海道
+    pref_cds: [1]
+    destination: { station: "札幌", prefecture: "北海道" }
+
+  - name: 東北
+    pref_cds: [2, 3, 4, 5, 6, 7]
+    destination: { station: "仙台", prefecture: "宮城県" }
+
+  - name: 関東
+    pref_cds: [8, 9, 10, 11, 12, 13, 14]
+    destination: { station: "東京", prefecture: "東京都" }
+
+  - name: 中部
+    pref_cds: [15, 16, 17, 18, 19, 20, 21, 22, 23]
+    destination: { station: "名古屋", prefecture: "愛知県" }
+
+  - name: 近畿
+    pref_cds: [24, 25, 26, 27, 28, 29, 30]
+    destination: { station: "大阪", prefecture: "大阪府" }
+
+  - name: 中国
+    pref_cds: [31, 32, 33, 34, 35]
+    destination: { station: "広島", prefecture: "広島県" }
+
+  - name: 四国
+    pref_cds: [36, 37, 38, 39]
+    destination: { station: "高松", prefecture: "香川県" }
+
+  - name: 九州・沖縄
+    pref_cds: [40, 41, 42, 43, 44, 45, 46, 47]
+    destination: { station: "博多", prefecture: "福岡県" }

@@ -40,6 +40,10 @@ param(
     [switch]$Worker,
     # 対象を1つの検索パターンに絞る（省略時は掲載が挙げる全駅）
     [string]$Pattern = "",
+    # 地方名（data/commute_destinations.yaml）。指定すると目的地がその地方の
+    # 中心駅になり、対象が掲載の有無によらず**その地方の全駅**へ広がる。
+    # ⚠ 全国8地方で合計約36.5時間。1回で回さず地方ごとに走らせる
+    [string]$Region = "",
     # 取得する駅数の上限（試し取り用。0 なら残り全部）
     [int]$Limit = 0,
     # 出発日。⚠ 変えると全駅を取り直すことになる
@@ -117,9 +121,11 @@ Set-Location $RepoRoot
 Write-Step "==== 通勤時間の実ダイヤ取得 開始 ===="
 Write-Step "リポジトリ: $RepoRoot"
 Write-Step "出発      : $DepartOn $DepartAt"
+if ($Region -ne "") { Write-Step "地方      : $Region（その地方の全駅・中心駅ゆき）" }
 
 $fetchArgs = @("fetch-commutes", "--depart-on", $DepartOn, "--depart-at", $DepartAt)
 if ($Pattern -ne "") { $fetchArgs += @("--pattern", $Pattern) }
+if ($Region -ne "")  { $fetchArgs += @("--region", $Region) }
 if ($Limit -gt 0)    { $fetchArgs += @("--limit", "$Limit") }
 
 $started = Get-Date

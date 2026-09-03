@@ -11,6 +11,7 @@ Git管理YAMLを正典にできたが、この表だけはライセンス上そ�
 from __future__ import annotations
 
 import csv
+from collections.abc import Iterable
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -206,6 +207,48 @@ def resolve_station_group(
         sql += " AND pref_cd = :pref"
         params["pref"] = prefecture_code
     found = conn.execute(text(sql), params).all()
-    if len(found) != 1:
+    if len(found) == 1:
+        return int(found[0][0]), str(found[0][1])
+    if not found or prefecture_code is None:
+        # 都道府県で絞れていない状態での複数一致は、本当の同名異駅
+        # （日本橋＝東京/大阪）かもしれない。呼び出し側でエラーにする。
         return None
-    return int(found[0][0]), str(found[0][1])
+
+    # ⚠ **都道府県まで絞ってなお複数なら、同じ駅がグループに分かれている。**
+    # 仙台は JR（4路線）と市営地下鉄（2路線）が別グループで、県で絞っても
+    # 一意にならない。別の場所の同名駅はここまでで落ちているので、
+    # 路線数の多いほうを代表にしてよい（同数なら g_cd の小さいほうで固定する）。
+    ranked = conn.execute(
+        text(
+            """
+            SELECT station_g_cd, min(station_name) AS station_name, count(*) AS lines
+              FROM m_stations
+             WHERE station_g_cd = ANY(:groups)
+             GROUP BY station_g_cd
+             ORDER BY lines DESC, station_g_cd
+            """
+        ),
+        {"groups": [int(row[0]) for row in found]},
+    ).all()
+    return int(ranked[0][0]), str(ranked[0][1])
+
+
+def station_groups_in_prefectures(conn: Connection, pref_cds: Iterable[int]) -> tuple[int, ...]:
+    """指定した都道府県にある駅グループコードを返す（全国網羅の取得対象）。
+
+    ⚠ 掲載の有無を問わない。``referenced_station_groups`` が「いま掲載がある駅」
+    だけを返すのに対し、こちらは**その地方の全駅**を対象にする。
+    """
+    codes = [int(c) for c in pref_cds]
+    if not codes:
+        return ()
+    rows = conn.execute(
+        text(
+            """
+            SELECT DISTINCT station_g_cd FROM m_stations
+             WHERE pref_cd = ANY(:codes) ORDER BY station_g_cd
+            """
+        ),
+        {"codes": codes},
+    ).scalars().all()
+    return tuple(int(r) for r in rows)
