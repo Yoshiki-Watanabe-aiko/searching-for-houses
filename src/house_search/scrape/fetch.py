@@ -167,14 +167,25 @@ class SiteFetcher:
         return self._fail(url, last_error)
 
     def _fail(self, url: str, last_error: Exception | None) -> NoReturn:
-        """失敗を数えて例外にする。連続が続けばサイトごと打ち切る。"""
+        """失敗を数えて例外にする。連続が続けばサイトごと打ち切る。
+
+        ⚠ **理由をメッセージ本文に入れる。** ``raise ... from`` の連鎖は
+        ``t_scrape_logs`` へ ``str(exc)`` で書かれる時点で落ちるため、
+        入れないとログが「取得に失敗しました」だけになり、
+        **405（ボット検知）とタイムアウトと 403 を区別できない**
+        （NIFTY の 405 を調べるのに実サイトを叩き直す羽目になった）。
+        """
         self.stats.failures += 1
         self.stats.consecutive_failures += 1
+        reason = f"（{last_error}）" if last_error is not None else ""
         if self.stats.consecutive_failures >= CONSECUTIVE_FAILURE_LIMIT:
             raise SiteAborted(
-                f"{self.site_code}: {CONSECUTIVE_FAILURE_LIMIT} 回連続で失敗したため打ち切ります"
+                f"{self.site_code}: {CONSECUTIVE_FAILURE_LIMIT} 回連続で失敗したため"
+                f"打ち切ります{reason}"
             ) from last_error
-        raise RuntimeError(f"{self.site_code}: 取得に失敗しました: {url}") from last_error
+        raise RuntimeError(
+            f"{self.site_code}: 取得に失敗しました: {url}{reason}"
+        ) from last_error
 
 
 # 自己申告のUser-Agentを 403 で拒否するサイト向けのブラウザ相当UA。
