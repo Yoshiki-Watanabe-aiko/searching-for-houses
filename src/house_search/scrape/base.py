@@ -97,6 +97,10 @@ class SiteScraper(Protocol):
     # robots.txt を無視するか。**既定は False。**
     # 宣言してよいのはユーザーが明示的にそう決めたサイトだけ（→ ADR 0011）
     ignore_robots: bool
+    # 1回の実行で取りに行く市区の数。``None`` ならローテーションしない（既定）。
+    # 宣言するのは**取得数に上限があると実測できたサイトだけ**（HOMES 5・ATHOME 4）。
+    # 運用値ではなくサイトの実測特性なのでアダプタが持つ（→ 課題#36）
+    city_rotation_limit: int | None
 
     def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
         """検索パターンと対象エリアから一覧ページ（1ページ目）のURLを組み立てる。"""

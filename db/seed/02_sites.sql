@@ -26,11 +26,14 @@
 -- タイトルが「ブラウザをチェックしています - reCAPTCHA」で掲載0件）。
 -- 通すにはフィンガープリント偽装が要るため実装しない（→ 課題#18）。
 --
--- ATHOME は Phase 5 で is_active=false にした（ユーザー判断）。パズル認証の
--- ボット検知が発動したままで、突破しない方針である以上は取得できない。
--- min_interval_sec=6.0 × 詳細40件で毎回4分強を空振りに使うため、通常の scan の
--- 対象から外す。`scan --site ATHOME` で名指しすれば回復を観測できる（→ 課題#20）。
--- ⚠ HOME'S（課題#17・AWS WAF）は 2026-09-02 に回復を実測しているので有効のまま。
+-- ATHOME と HOME'S は **1回の実行で取れるリクエスト数に上限がある**（実測
+-- 2026-09-03。ATHOME 4件・HOMES 5件で、超えるとそれぞれ認証ページ／HTTP 202＋
+-- 空ボディになる）。⚠ **どちらも1リクエスト目は正常に返る**ので、単発の疎通
+-- 確認では再現できない。⚠ **間隔を広げても上限は動かない**（HOMES は4秒でも
+-- 10秒でも6件目）ため、絞りはリクエスト数で掛かっている。
+-- Phase 5E で**市区ローテーション**（1回の実行では上限ぶんの市区だけ取り、
+-- 次回は続きの市区から）を入れ、ATHOME を is_active=true へ戻し、
+-- HOMES の間隔を 10.0 → 2.5秒へ戻した（→ 課題#17・#20・#36）。
 --
 -- APAMAN だけは robots.txt が `User-agent: * / Disallow: /` で全パスを
 -- 禁じているが、ユーザーの明示的な判断で取得する（→ ADR 0011）。
@@ -43,8 +46,8 @@ INSERT INTO m_sites (
     representative_priority, notes
 ) VALUES
     ('SUUMO',      'SUUMO',           'https://suumo.jp',          'HTTP',       TRUE,  2.5, 5, NULL,  10, NULL),
-    ('HOMES',      'LIFULL HOME''S',  'https://www.homes.co.jp',   'HTTP',       TRUE,  10.0, 5, NULL,  20, '2.5秒では絞られる。実測（2026-09-03）で4秒間隔でも6リクエスト目からHTTP 202＋空ボディになり、以後はパラメータなしのURLでも同じになった。本番でも起きており t_scrape_logs は112件すべて Document is empty・掲載は10件しか入っていなかった。ユーザー判断で間隔のみ10秒へ広げた（→ 課題#17）'),
-    ('ATHOME',     'アットホーム',     'https://www.athome.co.jp',  'HTTP',       FALSE, 6.0, 5, NULL,  30, 'Phase 3 でHTTP取得を確認。ただしパズル認証のボット検知があり、3秒間隔で47件連続取得したら発動した。間隔を6秒に広げたが発動したままのため Phase 5 で is_active=false（--site で名指しすれば回復を観測できる → 課題#20）'),
+    ('HOMES',      'LIFULL HOME''S',  'https://www.homes.co.jp',   'HTTP',       TRUE,  2.5, 5, NULL,  20, '1回の実行で5リクエストが上限。6件目からHTTP 202＋空ボディになる。⚠ 間隔を広げても上限は動かない（4秒でも10秒でも6件目・実測 2026-09-03）ので、10.0秒へ広げた対策を Phase 5E で 2.5秒へ戻した。取得量は市区ローテーション（1回5市区・次回は続きから）で確保する（→ 課題#17・#36）'),
+    ('ATHOME',     'アットホーム',     'https://www.athome.co.jp',  'HTTP',       TRUE,  6.0, 5, NULL,  30, '1回の実行で4リクエストが上限。5件目からパズル認証のページ（HTTP 200・8KB）になる。⚠ 1件目は正常に返るので単発の疎通確認では再現できない。Phase 5E で市区ローテーション（1回4市区）を入れて is_active=true へ戻した（→ 課題#20・#36）'),
     ('NIFTY',      'ニフティ不動産',   'https://myhome.nifty.com',  'HTTP',       TRUE,  3.0, 5, NULL,  40, '他社サイトの掲載を集約するポータル。市区指定が必須。外部ドメインへ飛ぶ掲載は取り込まない'),
     ('GOO',        'goo不動産',        'https://house.goo.ne.jp',   'HTTP',       TRUE,  2.5, 5, NULL,  50, '掲載重複が多い'),
     ('CHINTAI_EX', '賃貸EX',          'https://chintai-ex.jp',     'HTTP',       TRUE,  2.5, 5, NULL,  60, 'robots.txtがクエリ付きURLを全面禁止。価格上限を渡せず市区の全掲載を取る'),

@@ -225,6 +225,92 @@ def site_listing_count(conn: Connection, site_id: int) -> int:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class RotationClaim:
+    """市区ローテーションの権利（→ 課題#36・Phase 5E）。"""
+
+    claimed: bool
+    last_city_jis: str | None = None
+
+
+def claim_city_rotation(
+    conn: Connection, *, site_id: int, pattern_name: str, run_id: Any
+) -> RotationClaim:
+    """このパターンが今回の実行でそのサイトの取得枠を使ってよいかを決める。
+
+    ⚠ **帯が2つあるので、素朴に実装すると予算が2倍消費される。** HOMES は
+    両帯の ``sites:`` に載っており、1回の ``scan`` で 5+5=10 リクエストが飛ぶと
+    後半の帯は全部 HTTP 202 になる。**1回の実行では1帯だけ**が枠を使う。
+
+    どの帯が使うかは ``last_scanned_at`` の古い順（未実行が最優先）。
+    同一実行での二重消費は ``last_run_id`` で防ぐ。
+    """
+    conn.execute(
+        text(
+            """
+            INSERT INTO t_site_scan_cursors (site_id, pattern_name)
+            VALUES (:site_id, :pattern_name)
+            ON CONFLICT (site_id, pattern_name) DO NOTHING
+            """
+        ),
+        {"site_id": site_id, "pattern_name": pattern_name},
+    )
+    # 同じ実行で既に別の（あるいは同じ）パターンが枠を使っていたら譲る
+    already = conn.execute(
+        text(
+            "SELECT 1 FROM t_site_scan_cursors "
+            "WHERE site_id = :site_id AND last_run_id = :run_id LIMIT 1"
+        ),
+        {"site_id": site_id, "run_id": run_id},
+    ).first()
+    if already is not None:
+        return RotationClaim(claimed=False)
+
+    row = conn.execute(
+        text(
+            """
+            SELECT pattern_name, last_city_jis
+            FROM t_site_scan_cursors
+            WHERE site_id = :site_id
+            -- 未実行（NULL）を最優先。同着はパターン名で決定的に決める
+            ORDER BY last_scanned_at ASC NULLS FIRST, pattern_name ASC
+            LIMIT 1
+            """
+        ),
+        {"site_id": site_id},
+    ).first()
+    if row is None or row.pattern_name != pattern_name:
+        return RotationClaim(claimed=False)
+
+    conn.execute(
+        text(
+            "UPDATE t_site_scan_cursors "
+            "SET last_scanned_at = now(), last_run_id = :run_id, updated_at = now() "
+            "WHERE site_id = :site_id AND pattern_name = :pattern_name"
+        ),
+        {"site_id": site_id, "pattern_name": pattern_name, "run_id": run_id},
+    )
+    return RotationClaim(claimed=True, last_city_jis=row.last_city_jis)
+
+
+def advance_city_rotation(
+    conn: Connection, *, site_id: int, pattern_name: str, last_city_jis: str | None
+) -> None:
+    """次回の開始位置を進める。
+
+    ⚠ **取得を試みる前に進める。** 取得が失敗（スロットリング・ボット検知）しても
+    同じ市区を再試行し続けると、その市区から先へ永久に進めなくなる。
+    """
+    conn.execute(
+        text(
+            "UPDATE t_site_scan_cursors "
+            "SET last_city_jis = :jis, updated_at = now() "
+            "WHERE site_id = :site_id AND pattern_name = :pattern_name"
+        ),
+        {"site_id": site_id, "pattern_name": pattern_name, "jis": last_city_jis},
+    )
+
+
 def upsert_listings(
     conn: Connection,
     listings: list[ScrapedListing],

@@ -106,6 +106,12 @@ class HomesScraper:
     # MUST をサイト側の検索フォームへ渡す（→ ADR 0015）。キー名・選択肢は
     # data/site_search_params.yaml に実測値で書いてある
     supports_site_filters = True
+    # ⚠ **1回の実行で5リクエストが上限**（実測 2026-09-03）。6件目から
+    # HTTP 202＋空ボディになり、以後は**パラメータなしのURLでも**同じになる。
+    # ⚠ **間隔を広げても上限は動かない**（4秒でも10秒でも6件目）ので、
+    # 絞りはリクエスト数で掛かっている。市区を毎回先頭から舐めずに
+    # 1回5市区ずつ回して次回は続きから始める（→ 課題#17・#36）
+    city_rotation_limit = 5
 
     def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
         """``/chintai/{エリアスラグ}/list/`` を組み立てる。

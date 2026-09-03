@@ -819,3 +819,51 @@ class RailSegment(TimestampMixin, Base):
     observed_at: Mapped[dt.datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, comment="最後に観測した時刻"
     )
+
+
+class SiteScanCursor(TimestampMixin, Base):
+    """市区ローテーションのカーソル（→ 課題#36・Phase 5E）。
+
+    HOMES・ATHOME は**1回の実行で取れるリクエスト数に上限がある**
+    （実測 2026-09-03。HOMES 5件・ATHOME 4件で、超えるとそれぞれ HTTP 202＋
+    空ボディ／パズル認証ページになる）。⚠ **間隔を広げても上限は動かない**ので、
+    82市区を毎回先頭から舐める限り後ろの市区は永久に取れない。
+    そこで1回の実行では上限ぶんの市区だけ取り、**次回は続きの市区から**始める。
+
+    ⚠ **カーソルは位置番号でなく JIS5桁で持つ。** 市区リストは YAML 編集で
+    増減する（課題#32 で実際に4市区を外した）ため、番号だと編集のたびに
+    ずれて別の市区へ飛ぶ。``resolve_areas`` は ``jis_code`` 順に決定的へ並ぶので、
+    「カーソルより大きい最初の JIS から n 件、末尾に達したら先頭へ戻る」で周回できる。
+
+    ⚠ **キーが (サイト, パターン) なのは帯が2つあるため。** HOMES は両帯の
+    ``sites:`` に載っており、素朴に実装すると1回の ``scan`` で 5+5=10 リクエストが
+    飛んで後半の帯が全部 202 になる。``last_run_id`` で同一実行の二重消費を防ぎ、
+    ``last_scanned_at`` の古い帯から順に回す。
+
+    ⚠ ``m_sites`` へ列を足すのではなくテーブルを新設したのは、監査カラムを
+    最終列に保つための**テーブル再作成コストを避ける**ため（Phase 5C・5D と同じ判断）。
+    """
+
+    __tablename__ = "t_site_scan_cursors"
+    __table_args__ = {"comment": "サイト×検索パターンごとの市区ローテーション位置"}
+
+    site_id: Mapped[int] = mapped_column(
+        ForeignKey("m_sites.id", ondelete="CASCADE"),
+        primary_key=True,
+        comment="対象サイトID",
+    )
+    pattern_name: Mapped[str] = mapped_column(
+        String(255), primary_key=True, comment="検索パターン名（YAML の name）"
+    )
+    last_city_jis: Mapped[str | None] = mapped_column(
+        String(5),
+        comment="最後に取得した市区のJIS5桁。次回はこれより大きい最初の市区から始める",
+    )
+    last_scanned_at: Mapped[dt.datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        comment="この組で最後にローテーションを回した日時。NULL=未実行（最優先で回す）",
+    )
+    last_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        comment="最後にローテーションを回した実行ID。同一実行で予算を二重消費しないための印",
+    )

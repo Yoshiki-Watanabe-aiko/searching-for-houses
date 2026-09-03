@@ -26,7 +26,8 @@ EXPECTED_MIN_ROWS = {
     # 総務省の全国地方公共団体コード（47都道府県・全市区町村＋政令市の行政区）
     "m_cities": 1918,
     # 07（サイト固有マッピング931行）＋ 08（ATHOME/NIFTY のスラグ902行）
-    "m_city_site_values": 1833,
+    # ＋ 09（HOMES/ATHOME の帯市区スラグ追補・Phase 5E で318行が新規 → 課題#36）
+    "m_city_site_values": 2151,
 }
 
 
