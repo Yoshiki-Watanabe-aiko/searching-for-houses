@@ -73,8 +73,14 @@ class TestCanonicalFile:
             covered |= set(region.pref_cds)
         assert covered == set(ALL_PREFECTURE_CODES)
 
-    def test_8地方と目的地がユーザー確定どおり(self) -> None:
-        """2026-09-03 にユーザーが確定させた対応。勝手に変えない。"""
+    def test_9地方と目的地がユーザー確定どおり(self) -> None:
+        """2026-09-03 にユーザーが確定させた対応。勝手に変えない。
+
+        ⚠ **沖縄は九州から切り離してある。** 鉄道が本土と繋がっていないため、
+        博多ゆきのままだと県内19駅すべてが到達不能になる。
+        ⚠ **「那覇」という駅は現存しない**（ゆいレール19駅だけ）ので、
+        那覇市の中心・県庁最寄りの「県庁前」を基準にした。
+        """
         regions = load_regions(load_settings().data_dir / REGIONS_FILENAME)
         assert {r.name: r.station for r in regions} == {
             "北海道": "札幌",
@@ -84,7 +90,8 @@ class TestCanonicalFile:
             "近畿": "大阪",
             "中国": "広島",
             "四国": "高松",
-            "九州・沖縄": "博多",
+            "九州": "博多",
+            "沖縄": "県庁前",
         }
 
     def test_地方名で引ける(self) -> None:
