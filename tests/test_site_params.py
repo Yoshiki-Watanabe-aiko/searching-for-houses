@@ -467,15 +467,15 @@ def test_APAMANの面積の選択肢は不等間隔() -> None:
 # ---- アットホーム（実測 2026-09-03 → 課題#39）----
 
 
-def test_正典YAMLが読めてATHOMEの2軸がそろっている() -> None:
-    """⚠ 間取り（MADORI[]）は**未測定なので入れていない**。
+def test_正典YAMLが読めてATHOMEの3軸がそろっている() -> None:
+    """間取りは**実測で効くことを確かめてから**入れた。
 
-    キーと選択肢は実HTMLから採れているが、APAMAN の madori のように
-    「送っても黙って無視される」ことがあるため、効きを実測するまで書かない。
+    ⚠ APAMAN の madori は同じ形（キーは実HTMLにある）でも送ると黙って
+    無視されたので、サイト間で流用してはいけない。
     """
     table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
     axes = set(table.for_site("ATHOME", "CHINTAI"))
-    assert axes == {"area_min", "walk_minutes_max"}
+    assert axes == {"area_min", "walk_minutes_max", "layouts"}
 
 
 def test_正典YAMLの実測値でATHOMEのURLが組める() -> None:
@@ -492,7 +492,12 @@ def test_正典YAMLの実測値でATHOMEのURLが組める() -> None:
         axes=["area_min", "walk_minutes_max", "layouts"],
     )
     # ★12分の要求は選択肢に無いので緩い側（15分＝ke005）へ切り上がる
-    assert query == {"MENSEKI": ["kt004"], "EKITOHO": ["ke005"]}
+    assert query == {
+        "MENSEKI": ["kt004"],
+        "EKITOHO": ["ke005"],
+        # 同じキーを値の数だけ並べる（HOME'S のようにキー側が変わる形ではない）
+        "MADORI[]": ["km005", "km009"],
+    }
 
 
 @pytest.mark.parametrize(
@@ -563,3 +568,29 @@ def test_コード対応表を持つ軸は全選択肢ぶんそろっている()
             for choice in spec.value_spec["choices"]
         } - keys
         assert not missing, f"{spec.site_code}/{spec.axis}: codes が欠けています: {missing}"
+
+
+def test_ATHOMEの間取りは同じキーを並べて送る() -> None:
+    """⚠ HOME'S（``cond[madori][15]=15``）と違い**キー側は変わらない**。
+
+    実測で ``MADORI[]=km005&...`` の形が効いた（MUSTの5種だけが返った）。
+    """
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    spec = table.for_site("ATHOME", "CHINTAI")["layouts"]
+    assert spec.render(["1LDK", "2K", "2DK", "2LDK", "3LDK"]) == {
+        "MADORI[]": ["km005", "km008", "km009", "km010", "km015"]
+    }
+
+
+def test_ATHOMEの間取りコードは連番でない() -> None:
+    """⚠ 1LDK=km005 の次が 2K=km008 で km006/km007 が欠番。
+
+    部屋数ごとに5枠ある形で、**S付き（1SLDK 等）が別コードの可能性が高い**。
+    算術で導けるという思い込みを固定で潰しておく。
+    """
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    mapping = table.for_site("ATHOME", "CHINTAI")["layouts"].value_spec["mapping"]
+    assert mapping["1LDK"] == "km005"
+    assert mapping["2K"] == "km008"  # km006 ではない
+    assert "km006" not in set(mapping.values())
+    assert "km007" not in set(mapping.values())
