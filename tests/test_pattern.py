@@ -196,7 +196,7 @@ def test_同梱の雛形YAMLが読める() -> None:
     assert len(pattern.want.numeric) == 4
 
 
-@pytest.mark.parametrize("filename", ["chintai_23ku.yaml", "chintai_suburb45.yaml"])
+@pytest.mark.parametrize("filename", ["chintai_23ku.yaml", "chintai_suburb60.yaml"])
 def test_実運用の検索パターンが読める(filename: str) -> None:
     """エリア帯ごとの実運用パターンが v2 スキーマを満たすこと（課題#9）。"""
     pattern = load_pattern_file(REPO_ROOT / "configs" / filename)
@@ -216,11 +216,11 @@ def test_エリア帯は市区を明示列挙し重ならない() -> None:
     """
     bands = {
         name: set(load_pattern_file(REPO_ROOT / "configs" / name).search.cities)
-        for name in ("chintai_23ku.yaml", "chintai_suburb45.yaml")
+        for name in ("chintai_23ku.yaml", "chintai_suburb60.yaml")
     }
     for name, cities in bands.items():
         assert cities, f"{name}: cities が空だと都道府県内の全市区へ広がる"
-    overlap = bands["chintai_23ku.yaml"] & bands["chintai_suburb45.yaml"]
+    overlap = bands["chintai_23ku.yaml"] & bands["chintai_suburb60.yaml"]
     assert not overlap, f"エリア帯が重なっている: {sorted(overlap)}"
 
 
