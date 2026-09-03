@@ -72,7 +72,7 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
 .\scripts\run_fetch_commutes.ps1 -Regions 北海道,東北  # 複数地方を順に（各地方の後に re-segment まで行う）
 .\scripts\backup_db.ps1                       # pg_dump（14世代保持）
 .\scripts\register_tasks.ps1 -DryRun          # タスクXMLの生成と検証（権限不要）
-.\scripts\register_tasks.ps1                  # タスク登録（★管理者権限が要る → 課題#23）
+.\scripts\register_tasks.ps1                  # タスク登録（要管理者。2026-09-04 に登録・有効化済み → 課題#23）
 .\scripts\register_tasks.ps1 -EnableScraping  # 取得タスクを有効化（初回スキャン完了後）
 ```
 
@@ -196,7 +196,11 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
   `digest` は `rank_in_pattern` 起点なので、ここを崩すとランキングに重複が戻る
 - **レート制御は `SiteFetcher` のプロセス内にしかない。** 別プロセスの `scan` 同士や
   `scan` と `check-sold` が並走すると同一サイトへの実効間隔が半分になる。
-  タスクのトリガー時刻を分離し、初回スキャン中は取得タスクを無効にしてあるのはこのため
+  タスクのトリガー時刻を分離し、初回スキャン中は取得タスクを無効にしてあるのはこのため。
+  ⚠ **`scan` / `check-sold` は `pg_advisory_lock` でも排他されるが、`fetch-commutes`
+  はこのロックを取らない。** NAVITIME と物件サイトは別ホストなので定期スキャンとの
+  並走は意図どおりだが、⚠ **`fetch-commutes` どうしの並走は禁止**（実効間隔が
+  15秒 → 7.5秒になり `Crawl-delay: 10` を破る）。地方の取り直しは進行中の取得の完了後に行う
 - **`scan` はサイトを直列に回す。** 増分でも約72分かかるので毎時実行には収まらない
   （一覧1116リクエスト＋詳細320リクエスト）。タスクは2時間ごと
 - **`max_pages_per_run` は「一覧URL 1本あたり」のページ数**で、エリアごとに掛かる。
