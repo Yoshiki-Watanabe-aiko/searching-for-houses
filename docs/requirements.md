@@ -62,11 +62,16 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 | APAMAN | アパマンショップ | ✅ 実装済み（市区指定必須・**robots.txt を無視する唯一の例外** → ADR 0011） |
 | EHEYA | いい部屋ネット | ✅ 実装済み（掲載データは `__NEXT_DATA__` のJSON） |
 | SMOCCA | スモッカ | ✅ 実装済み（市区指定必須・**1ページ90件のみ** → 課題#22） |
+| **UR** | **UR賃貸住宅** | ✅ 実装済み（Phase 5F）。**3段のJSON API（POST）**で団地→住戸→住戸詳細と辿る。市区で検索できずUR独自の `area` 区分しかないため、都県の全 area を取って `skcs` でローカルに絞る。⚠ APIホストの robots.txt は **HTTP 403**（不在ではない）→ ADR 0019・課題#37 |
 | SHAMAISON | シャーメゾン | 無効（v1から未実装。自社物件のみのため対象外） |
 
-- **賃貸のスクレイピング対象は11サイト**（SHAMAISON を除く）。マスタ行数は12。
-- Phase 3 時点でアダプタ実装済みは **MINIMINI を除く10サイト**。
+- **賃貸のスクレイピング対象は12サイト**（SHAMAISON を除く）。マスタ行数は13。
+- アダプタ実装済みは **MINIMINI を除く11サイト**（既存10 ＋ Phase 5F の UR）。
   未実装サイトは `scan` が「スキップ（アダプタ未実装）」と明示的に報告する。
+- ⚠ **UR だけ取得の形が違う。** GET＋HTML一覧という前提が成り立たないため、
+  `SiteScraper` の `list_urls` → `parse_list` ではなく**任意フック**
+  `collect_listings` / `fetch_detail` で `pipeline.scan` から委譲を受ける
+  （`supports_site_filters` と同じ宣言ベースの拡張。**既存10アダプタは無変更**）。
 - `m_sites.is_active = false` のサイトは通常の `scan` では取りに行かない。
   `--site` で名指ししたときだけ動く（観測モードの入口）。
 - **ブラウザ自動化は使わない。** v1 の本書は ATHOME を「HTTP + goquery」と記載していたが、
@@ -636,7 +641,7 @@ DDLは Alembic（`migrations/`）、マスタデータは `db/seed/*.sql`（冪�
 | テーブル | 内容 |
 |---|---|
 | `m_property_types` | 物件種別（5種別・ファミリ付き） |
-| `m_sites` | サイト（12行。取得方式・レート制御・代表選定優先順） |
+| `m_sites` | サイト（13行。取得方式・レート制御・代表選定優先順） |
 | `m_condition_categories` | 条件カテゴリ（19。売買用に CERT・LAND を追加） |
 | `m_conditions` | 条件（148。`is_extractable` でローカル抽出対象かを持つ） |
 | `m_condition_property_types` | 条件×物件種別（487行） |
@@ -680,6 +685,7 @@ v1 はサイトごとに列を持つワイドテーブルだった（ADR 0001）
 | JIS5桁 | SUUMO / GOO / ABLE / CHINTAI_EX / **EHEYA / SMOCCA** | `m_cities.jis_code` から導出 |
 | JIS5桁の**下3桁** | **APAMAN**（新宿区 13104 → `104`） | 同上（アダプタが末尾3桁を切る） |
 | サイト固有スラグ | HOMES（`tokyo/chiyoda-city`）/ MINIMINI（`chiyodaku`）/ **ATHOME**（`tokyo/adachi-city`）/ **NIFTY**（`adachiku`） | `m_city_site_values` |
+| **指定できない** | **UR**（UR独自の `area=01..` しか無く市区の粒度ですらない） | 都県の全 area を取り、応答の `skcs`（市区名）で**ローカルに絞る** |
 
 JIS系は `m_city_site_values` に行が無くても値を作れる。マッピング表に縛ると
 対象4都県253市区のうち **67市区しか指定できず**、東京都は23区だけで多摩地域が
@@ -918,8 +924,32 @@ uv run house-search db-seed --test-db
   アダプタが明示的に宣言したときにしか効かず、既定は `False`。
   取得間隔・日次上限・バックオフはこのフラグでも緩めない
   （→ [ADR 0011](./adr/0011-apaman-robots-exception.md)）
+- ⚠ **robots.txt が読めないときは「記録されたうえでの全許可」で進む**
+  （→ [ADR 0019](./adr/0019-ur-api-post-and-robots-403.md)）。
+  `_load_robots` は取得に失敗すると空ルール（＝全許可）にするため、
+  **標準の `RobotFileParser.read()`（401/403 を `disallow_all` にする）より
+  許可側に倒れている**。UR賃貸のAPIホストが実際に **HTTP 403** を返すので、
+  黙って通り過ぎないようオリジンごとに1回だけ警告を記録する。
+  ⚠ 403 は**不在ではなく取得そのものの拒否**なので、`ignore_robots` を
+  立てる（ADR 0011 の判断）のとは別の話として扱う
+- **POST でしか取れないサイトがある。** `SiteFetcher.get` の本体は
+  `request(method, url, *, data=None)` で、`get` / `post` はその薄いラッパ。
+  ⚠ **メソッドが違うだけで相手にかける負荷は同じ**なので、
+  レート制御・robots判定・バックオフ・打ち切り・日次上限はすべて共有する
 - 詳細取得は1回の実行あたりサイト単位で上限（既定40件 / `--full` は400件）。
   取り残しは `detail_fetched_at IS NULL` のキューに残り次回実行で拾われる
+- **GET＋HTML の枠に収まらないサイトは任意フックで委譲する**
+  （→ [ADR 0019](./adr/0019-ur-api-post-and-robots-403.md)）。
+  `pipeline.scan` が `getattr(scraper, "collect_listings", None)` /
+  `getattr(scraper, "fetch_detail", None)` を見て、宣言していれば
+  **一覧の収集／詳細の取得だけ**を差し替える。
+  MUST 1段目・upsert・0件バックストップ・詳細キュー・`--detail-limit`・
+  設備抽出・名寄せキーは既存経路をそのまま通る。
+  ⚠ **`SiteScraper` Protocol にメソッドを足さない。** 足すと既存10アダプタ全部に
+  実装義務が生じる（`supports_site_filters`・`city_rotation_limit` と同じ
+  宣言ベースの拡張にしてある）。
+  ⚠ **フックに「一覧＋詳細」を対で返させない。** 詳細まで一覧の段で取ることになり
+  **`--detail-limit` が効かなくなる**（UR は帯2で住戸が数百ある）
 
 ---
 
@@ -955,6 +985,7 @@ f:\searching-for-houses\
 │   │   ├── prefectures.py      # 都道府県名 → URLスラグ
 │   │   ├── suumo.py / homes.py / goo.py / able.py / chintai_ex.py
 │   │   ├── athome.py / eheya.py / nifty.py / apaman.py / smocca.py
+│   │   ├── ur.py           # UR賃貸。3段のJSON API(POST)・任意フック方式（ADR 0019）
 │   ├── extract/
 │   │   ├── normalize.py        # NFKC正規化・トークン化
 │   │   ├── dictionary.py       # 辞書のロードとDB同期

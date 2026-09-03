@@ -10,6 +10,9 @@ Phase 5C で**通勤時間**をランキングへ組み込み（→ ADR 0016）�
 Phase 5D で回帰式から **NAVITIME の実ダイヤ**へ置き換えた（→ ADR 0017）。
 Phase 5E で取得数に上限があるサイト（HOMES・ATHOME）を**市区ローテーション**で
 回すようにした（→ 課題#36）。
+Phase 5F で **UR賃貸住宅**を追加した。3段のJSON API（POST）で団地→住戸→住戸詳細と辿り、
+GET＋HTML の枠に収まらないため**任意フック**で `pipeline.scan` から委譲を受ける
+（→ ADR 0019・課題#37）。
 初回全件スキャンの実測でランキング上位が群馬/栃木県境と外房で埋まったため、
 **エリア帯**（23区／近郊60分圏）で検索パターンを2つに分割した（→ ADR 0013・課題#24）。
 進捗と残作業は `docs/再設計計画.md` を参照。
@@ -17,7 +20,7 @@ v1（Go）の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全�
 
 ## 技術スタック
 - Python 3.12+（パッケージ管理は uv。Windowsタスクスケジューラーで定期実行、常駐プロセスではない）
-- スクレイピング: httpx + lxml + cssselect（**全10サイトHTTP取得**。Playwrightは Phase 3 で撤去 → ADR 0010）
+- スクレイピング: httpx + lxml + cssselect（**全11サイトHTTP取得**。UR はJSON APIへの POST。Playwrightは Phase 3 で撤去 → ADR 0010）
 - DB: PostgreSQL 18（SQLAlchemy 2.x + psycopg3 / Alembic）
 - 設定・スキーマ検証: pydantic / pydantic-settings
 - テスト: pytest（`DATABASE_TEST_URL` 未設定時はDB統合テストをスキップ）
@@ -140,6 +143,37 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
   JIS5桁で行う**（部分文字列一致は他市のコードを混入させる → ADR 0014）
 - **robots.txt を無視するのは APAMAN だけ**（`ignore_robots=True`・ユーザー判断 → ADR 0011）。
   他のサイトでこのフラグを立ててはいけない。取得間隔・上限はこのフラグでも緩めない
+- **robots.txt が読めないときは全許可で進む。** `_load_robots` は取得に失敗すると
+  空ルールにするため、**標準の `RobotFileParser.read()`（401/403 を `disallow_all`）より
+  許可側に倒れている**。UR賃貸のAPIホストが実際に **HTTP 403** を返すので、
+  オリジンごとに1回だけ警告を記録する（→ ADR 0019）。⚠ 403 は**不在ではなく拒否**なので
+  `ignore_robots`（ADR 0011）とは別の話として扱う
+- **GET＋HTML の枠に収まらないサイトは任意フックで委譲する**（→ ADR 0019）。
+  `pipeline.scan` が `collect_listings` / `fetch_detail` の宣言を `getattr` で見て、
+  **一覧の収集／詳細の取得だけ**を差し替える。MUST 1段目・upsert・詳細キュー・
+  `--detail-limit`・設備抽出・名寄せは既存経路を通る。
+  ⚠ **`SiteScraper` Protocol にメソッドを足さない**（既存10アダプタに実装義務が生じる）。
+  ⚠ **フックに「一覧＋詳細」を対で返させない**（`--detail-limit` が効かなくなる）
+- **UR賃貸は3段のJSON API（POST）**。①団地一覧 ②住戸一覧 ③住戸詳細。
+  ⚠ **①と②でページ送りの有無が逆**（①は `pageIndex` を黙って無視して全件返し、
+  ②は1ページ5件で末尾を超えると **`null`** を返す。空配列ではないので反復すると `TypeError`）。
+  ⚠ **②と③は同じキー名でも中身が違う**（③は `type`/`floorspace`/`commonfee` が `None` で
+  `madori`/`madoriYuka`/`commonfee_sp` に入る）。
+  ⚠ **割引適用の住戸は `rent` が空文字で賃料が `rent_normal` に入る。**
+  見落とすと `price` が NULL → MUST が `unknown` へ落ち、
+  `unknown_policy: keep` の下で**賃料不明の掲載がランキングに並ぶ**（例外にならない）。
+  ⚠ **市区で検索できない**（UR独自の `area=01..` しか無い）ので、都県の全 area を取って
+  応答の `skcs`（市区名）でローカルに絞る。`skcs` は政令市で行政区まで入り
+  `m_cities.canonical_name` と同表記
+- **UR の交通欄はバス経由が半数。** その「徒歩◯分」は**バス停からの徒歩**なので
+  駅徒歩にすると `walk_minutes_max` を不当に通過する。⚠ ただし1行に
+  `徒歩16～19分 または バス3分 徒歩2～5分` と並ぶ形があり、**行ごと弾くと
+  本物の駅徒歩を捨てる**。「または」で選択肢に割ってから1つずつ見る。
+  ⚠ 徒歩がレンジなのは団地に棟が複数あるため（下限を採る）
+- **サイト側の絞り込みを測るとき、対照は「効かないはずのキー」だけでは足りない。**
+  UR で7通り全部が同一応答になったとき、`zzz=1` の対照も「同一」なので
+  **判定方法として妥当と読めてしまう**が、実際は**どのパラメータも効いていなかった**。
+  **効くと分かっているキー（UR なら `tdfk`）も同時に動かして差が出ることを示す**
 - **市区の検索値は3系統ある。** JIS5桁（SUUMO/GOO/ABLE/賃貸EX/EHEYA/SMOCCA）／
   JIS5桁の下3桁（APAMAN）／サイト固有スラグ（HOMES/ATHOME/NIFTY/MINIMINI）。
   スラグ系だけが `m_city_site_values` を引く
