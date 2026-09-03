@@ -114,3 +114,20 @@ def test_scoped_toで範囲だけを差し替えられる() -> None:
     index = CityIndex.build(NATIONWIDE)
     assert resolve_city("府中市白糸台２", index) == (None, None)
     assert resolve_city("府中市白糸台２", index.scoped_to(["東京都"])) == ("東京都", 30)
+
+
+def test_サイトの既存掲載数を数えられる(test_engine) -> None:
+    """「一覧0件」が異常かどうかの判断材料（→ 課題#29）。
+
+    過去に1件も取れていないサイトなら0件は正常でありうるが、実績のあるサイトの
+    0件は取得が壊れた疑いが濃い。⚠ 0件は例外にならないので、こう突き合わせないと
+    「取れているつもり」のまま気づけない。
+    """
+    from house_search.pipeline import persist
+
+    with test_engine.connect() as conn:
+        known = persist.site_listing_count(conn, site_id=1)
+        missing = persist.site_listing_count(conn, site_id=-1)
+    assert isinstance(known, int)
+    assert known >= 0
+    assert missing == 0

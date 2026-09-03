@@ -200,7 +200,11 @@ def site_filter_query(scraper, pattern, site_params) -> dict[str, list[str]]:
 
 
 def _with_site_filters(scraper, pattern, areas: list[AreaTarget], site_params) -> list[str]:
-    """一覧URLに、サイト側フィルタのクエリを足して返す。"""
+    """一覧URLに、サイト側フィルタのクエリを足して返す。
+
+    ⚠ ``scraper.list_urls`` の結果を**1:1で加工する**（順序も件数も変えない）。
+    対照取得はこの対応を前提に、同じ位置の素のURLを使う。
+    """
     urls = scraper.list_urls(pattern, areas)
     query = site_filter_query(scraper, pattern, site_params)
     if not query:
@@ -225,7 +229,12 @@ def _collect_listings(
 ) -> list[ScrapedListing]:
     """一覧ページを辿って掲載を集める。"""
     collected: list[ScrapedListing] = []
-    for base_url in _with_site_filters(scraper, pattern, areas, site_params):
+    filtered_urls = _with_site_filters(scraper, pattern, areas, site_params)
+    # 対照取得に使う「フィルタを外した同じURL」。_with_site_filters は list_urls の
+    # 結果を1:1で加工するので、順序と件数が一致する（strict=True で担保）
+    plain_urls = list(scraper.list_urls(pattern, areas))
+    control_checked = False
+    for base_url, plain_url in zip(filtered_urls, plain_urls, strict=True):
         for page in range(1, max_pages + 1):
             url = scraper.page_url(base_url, page)
             try:
@@ -242,9 +251,36 @@ def _collect_listings(
                 outcome.errors.append(f"一覧の解析に失敗: {url} ({exc})")
                 break
             collected.extend(listings)
+            # ⚠ **フィルタ付きで0件になったら、外して1回だけ取り直す**（→ 課題#29）。
+            # 無効値は HTTP 200 のまま0件を返し例外にならないので、対照を取らないと
+            # 「絞り込めた」のか「壊れた」のか区別がつかない。
+            # サイトごとに1回だけ行う（掲載が本当に無いエリアで毎回叩かないため）
+            if page == 1 and not listings and not control_checked and base_url != plain_url:
+                control_checked = True
+                _check_filter_blackout(scraper, fetcher, plain_url, outcome)
             if scraper.is_last_page(len(listings)):
                 break
     return collected
+
+
+def _check_filter_blackout(scraper, fetcher: SiteFetcher, plain_url: str, outcome) -> None:
+    """サイト側フィルタを外した対照を1回だけ取り、0件の原因を切り分ける。
+
+    対照にも掲載が無ければ「そのエリアに掲載が無い」だけなので何も言わない。
+    対照に掲載があれば**フィルタが原因で0件になっている**ので異常として記録する。
+    """
+    try:
+        listings = scraper.parse_list(fetcher.get(plain_url).text)
+    except (SiteAborted, RobotsDisallowed):
+        raise
+    except Exception as exc:  # noqa: BLE001 - 対照取得の失敗で実行を止めない
+        outcome.errors.append(f"対照取得に失敗: {plain_url} ({exc})")
+        return
+    if listings:
+        outcome.errors.append(
+            "サイト側フィルタで0件になった疑い: "
+            f"フィルタ有り0件 / 外すと{len(listings)}件 ({plain_url})"
+        )
 
 
 def _fetch_details(
@@ -685,6 +721,16 @@ def scan_pattern(
                 site_params=runtime.site_params,
             )
             outcome.listings_seen = len(listings)
+            if not listings:
+                # ⚠ 一覧0件は「取れているつもり」で気づけない失敗の終着点になる
+                # （無効なフィルタ値・ボット検知・DOM変更のどれでも0件になり、
+                # どれも例外にならない）。過去の実績と突き合わせて異常を申告する
+                with runtime.engine.connect() as conn:
+                    known = persist.site_listing_count(conn, site_id)
+                if known:
+                    outcome.errors.append(
+                        f"一覧が0件。過去に {known}件 取り込んでいるサイトなので異常の疑い"
+                    )
 
             # 1段目のMUST判定。fail はDBにも入れず詳細も取りに行かない。
             kept = [
