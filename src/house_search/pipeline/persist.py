@@ -210,6 +210,21 @@ _UPSERT = text(
 )
 
 
+def site_listing_count(conn: Connection, site_id: int) -> int:
+    """そのサイトでこれまでに取り込んだ掲載数。
+
+    「一覧0件」が異常かどうかの判断に使う。過去に1件も取れていないサイトなら
+    0件は正常でありうるが、実績があるサイトの0件は取得が壊れた疑いが濃い。
+    """
+    return int(
+        conn.execute(
+            text("SELECT count(*) FROM t_listings WHERE site_id = :site_id"),
+            {"site_id": site_id},
+        ).scalar()
+        or 0
+    )
+
+
 def upsert_listings(
     conn: Connection,
     listings: list[ScrapedListing],
