@@ -966,6 +966,7 @@ f:\searching-for-houses\
 ├── scripts/
 │   ├── setup_db.ps1            # DB・ロール作成（冪等）
 │   ├── run_initial_scan.ps1    # 初回全件スキャン（Start-Process で切り離す側）
+│   │                           #   -Drain 掃き出し / -Site 1サイトだけ取り直す
 │   ├── task_runner.ps1         # タスクから呼ばれる実体（-Wait で待つ側）
 │   ├── backup_db.ps1           # pg_dump（14世代保持・課題#8）
 │   └── register_tasks.ps1      # タスクスケジューラ登録（schtasks /XML・要管理者）
