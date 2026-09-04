@@ -20,6 +20,11 @@
   （ADR 0015 の不変条件違反。D-room の ``walk`` → §12.4 と同じ理由）
 * ⚠ **``section.m_prpty_list_item`` が「棟」で、住戸は ``.m_prpty_list_room``**
   （D-room の §12.3・ハウスコムの §13 と同じ二層構造）
+* ⚠⚠ **交通欄は ``ul.m_prpty_list_item_main_info_access`` の1つ目の ``li`` から取る**
+  （→ §13.10）。本文から「◯◯駅まで徒歩N分」を探して切り出すと、その形を持たない
+  **バス便**（「東武バス 東金町五丁目停まで徒歩3分、バス乗車してＪＲ常磐線 金町駅まで17分」）が
+  交通欄ごと落ち、**駅が同定できず通勤時間が unknown になる**（実測 236掲載中45件＝19%）。
+  ⚠ **例外にならない**うえ、交通欄が取れた掲載だけを分母にすると98.4%と健全に見える
 * ⚠ **築年月ではなく築年数（「築49年」）しか一覧に無い**ので
   ``ScrapedListing.age_years`` へ渡す（UR と同じ → 課題#37）
 * ⚠ **未知のクエリキーはリダイレクトで落とされる**（``?zzz=1`` を送ると
@@ -197,7 +202,7 @@ class HomemateScraper:
         """棟1つを住戸へ展開する。"""
         text = _flat(section.text_content())
         building_name = self._building_name(section)
-        access = self._access(text, building_name)
+        access = self._access(section)
         address_match = _ADDRESS.search(text)
         # ⚠ 住所は空白を落として他サイトと表記を揃える（dedup_key を一致させるため）。
         #    ⚠ **交通欄の空白は落とさない**（落とすと路線名ごと駅名になる → §12.3）
@@ -218,20 +223,25 @@ class HomemateScraper:
                 listings.append(listing)
         return listings
 
-    def _access(self, text: str, building_name: str | None = None) -> str | None:
-        """交通欄（「都営日暮里・舎人ライナー 扇大橋駅まで徒歩15分」）を切り出す。
+    def _access(self, section) -> str | None:
+        """交通欄を **DOM から**取る（``ul...._access`` の**1つ目の** ``li``）。
 
+        ⚠⚠ **本文から「◯◯駅まで徒歩N分」を探して切り出してはいけない**（→ §13.10）。
+        バス便はこの形を持たず、
+        「東武バス 東金町五丁目停まで徒歩3分、バス乗車してＪＲ常磐線 金町駅まで17分」
+        と書かれるため、**交通欄ごと落ちて駅が同定できず通勤時間が unknown になる**。
+        実測で236掲載中45件（19%）がこれだった。⚠ **例外にならないので気づけない**
+        （交通欄が取れた191件の同定率は98.4%で、一見すると健全に見える）。
+
+        ⚠ **2つ目の ``li`` は住所**なので混ぜない。
         ⚠ **駅名の直前の空白を残す**。落とすと ``commute/matcher`` が路線名ごと
         駅名にしてしまい、実在しない駅名になって同定できない（→ §12.3）。
         """
-        matches = list(_STATION.finditer(text))
-        if not matches:
-            return None
-        start = max(0, matches[0].start() - 40)
-        access = _flat(text[start : matches[-1].end()])
-        if building_name and building_name in access:
-            access = _flat(access.split(building_name, 1)[1])
-        return access or None
+        for block in section.cssselect("ul.m_prpty_list_item_main_info_access"):
+            items = block.cssselect("li")
+            if items and (access := _flat(items[0].text_content())):
+                return access
+        return None
 
     def _building_name(self, section) -> str | None:
         for head in section.cssselect("h2, h3, .m_prpty_list_ttl, .m_prpty_list_bill_ttl"):
