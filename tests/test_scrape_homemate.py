@@ -45,6 +45,17 @@ def list_html() -> str:
 
 
 @pytest.fixture(scope="module")
+def list_bus_html() -> str:
+    """バス便を含む一覧（葛飾区・2026-09-05 取得）。
+
+    ⚠ 足立区の ``list_page1.html`` は25棟すべてが「◯◯駅まで徒歩N分」型で、
+    **バス便が1件も入っていない**。そのため本文走査の欠陥（→ §13.10）を
+    検出できなかった。
+    """
+    return (FIXTURES / "list_bus.html").read_text(encoding="utf-8", errors="replace")
+
+
+@pytest.fixture(scope="module")
 def detail_html() -> str:
     return (FIXTURES / "detail.html").read_text(encoding="utf-8", errors="replace")
 
@@ -122,6 +133,46 @@ def test_station_info_keeps_station_suffix_and_space(
     names = [name for group in extract_station_names(first.station_info) for name in group]
     assert "扇大橋" in names
     assert not [name for name in names if "線" in name or "ライナー" in name]
+
+
+def test_access_is_read_from_dom_for_every_room(
+    scraper: HomemateScraper, list_html: str, list_bus_html: str
+) -> None:
+    """⚠⚠ 交通欄は**DOMの li から**取る。本文走査だと**バス便が丸ごと落ちる**。
+
+    本文から「◯◯駅まで徒歩N分」を探して切り出していたため、その形を持たない
+    バス便は交通欄が None になり、**駅が同定できず通勤時間が unknown**になっていた
+    （実測で236掲載中45件＝19%。→ §13.10・課題#37）。
+    ⚠ **例外にならず、交通欄が取れた掲載の同定率は98.4%と健全に見える**ので、
+    掲載全体を分母にしないと気づけない。
+    """
+    for html in (list_html, list_bus_html):
+        listings = scraper.parse_list(html)
+        assert listings
+        assert [listing for listing in listings if not listing.station_info] == []
+
+
+def test_bus_route_keeps_station_but_not_walk_minutes(
+    scraper: HomemateScraper, list_bus_html: str
+) -> None:
+    """バス便は**駅名を残しつつ駅徒歩は付けない**。
+
+    ⚠ 「東金町五丁目停まで徒歩3分」はバス停からの徒歩なので
+    ``walk_minutes`` にしてはいけない（UR・D-room・レオパレスで踏んだ罠）。
+    ⚠ 一方で駅名を捨ててもいけない（捨てると通勤時間が unknown になる）。
+    """
+    bus = [
+        listing
+        for listing in scraper.parse_list(list_bus_html)
+        if listing.station_info and "バス乗車" in listing.station_info
+    ]
+    assert bus, "フィクスチャにバス便の住戸が無い"
+    for listing in bus:
+        assert listing.walk_minutes is None
+        names = extract_station_names(listing.station_info)[0]
+        assert names, f"駅名を拾えていない: {listing.station_info}"
+        # ⚠ バス停名を駅として拾わないこと（「東金町五丁目停」「テクノプラザかつしか停」）
+        assert not [name for name in names if name.endswith("停")]
 
 
 def test_walk_minutes_ignores_bus_route() -> None:
