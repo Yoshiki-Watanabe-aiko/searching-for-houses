@@ -375,6 +375,12 @@ def _run_scan(args: argparse.Namespace) -> int:
             return 1
 
     exit_code = 0
+    # 実行全体のエラーをためて**最後に1通へまとめて**送る（→ notify_error）。
+    # ⚠ 1件ずつ送ると、既知の偽陽性（千代田区・中央区にMUSTを満たす掲載が
+    #   無いことによる「サイト側フィルタで0件になった疑い」）だけで
+    #   2時間ごとに8通（2帯×4件）飛び、チャンネルが読まれなくなる。
+    #   読まれない通知は、本物のエラーを見逃すという形で実害になる
+    run_errors: list[str] = []
     for pattern in patterns:
         summary = scan_pattern(
             runtime,
@@ -408,8 +414,36 @@ def _run_scan(args: argparse.Namespace) -> int:
             print(line)
         for message in summary.errors:
             print(f"  [エラー] {message}", file=sys.stderr)
+            run_errors.append(f"[{summary.pattern_name}] {message}")
             exit_code = 1
+
+    _send_run_errors(runtime, run_errors)
     return exit_code
+
+
+def _send_run_errors(runtime, errors: list[str]) -> None:
+    """実行中に出たエラーをエラーチャンネルへ1通で送る。
+
+    ⚠ **ここが無いとエラー通知は永久に届かない。** ``notify_error`` は
+    Phase 1 から定義されていたが**呼び出し元が1箇所も無く**、
+    `DISCORD_WEBHOOK_ERRORS` を設定しても何も起きない状態だった
+    （要件定義書 §14 は「エラーチャンネルへ通知」と書いている）。
+    ⚠ **送信されないこと自体が例外にならない**ので、実データを見るまで
+    気づけない典型（「実装済みだが未配線」→ 要件定義書 §17）。
+
+    ⚠ **同じ本文はまとめて件数で出す。** 既知の偽陽性が毎回並ぶと
+    本物のエラーが埋もれるため。
+    """
+    if not errors:
+        return
+    counts: dict[str, int] = {}
+    for message in errors:
+        counts[message] = counts.get(message, 0) + 1
+    lines = [f"・{message}" + (f"（{n}件）" if n > 1 else "") for message, n in counts.items()]
+    runtime.notify_error(
+        title=f"スキャンでエラー {len(errors)}件",
+        detail="\n".join(lines),
+    )
 
 
 def _cmd_check_sold(args: argparse.Namespace) -> int:

@@ -106,3 +106,72 @@ class Test通知先の事前解決:
         assert "effective_digest_webhook_ref" in source
         # ⚠ 取得（scan_pattern）より前に確かめていること
         assert source.index("_webhook_error") < source.index("scan_pattern(")
+
+
+class Testエラー通知の配線:
+    """``notify_error`` が実際に呼ばれていることを固定する。
+
+    ⚠ **Phase 1 から定義だけがあり、呼び出し元が1箇所も無かった**
+    （2026-09-05 発見）。`DISCORD_WEBHOOK_ERRORS` を設定しても何も起きず、
+    **送信されないこと自体が例外にならない**ので実データを見るまで気づけない。
+    要件定義書 §14 が求める「エラーチャンネルへ通知」が死んでいた。
+    """
+
+    def test_notify_errorに呼び出し元がある(self) -> None:
+        """定義だけの状態へ戻ったら落ちる（本欠陥の回帰テスト）。"""
+        import pathlib
+
+        src = pathlib.Path(__file__).resolve().parents[1] / "src" / "house_search"
+        callers = [
+            path.name
+            for path in src.rglob("*.py")
+            if "notify_error(" in path.read_text(encoding="utf-8")
+            and path.name != "runtime.py"  # 定義そのものは除く
+        ]
+        assert callers, "notify_error の呼び出し元が1箇所も無い（定義だけの状態）"
+
+    def test_scanがエラーをまとめて送る(self) -> None:
+        from house_search.cli import _send_run_errors
+
+        sent: list[tuple[str, str]] = []
+
+        class _Runtime:
+            def notify_error(self, title: str, detail: str) -> None:
+                sent.append((title, detail))
+
+        _send_run_errors(_Runtime(), ["[帯1] A", "[帯2] A", "[帯1] B"])
+        assert len(sent) == 1, "1実行につき1通にまとめること"
+        title, detail = sent[0]
+        assert "3件" in title
+        # ⚠ 同じ本文は件数でまとめる（既知の偽陽性で本物が埋もれないように）
+        assert "・[帯1] A" in detail
+        assert "・[帯2] A" in detail
+        assert "・[帯1] B" in detail
+
+    def test_同じ本文は件数でまとめる(self) -> None:
+        from house_search.cli import _send_run_errors
+
+        sent: list[tuple[str, str]] = []
+
+        class _Runtime:
+            def notify_error(self, title: str, detail: str) -> None:
+                sent.append((title, detail))
+
+        _send_run_errors(_Runtime(), ["同じ", "同じ", "同じ"])
+        assert sent[0][1] == "・同じ（3件）"
+
+    def test_エラーが無ければ送らない(self) -> None:
+        """正常時に毎回1通届くと、通知そのものが読まれなくなる。"""
+        from house_search.cli import _send_run_errors
+
+        class _Runtime:
+            def notify_error(self, title: str, detail: str) -> None:
+                raise AssertionError("エラーが無いのに送信した")
+
+        _send_run_errors(_Runtime(), [])
+
+    def test_scanがエラー送信を呼んでいる(self) -> None:
+        from house_search import cli
+
+        source = inspect.getsource(cli._run_scan)
+        assert "_send_run_errors" in source
