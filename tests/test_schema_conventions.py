@@ -7,6 +7,9 @@ Alembic の autogenerate は物理列順を見ず、コメントの付け忘れ�
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 from sqlalchemy import Engine, text
 
@@ -150,11 +153,21 @@ def test_マスタデータが投入されている(test_engine: Engine) -> None
             assert actual >= expected, f"{table}: {actual} < {expected}"
 
 
-def test_賃貸EXを含む12サイトが登録されている(test_engine: Engine) -> None:
+def test_サイトマスタが登録されている(test_engine: Engine) -> None:
+    """``db/seed/02_sites.sql`` の全サイトが入っていること。
+
+    ⚠ **件数のハードコードをやめた。** Phase 5F 以降で UR・レオパレス21・D-room・
+    ハウスコム・ホームメイトを足したが、テストDBへ ``db-seed --test-db`` を
+    流していなかったため「12サイト」の期待値が**残ったまま緑だった**。
+    seed の実データと突き合わせるほうが、サイトを足すたびに黙って古くなることがない。
+    """
+    seed = (Path(__file__).parents[1] / "db" / "seed" / "02_sites.sql").read_text(encoding="utf-8")
+    expected = set(re.findall(r"^\s*\('([A-Z_]+)',", seed, re.MULTILINE))
     with test_engine.connect() as conn:
         codes = set(conn.execute(text("SELECT code FROM m_sites")).scalars())
     assert "CHINTAI_EX" in codes
-    assert len(codes) == 12
+    assert expected, "02_sites.sql からサイトコードを1件も読めていない"
+    assert expected <= codes, f"seed にあるのにDBへ入っていない: {sorted(expected - codes)}"
 
 
 def test_全サイトがHTTP取得(test_engine: Engine) -> None:
