@@ -82,6 +82,10 @@ class ScanSummary:
     must_pass: int = 0
     notified: int = 0
     notify_failed: int = 0
+    # ranking.notify_max_rank の圏外で送らなかった件数。
+    # 絞り込みを実行サマリに出さないと「通知が来ない」のが
+    # 意図どおりなのか不具合なのか見分けられない
+    notify_out_of_rank: int = 0
     groups_changed: int = 0
     # サイトに属さないエラー（通勤時間の目的地が引けない等）。
     # errors は property なので、ここに入れないと append しても消える
@@ -567,6 +571,21 @@ def _group_rank(
     return None
 
 
+def _within_notify_rank(rank: int | None, max_rank: int | None) -> bool:
+    """個別通知を上位N位までに絞る（``ranking.notify_max_rank``）。
+
+    ⚠ **収集・採点・ダイジェストには効かない。** 絞るのは Discord への
+    個別通知だけで、圏外の掲載も従来どおりDBに入り順位も付く。
+
+    ⚠ **順位が引けなかった掲載（None）は通す**（ユーザー判断 2026-09-05）。
+    順位付けの不具合や代表交代の隙間で通知が**黙って全滅する**のを避けるため。
+    落とす側に倒すと、鳴らないことが正常と見分けられない。
+    """
+    if max_rank is None or rank is None:
+        return True
+    return rank <= max_rank
+
+
 def _notify_cheaper_listings(
     runtime: Runtime,
     pattern,
@@ -603,6 +622,11 @@ def _notify_cheaper_listings(
                 change.current_listing_id
             ]
 
+        rank = _group_rank(ranks, view.listing_id or 0, membership)
+        if not _within_notify_rank(rank, pattern.ranking.notify_max_rank):
+            summary.notify_out_of_rank += 1
+            continue
+
         previous = views.get(change.previous_listing_id or -1)
         score = calculate_score(view, pattern.want)
         message = build_listing_message(
@@ -616,7 +640,7 @@ def _notify_cheaper_listings(
             score,
             notification_type=persist.CHEAPER_LISTING,
             pattern_name=pattern.name,
-            rank_in_pattern=_group_rank(ranks, view.listing_id or 0, membership),
+            rank_in_pattern=rank,
         )
         sent = runtime.sender.send(webhook_url, message)
         with runtime.engine.begin() as conn:
@@ -673,6 +697,11 @@ def _notify(
             continue
 
         membership = memberships.get(outcome.listing_id, dedup.NO_GROUP)
+        rank = _group_rank(ranks, outcome.listing_id, membership)
+        if not _within_notify_rank(rank, pattern.ranking.notify_max_rank):
+            summary.notify_out_of_rank += 1
+            continue
+
         with runtime.engine.connect() as conn:
             # グループ単位で抑制する。同一住戸の別サイト掲載を
             # それぞれ「新着」として二重に送らないため
@@ -696,7 +725,7 @@ def _notify(
             score,
             notification_type=notification_type,
             pattern_name=pattern.name,
-            rank_in_pattern=_group_rank(ranks, outcome.listing_id, membership),
+            rank_in_pattern=rank,
         )
         sent = runtime.sender.send(webhook_url, message)
         with runtime.engine.begin() as conn:

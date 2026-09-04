@@ -258,6 +258,14 @@ class RankingSpec(Strict):
             "スコアは種別間で混ぜない（正規化基準が異なり数字が意味を失うため）"
         ),
     )
+    notify_max_rank: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "個別通知（新着・価格変動・他サイト安値）を上位N位までに絞る。"
+            "None は無制限（従来動作）。⚠ 収集・採点・ダイジェストには一切効かない"
+        ),
+    )
 
 
 class PatternBase(Strict):
@@ -267,6 +275,14 @@ class PatternBase(Strict):
     webhook_ref: str = Field(
         min_length=1,
         description="通知先の論理名。.env の DISCORD_WEBHOOK_{大文字} を参照する",
+    )
+    digest_webhook_ref: str | None = Field(
+        default=None,
+        min_length=1,
+        description=(
+            "日次ランキングダイジェストの通知先。省略時は webhook_ref と同じ。"
+            "上位N件だけを別チャンネルへ流したいときに指定する"
+        ),
     )
     sites: list[str] = Field(min_length=1, description="スクレイプ対象サイトコード")
     search: SearchSpec
@@ -279,6 +295,11 @@ class PatternBase(Strict):
     @property
     def family(self) -> Family:
         return FAMILY_OF[self.property_type]  # type: ignore[attr-defined]
+
+    @property
+    def effective_digest_webhook_ref(self) -> str:
+        """ダイジェストの実際の通知先。未指定なら個別通知と同じチャンネルへ送る。"""
+        return self.digest_webhook_ref or self.webhook_ref
 
     @model_validator(mode="after")
     def _validate_against_registry(self) -> PatternBase:
