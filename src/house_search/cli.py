@@ -41,7 +41,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p_validate = sub.add_parser(
-        "validate-config", help="検索パターンYAMLと webhook_ref の参照を検証する"
+        "validate-config",
+        help="検索パターンYAMLと通知先（webhook_ref / digest_webhook_ref）の参照を検証する",
     )
     p_validate.add_argument(
         "--configs-dir", help="検証対象ディレクトリ（省略時は .env の CONFIGS_DIR）"
@@ -249,16 +250,24 @@ def _cmd_validate_config(args: argparse.Namespace) -> int:
             continue
 
         if not args.skip_webhook:
-            try:
-                settings.webhook_url(pattern.webhook_ref)
-            except ValueError as exc:
+            # ⚠ ダイジェストの通知先も確かめる。個別通知と別チャンネルにしたとき
+            #   ここを見ないと、20:00 のダイジェストで初めて欠落に気づくことになる
+            refs = {pattern.webhook_ref, pattern.effective_digest_webhook_ref}
+            missing = [
+                message for ref in sorted(refs) for message in _webhook_error(settings, ref)
+            ]
+            if missing:
                 failures += 1
-                print(f"NG  {path.name}: {exc}", file=sys.stderr)
+                print(f"NG  {path.name}: " + " / ".join(missing), file=sys.stderr)
                 continue
 
+        digest_ref = pattern.effective_digest_webhook_ref
+        rank_cap = pattern.ranking.notify_max_rank
         print(
             f"OK  {path.name}  name={pattern.name} "
-            f"type={pattern.property_type} config_hash={pattern.config_hash()[:12]}"
+            f"type={pattern.property_type} config_hash={pattern.config_hash()[:12]} "
+            f"webhook={pattern.webhook_ref} digest={digest_ref} "
+            f"notify_max_rank={rank_cap if rank_cap is not None else '無制限'}"
         )
         known_names.append(pattern.name)
 
@@ -320,6 +329,15 @@ def _cmd_scan(args: argparse.Namespace) -> int:
         return _run_scan(args)
 
 
+def _webhook_error(settings, ref: str) -> list[str]:
+    """Webhook論理名を解決できなければ理由を1件返す（解決できれば空）。"""
+    try:
+        settings.webhook_url(ref)
+    except ValueError as exc:
+        return [str(exc)]
+    return []
+
+
 def _run_scan(args: argparse.Namespace) -> int:
     from house_search.pipeline.runtime import build_runtime
     from house_search.pipeline.scan import scan_pattern
@@ -333,6 +351,29 @@ def _run_scan(args: argparse.Namespace) -> int:
         return 1
 
     patterns = _load_patterns(args.pattern)
+
+    # ⚠ 通知先は**取得を始める前に**解決しておく。`_notify` は
+    #   `scan_pattern` の最後にあるので、ここで確かめないと
+    #   「全16サイトを約50分かけて取得したあとに落ちる」ことになり、
+    #   しかも後続パターンは1件も走らない（相手サイトへの取得も無駄になる）。
+    #   ⚠ シードモードは通知しないので対象外
+    if not args.seed:
+        missing = [
+            str(exc)
+            for pattern in patterns
+            for ref in sorted({pattern.webhook_ref, pattern.effective_digest_webhook_ref})
+            for exc in _webhook_error(runtime.settings, ref)
+        ]
+        if missing:
+            for message in missing:
+                print(f"通知先を解決できません: {message}", file=sys.stderr)
+            print(
+                "`.env` を更新してから再実行してください"
+                "（`house-search validate-config` で確認できます）。",
+                file=sys.stderr,
+            )
+            return 1
+
     exit_code = 0
     for pattern in patterns:
         summary = scan_pattern(
@@ -359,7 +400,12 @@ def _run_scan(args: argparse.Namespace) -> int:
             print(f"  スキップ: {', '.join(summary.skipped_sites)}")
         print(f"  採点 {summary.scored}件 / MUST通過 {summary.must_pass}件")
         if not args.seed:
-            print(f"  通知 成功 {summary.notified}件 / 失敗 {summary.notify_failed}件")
+            line = f"  通知 成功 {summary.notified}件 / 失敗 {summary.notify_failed}件"
+            if summary.notify_out_of_rank:
+                # 絞り込みを黙って効かせない。「通知が来ない」のが
+                # notify_max_rank によるものだと実行サマリから分かるようにする
+                line += f" / 順位圏外で送らず {summary.notify_out_of_rank}件"
+            print(line)
         for message in summary.errors:
             print(f"  [エラー] {message}", file=sys.stderr)
             exit_code = 1

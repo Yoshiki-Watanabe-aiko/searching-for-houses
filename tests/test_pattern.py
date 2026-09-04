@@ -201,10 +201,79 @@ def test_実運用の検索パターンが読める(filename: str) -> None:
     """エリア帯ごとの実運用パターンが v2 スキーマを満たすこと（課題#9）。"""
     pattern = load_pattern_file(REPO_ROOT / "configs" / filename)
     assert pattern.property_type == "CHINTAI"
-    assert pattern.webhook_ref == "CHINTAI_ALONE"
     # RC / SRC は排他なので any_of で1項目にまとめてある
     any_of_items = [f for f in pattern.want.features if f.any_of]
     assert [f.codes for f in any_of_items] == [("STRUCT_RC", "STRUCT_SRC")]
+
+
+@pytest.mark.parametrize(
+    ("filename", "webhook_ref"),
+    [
+        ("chintai_23ku.yaml", "CHINTAI_23KU"),
+        ("chintai_suburb60.yaml", "CHINTAI_SUBURB60"),
+    ],
+)
+def test_個別通知は帯ごとに別チャンネルへ送る(filename: str, webhook_ref: str) -> None:
+    """帯ごとに ``webhook_ref`` を分けてあること（2026-09-05 ユーザー判断）。
+
+    同じ ref を共有していると「設定ファイルごとにチャンネルを分ける」が
+    崩れるが、送信自体は成功するので Discord を見るまで気づけない。
+    """
+    pattern = load_pattern_file(REPO_ROOT / "configs" / filename)
+    assert pattern.webhook_ref == webhook_ref
+
+
+@pytest.mark.parametrize("filename", ["chintai_23ku.yaml", "chintai_suburb60.yaml"])
+def test_ダイジェストは専用チャンネルへ集約する(filename: str) -> None:
+    """上位N件は帯をまたいで1つの「厳選」チャンネルへ送る。"""
+    pattern = load_pattern_file(REPO_ROOT / "configs" / filename)
+    assert pattern.digest_webhook_ref == "DIGEST"
+    assert pattern.effective_digest_webhook_ref == "DIGEST"
+    # ⚠ 個別通知と同じチャンネルに戻っていないこと
+    assert pattern.effective_digest_webhook_ref != pattern.webhook_ref
+
+
+@pytest.mark.parametrize("filename", ["chintai_23ku.yaml", "chintai_suburb60.yaml"])
+def test_個別通知は上位200位までに絞る(filename: str) -> None:
+    """``notify_max_rank`` が実運用パターンに配線されていること。"""
+    pattern = load_pattern_file(REPO_ROOT / "configs" / filename)
+    assert pattern.ranking.notify_max_rank == 200
+
+
+def test_digest_webhook_refは未指定ならwebhook_refへ落ちる() -> None:
+    """既存パターンの挙動を変えない（省略時は従来どおり同じチャンネル）。"""
+    pattern = parse_pattern(_chintai())
+    assert pattern.digest_webhook_ref is None
+    assert pattern.effective_digest_webhook_ref == "CHINTAI_ALONE"
+
+
+def test_notify_max_rankの既定は無制限() -> None:
+    """既定を200にすると、新しいパターンが黙って通知を絞ることになる。"""
+    pattern = parse_pattern(_chintai())
+    assert pattern.ranking.notify_max_rank is None
+
+
+def test_notify_max_rankは0以下を受け付けない() -> None:
+    with pytest.raises(ValidationError):
+        parse_pattern(_chintai(ranking={"notify_max_rank": 0}))
+
+
+def test_通知先と順位上限はconfig_hashを変えない() -> None:
+    """通知の設定を変えただけで全件再スコアが走らないこと。
+
+    ``config_hash`` は property_type / want / commute だけを見る。
+    ここに通知の設定が混ざると、チャンネルを分けた瞬間に
+    数千件の再採点が走る（実害は時間だけだが意図しない挙動）。
+    """
+    base = parse_pattern(_chintai()).config_hash()
+    changed = parse_pattern(
+        _chintai(
+            webhook_ref="CHINTAI_23KU",
+            digest_webhook_ref="DIGEST",
+            ranking={"top_n": 15, "notify_max_rank": 200},
+        )
+    ).config_hash()
+    assert base == changed
 
 
 def test_エリア帯は市区を明示列挙し重ならない() -> None:

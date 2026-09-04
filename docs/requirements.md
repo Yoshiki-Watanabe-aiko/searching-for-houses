@@ -121,7 +121,7 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 | コマンド | 動作 | 実装 |
 |---|---|---|
 | `db-seed` | マスタデータ（`db/seed/*.sql`）を投入する。`--test-db` でテストDBへ | ✅ Phase 0 |
-| `validate-config` | 検索パターンYAMLと `webhook_ref` の参照を検証する | ✅ Phase 0 |
+| `validate-config` | 検索パターンYAMLと通知先（`webhook_ref` / `digest_webhook_ref`）の参照を検証する | ✅ Phase 0 |
 | `scan` | 一覧取得 → MUST判定 → 詳細 → 抽出 → スコア → 通知 | ✅ Phase 1 |
 | `scan --seed` | **シードモード**。通知を送らず記録だけ行う | ✅ Phase 1 |
 | `scan --full` | 全量スキャン（`m_sites.max_pages_per_run` まで） | ✅ Phase 1 |
@@ -248,8 +248,9 @@ check-sold は 200件（100件/パターン × 2帯）× 約4.5秒で **約15分
 - 既定: リポジトリ直下の `configs/*.yaml`（環境変数 `CONFIGS_DIR` で変更可）。
   **サブディレクトリは読まない**（`glob("*.yaml")` は非再帰）
 - 実運用: **エリア帯ごとに1本**（Git管理下。課題#9 解消）
-  - [`configs/chintai_23ku.yaml`](../configs/chintai_23ku.yaml) — 東京23区（23市区）
-  - [`configs/chintai_suburb60.yaml`](../configs/chintai_suburb60.yaml) — 近郊60分圏（59市区）
+  - [`configs/chintai_23ku.yaml`](../configs/chintai_23ku.yaml) — 東京23区（23市区・個別通知は `CHINTAI_23KU`）
+  - [`configs/chintai_suburb60.yaml`](../configs/chintai_suburb60.yaml) — 近郊60分圏（59市区・個別通知は `CHINTAI_SUBURB60`）
+  - **個別通知は帯ごとに別チャンネル、ダイジェストは両帯とも `DIGEST` へ集約**する（→ §9.1）
 - 雛形: [`configs/examples/chintai_v2.yaml`](../configs/examples/chintai_v2.yaml)
   — **`configs/` 直下に置くと実パターンとして走ってしまう**ため `examples/` に置く
 - v1形式の設定は `configs/_v1/`（Git管理外）へ退避してある
@@ -452,7 +453,8 @@ discriminated union で3ファミリへ分岐する。未知のキーはエラ�
 ```yaml
 name: "東京賃貸一人暮らし"
 property_type: "CHINTAI"
-webhook_ref: "CHINTAI_ALONE"       # .env の DISCORD_WEBHOOK_CHINTAI_ALONE を参照
+webhook_ref: "CHINTAI_ALONE"       # 個別通知の宛先。.env の DISCORD_WEBHOOK_CHINTAI_ALONE を参照
+digest_webhook_ref: "DIGEST"       # ダイジェストの宛先。省略時は webhook_ref と同じ
 sites: [SUUMO, HOMES, ATHOME, GOO, ABLE, MINIMINI, EHEYA, NIFTY, APAMAN, SMOCCA]
 
 search:                             # サイト側へ渡す唯一の条件
@@ -494,6 +496,7 @@ want:
 ranking:
   top_n: 15
   digest_group: null                # 同一グループをダイジェストに並記（スコアは混ぜない）
+  notify_max_rank: 200              # 個別通知を上位N位までに絞る。null は無制限
 ```
 
 ### 5.3 種別ごとに使える metric
@@ -632,6 +635,38 @@ SHA256 を `config_hash` として保存し、不一致なら自動再スコア�
 
 - 即時通知はスコア・パターン内順位・得点上位3項目・未確認項目数を載せる
 - Discord制約: description 4096字/1embed、6000字/1メッセージ、10embed/1メッセージ
+
+### 9.1 通知先の分割と順位による絞り込み（2026-09-05 ユーザー判断）
+
+**通知先は「個別通知」と「ダイジェスト」で分ける。**
+
+| 用途 | 参照するキー | 実運用の宛先 |
+|---|---|---|
+| 個別通知（`new` / `price_down` / `price_up` / `cheaper_listing`） | `webhook_ref` | 帯ごとに別（`CHINTAI_23KU` / `CHINTAI_SUBURB60`） |
+| 日次ダイジェスト（上位15件） | `digest_webhook_ref` | 両帯とも `DIGEST`（専用チャンネルへ集約） |
+
+- `digest_webhook_ref` を**省略すると `webhook_ref` へ落ちる**ので、既存パターンの挙動は変わらない
+- ⚠ **`sold` は通知していない。** `check_sold` は `t_listings.status` を更新するだけで
+  Webhook を叩かない（表の `sold` 行は仕様として残っているが未配線）
+
+**個別通知は `ranking.notify_max_rank` で上位N位までに絞る**（実運用は両帯とも **200**）。
+
+- ⚠ **収集・採点・ダイジェストには一切効かない。** 圏外の掲載も従来どおり
+  取得され、DBに入り、順位も付く。締めても緩めても**取り直しにはならない**
+  （MUST を緩める場合と違い、掲載がDBから消えないため → ADR 0013）
+- ⚠ **順位が引けなかった掲載（`rank_in_pattern` が NULL）は通す。**
+  落とす側に倒すと、順位付けの不具合や代表交代の隙間で
+  **通知が全滅してもエラーにならず、鳴らないことと正常が見分けられない**
+- 圏外で送らなかった件数は実行サマリに「順位圏外で送らず N件」として出る。
+  絞り込みを黙って効かせないため
+- 既定値は `null`（無制限）。既定を200にすると**新しいパターンが黙って通知を絞る**
+- ⚠ `notify_max_rank` と `digest_webhook_ref` は **`config_hash` に含めない**
+  （通知の設定を変えただけで全件再スコアが走らないようにする）。
+  `tests/test_pattern.py` が回帰テストしている
+- ⚠ **通知先は取得を始める前に解決する**（`scan` の fail-fast）。`_notify` は
+  `scan_pattern` の最後にあるため、ここで確かめないと
+  **全16サイトを約50分かけて取得したあとに落ち、後続パターンは1件も走らない**。
+  `validate-config` も `digest_webhook_ref` を検証対象に含める
 - **種別横断ランキングは作らない。** 正規化基準が異なるスコアを混ぜると数字が意味を失う。
   「中古Mと中古Kを並べて見たい」は `digest_group` によるセクション並記で応える
 - **通知はグループ単位で抑制する**（Phase 4）。同一住戸の別サイト掲載を
@@ -872,7 +907,10 @@ uv run house-search db-seed --test-db
 | `DATABASE_URL` | ✅ | 本番DB接続URL（`postgresql+psycopg://user:pass@host:port/dbname`） |
 | `DATABASE_TEST_URL` | — | テストDB接続URL。未設定時はDB統合テストをスキップ |
 | `DISCORD_WEBHOOK_ERRORS` | ✅ | グローバルエラー通知チャンネル |
-| `DISCORD_WEBHOOK_{論理名}` | ✅ | 検索パターンの `webhook_ref` が参照する通知先 |
+| `DISCORD_WEBHOOK_{論理名}` | ✅ | 検索パターンの `webhook_ref` / `digest_webhook_ref` が参照する通知先 |
+| `DISCORD_WEBHOOK_CHINTAI_23KU` | ✅ | 「東京23区賃貸」の個別通知 |
+| `DISCORD_WEBHOOK_CHINTAI_SUBURB60` | ✅ | 「近郊60分圏賃貸」の個別通知 |
+| `DISCORD_WEBHOOK_DIGEST` | ✅ | 上位15件ダイジェスト専用（両帯が共有） |
 | `CONFIGS_DIR` | — | 検索パターンYAMLのディレクトリ |
 | `DATA_DIR` | — | 設備抽出辞書などGit管理データのディレクトリ |
 | `DEFAULT_MIN_INTERVAL_SEC` | — | サイト個別設定が無い場合のリクエスト間隔（秒） |

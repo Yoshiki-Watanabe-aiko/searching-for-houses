@@ -174,7 +174,9 @@ def digest(runtime: Runtime, pattern, *, dry_run: bool = False) -> DigestResult:
     if dry_run:
         return DigestResult(pattern_name=pattern.name, entries=len(entries), sent=False)
 
-    webhook_url = runtime.settings.webhook_url(pattern.webhook_ref)
+    # ⚠ ダイジェストは digest_webhook_ref（未指定なら webhook_ref）へ送る。
+    #   上位N件だけを個別通知とは別のチャンネルへ流せるようにするため
+    webhook_url = runtime.settings.webhook_url(pattern.effective_digest_webhook_ref)
     sent = runtime.sender.send(webhook_url, message)
     with runtime.engine.begin() as conn:
         persist.record_digest(
