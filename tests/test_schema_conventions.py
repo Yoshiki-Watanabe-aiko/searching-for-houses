@@ -18,6 +18,7 @@ from house_search.db.models import Base
 pytestmark = pytest.mark.db
 
 EXPECTED_MASTER_TABLES = {
+    "m_address_points",
     "m_cities",
     "m_city_site_values",
     "m_condition_categories",

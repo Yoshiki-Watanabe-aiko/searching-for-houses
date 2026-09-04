@@ -430,7 +430,7 @@ def _fetch_details(
             )
             # 詳細で階数・住所が埋まると、一覧の時点では作れなかった名寄せキーが
             # 作れるようになる。ここで呼ばないとキー充足率が上がらない
-            dedup.refresh_dedup_keys(conn, [listing_id])
+            dedup.refresh_dedup_keys(conn, [listing_id], runtime.address_index)
         outcome.details_fetched += 1
         outcome.features_extracted += saved
 
@@ -896,7 +896,9 @@ def scan_pattern(
                     property_type_id=property_type_id,
                     city_index=city_index,
                 )
-                dedup.refresh_dedup_keys(conn, [o.listing_id for o in outcomes])
+                dedup.refresh_dedup_keys(
+                    conn, [o.listing_id for o in outcomes], runtime.address_index
+                )
             outcome.listings_new = sum(1 for o in outcomes if o.is_new)
             all_outcomes.extend(outcomes)
 

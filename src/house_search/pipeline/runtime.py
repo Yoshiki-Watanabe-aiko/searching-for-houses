@@ -16,6 +16,8 @@ from house_search.config.settings import Settings, load_settings
 from house_search.config.site_params import SITE_PARAMS_FILENAME, load_site_params
 from house_search.config.site_params import load_from_db as load_site_params_from_db
 from house_search.db.session import create_db_engine
+from house_search.dedup.address import AddressIndex
+from house_search.dedup.address_master import load_address_index
 from house_search.extract.dictionary import FeatureDictionary, load_dictionary, load_from_db
 from house_search.notify.discord import DiscordSender, build_sender
 from house_search.pipeline import persist
@@ -44,6 +46,10 @@ class Runtime:
     # サイト側へ渡す MUST の定義（→ ADR 0015）。既定は空で、
     # 検索パターンが site_filters を有効にしたときだけ使われる
     site_params: SiteParamTable = field(default_factory=SiteParamTable)
+    # 住所マスタの索引（→ ADR 0020）。丁目が実在するかの判定に使う。
+    # ⚠ 空のまま名寄せを回すと番地を丁目と誤認したままになるので、
+    # scan / regroup は空なら警告する（例外にはしない。マスタ未同期でも動かすため）
+    address_index: AddressIndex = field(default_factory=lambda: AddressIndex.build([]))
     _sender: DiscordSender | None = None
 
     @property
@@ -103,6 +109,7 @@ def build_runtime(*, use_test_db: bool = False, prefer_db_dictionary: bool = Tru
         site_ids = persist.load_lookup(conn, "m_sites")
         property_type_ids = persist.load_lookup(conn, "m_property_types")
         city_index = persist.load_city_index(conn)
+        address_index = load_address_index(conn)
 
     # 設備抽出辞書と同じ構成。正典は data/site_search_params.yaml で、
     # sync-site-params で同期したDBの内容を実行時に読む
@@ -122,4 +129,5 @@ def build_runtime(*, use_test_db: bool = False, prefer_db_dictionary: bool = Tru
         property_type_ids=property_type_ids,
         city_index=city_index,
         site_params=site_params,
+        address_index=address_index,
     )

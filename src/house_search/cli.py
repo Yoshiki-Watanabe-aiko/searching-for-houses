@@ -110,6 +110,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser(
+        "sync-addresses",
+        help="data/address_master/*.csv を m_address_points へ同期する（ネットワーク不要）",
+    )
+
+    sub.add_parser(
         "sync-stations",
         help="data/train_master/*.csv を m_stations へ同期する（ネットワーク不要）",
     )
@@ -349,6 +354,13 @@ def _run_scan(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    if runtime.address_index.is_empty:
+        # ⚠ 止めはしない（取得と採点は成立する）が、名寄せは番地を丁目と誤認したままになる。
+        print(
+            "住所マスタが空です。名寄せの精度が落ちます"
+            "（`house-search sync-addresses` → `regroup` で解消します）。",
+            file=sys.stderr,
+        )
 
     patterns = _load_patterns(args.pattern)
 
@@ -628,6 +640,32 @@ def _cmd_sync_site_params(args: argparse.Namespace) -> int:
     for spec in table.specs:
         state = "有効" if spec.is_enabled else "無効"
         print(f"  {spec.site_code}/{spec.property_type}/{spec.axis} -> {spec.param_name} [{state}]")
+    return 0
+
+
+def _cmd_sync_addresses(args: argparse.Namespace) -> int:
+    from house_search.config.settings import load_settings
+    from house_search.db.session import get_engine
+    from house_search.dedup.address_master import load_address_rows, sync_address_points
+
+    settings = load_settings()
+    loaded = load_address_rows(settings.data_dir)
+    engine = get_engine()
+    applied, deleted = sync_address_points(engine, loaded.rows)
+    print(
+        f"同期しました: {applied}件"
+        f"（丁目 {loaded.chome_count} / 町名 {loaded.town_count}・入れ替え前 {deleted}件）"
+    )
+    if loaded.merged:
+        # ⚠ 黙って潰さない。正規化すると同じキーになる原典行（「原町」と「大字原町」など）は
+        #    正当な同一化だが、件数が急に増えたら正規化の欠陥を疑う材料になる。
+        print(f"  正規化で同じキーへ集約した原典行: {len(loaded.merged)}件")
+        for key, names in loaded.merged[:20]:
+            print(f"    {key} <- {' / '.join(names)}")
+        if len(loaded.merged) > 20:
+            print(f"    ...ほか {len(loaded.merged) - 20}件")
+    print()
+    print("名寄せへ反映するには `house-search regroup` を実行してください。")
     return 0
 
 
@@ -1247,7 +1285,16 @@ def _cmd_regroup(args: argparse.Namespace) -> int:
     from house_search.pipeline.runtime import build_runtime
     from house_search.pipeline.tasks import regroup
 
-    result = regroup(build_runtime())
+    runtime = build_runtime()
+    if runtime.address_index.is_empty:
+        # ⚠ 索引が空だと「丁目が実在するか」を確かめられず、番地を丁目と誤認したまま
+        #    キーが作り直される（例外にならず件数も減らないので気づけない → ADR 0020）。
+        print(
+            "住所マスタが空です。先に `house-search sync-addresses` を実行してください。",
+            file=sys.stderr,
+        )
+        return 1
+    result = regroup(runtime)
     print(f"名寄せキーを更新した物件: {result.keys_refreshed}件")
     print(f"グループ: {result.groups}件 / グループ化された掲載: {result.grouped_listings}件")
     print(f"代表が入れ替わったグループ: {result.representative_changes}件")
@@ -1312,6 +1359,7 @@ _COMMANDS = {
     "dedup-stats": _cmd_dedup_stats,
     "resolve-cities": _cmd_resolve_cities,
     "sync-site-params": _cmd_sync_site_params,
+    "sync-addresses": _cmd_sync_addresses,
     "sync-stations": _cmd_sync_stations,
     "resolve-stations": _cmd_resolve_stations,
     "resolve-commutes": _cmd_resolve_commutes,

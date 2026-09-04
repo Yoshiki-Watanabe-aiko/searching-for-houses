@@ -12,6 +12,7 @@ from house_search.dedup.address import (
     GRANULARITY_CHOME,
     GRANULARITY_NONE,
     GRANULARITY_TOWN,
+    AddressIndex,
     address_granularity,
     normalize_address,
 )
@@ -81,3 +82,93 @@ def test_粒度を分類できる() -> None:
     assert address_granularity("東京都足立区梅田7丁目") == GRANULARITY_CHOME
     assert address_granularity("千葉県長生郡白子町剃金") == GRANULARITY_TOWN
     assert address_granularity(None) == GRANULARITY_NONE
+
+
+# ---------------------------------------------------------------------------
+# 丁目の実在判定（→ ADR 0020・課題#48）
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def address_index() -> AddressIndex:
+    """住所マスタの索引。値は位置参照情報（令和7年版）の実データから採った。
+
+    - 深谷市中瀬・横浜市緑区長津田町・茂原市早野 … 丁目が存在しない大字（区分1）
+    - 川越市砂新田 … 1〜6丁目が実在する（7丁目以降は無い）
+    - 足立区千住 … 1〜5丁目が実在する
+    """
+    return AddressIndex.build(
+        [
+            ("埼玉県深谷市中瀬", None),
+            ("神奈川県横浜市緑区長津田町", None),
+            ("千葉県茂原市早野", None),
+            *(("埼玉県川越市砂新田", n) for n in range(1, 7)),
+            *(("東京都足立区千住", n) for n in range(1, 6)),
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        # 丁目が存在しない町。数字は番地なので町名まで下げる
+        # （修正前は「埼玉県深谷市中瀬1480丁目」という実在しない住所になっていた）
+        ("埼玉県深谷市中瀬1480-1", "埼玉県深谷市中瀬"),
+        ("埼玉県深谷市中瀬1480", "埼玉県深谷市中瀬"),
+        # APAMAN だけが番地を持つため 18掲載が分断されていた実例
+        ("神奈川県横浜市緑区長津田町2436-4", "神奈川県横浜市緑区長津田町"),
+        # 丁目はあるが番号が範囲外（砂新田は7丁目まで）
+        ("埼玉県川越市砂新田1763", "埼玉県川越市砂新田"),
+        # 実在する丁目はこれまでどおり丁目として採る
+        ("埼玉県川越市砂新田3-5", "埼玉県川越市砂新田3丁目"),
+        ("東京都足立区千住3-1-1", "東京都足立区千住3丁目"),
+        # 小字つき（APAMAN・goo が実際に返す形）。マスタは小字を持たないので
+        # 「字」の手前を町名として引き直す
+        ("千葉県茂原市早野字下夕田1079", "千葉県茂原市早野"),
+        ("千葉県茂原市早野1079", "千葉県茂原市早野"),
+        # 町がマスタに無ければ判定材料が無いので従来どおり（安全側のフォールバック）。
+        # 神奈川県横浜市中区花咲町は実在するが、この索引には入れていない
+        ("神奈川県横浜市中区花咲町1234", "神奈川県横浜市中区花咲町1234丁目"),
+    ],
+)
+def test_丁目が実在するときだけ数字塊を丁目として採る(
+    raw: str, expected: str, address_index: AddressIndex
+) -> None:
+    assert normalize_address(raw, index=address_index) == expected
+
+
+def test_明示的な丁目表記はマスタを見ずに信じる(address_index: AddressIndex) -> None:
+    # マスタに9丁目は無いが、サイトが「丁目」と書いている以上そのまま採る
+    # （推測ではないので実在判定に掛けない）。
+    result = normalize_address("東京都足立区千住9丁目1-2", index=address_index)
+    assert result == "東京都足立区千住9丁目"
+
+
+def test_索引を渡さなければ従来どおりの挙動になる() -> None:
+    # マスタが未同期の環境で結果がぶれないようにするための後方互換。
+    assert normalize_address("埼玉県深谷市中瀬1480-1") == "埼玉県深谷市中瀬1480丁目"
+    nagatsuta = normalize_address("神奈川県横浜市緑区長津田町2436-4")
+    assert nagatsuta == "神奈川県横浜市緑区長津田町2436丁目"
+
+
+def test_空の索引は全件フォールバックと同義なので検出できる() -> None:
+    empty = AddressIndex.build([])
+    assert empty.is_empty
+    assert normalize_address("埼玉県深谷市中瀬1480-1", index=empty) == "埼玉県深谷市中瀬1480丁目"
+
+
+def test_索引は町と丁目の実在をそれぞれ答える(address_index: AddressIndex) -> None:
+    assert not address_index.is_empty
+    assert address_index.has_town("埼玉県深谷市中瀬")
+    assert not address_index.has_chome("埼玉県深谷市中瀬", 1480)
+    assert address_index.has_chome("埼玉県川越市砂新田", 6)
+    assert not address_index.has_chome("埼玉県川越市砂新田", 7)
+    assert not address_index.has_town("神奈川県横浜市中区花咲町")
+
+
+def test_町名の一部に字を含む地名は壊さない(address_index: AddressIndex) -> None:
+    # 小田原市「十字四丁目」は「字」が町名の一部。明示的な丁目表記なのでそもそも
+    # 実在判定に掛からないが、「字」を無条件に落とす実装にすると壊れる形として固定する。
+    assert normalize_address("神奈川県小田原市十字四丁目1-2", index=address_index) == (
+        "神奈川県小田原市十字4丁目"
+    )

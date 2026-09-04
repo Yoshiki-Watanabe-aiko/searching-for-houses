@@ -16,12 +16,27 @@
     GOO         東京都足立区古千谷本町１            丁目を省いて数字だけ
     HOMES       東京都足立区谷中1丁目28-1           番地まで
     SUUMO       神奈川県相模原市緑区中野            丁目すら無い
+
+⚠ **丁目表記が無い住所の「最初の数字塊」は丁目とは限らない**（→ ADR 0020・課題#48）。
+丁目が存在しない町では番地がそのまま丁目になり、``埼玉県深谷市中瀬1480丁目`` という
+**実在しない住所が ``dedup_key`` になる**。実測（2026-09-05）で active 掲載の
+5.4%（1,074件）がこれだった。⚠ **例外にならず件数も減らない**（名寄せが静かに失敗して
+ユニーク率が高く見えるだけ）ので、住所マスタ（``m_address_points``）と
+突き合わせるまで検出できなかった。
+
+そのため ``normalize_address`` は ``index``（``AddressIndex``）を受け取り、
+**その町に丁目が実在するときだけ**数字塊を丁目として採る。
+⚠ **``index`` を渡さなければ挙動は従来どおり**にしてある（マスタ未同期の環境で
+結果がぶれないため）。DBに触らない純関数のまま保つ設計で、索引の組み立ては
+``dedup/address_master.py`` が受け持つ（``commute/matcher.py`` の ``StationIndex`` と同じ形）。
 """
 
 from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterable
+from dataclasses import dataclass
 
 # 一覧・詳細から住所欄を拾うときに紛れ込むサイト固有の付随文字列。
 # ABLE の「周辺地図」は実データで確認済み。
@@ -38,14 +53,53 @@ _CHOME = re.compile(r"([〇一二三四五六七八九十]+)丁目")
 # 「丁目」以降を切り落とすための位置。最初の1つで打ち切る
 # （「1丁目28」を丁目化してしまった場合でも先頭の丁目が残る）。
 _CHOME_MARK = re.compile(r"丁目")
-# 丁目表記が無い住所の数字。先頭の数字塊を丁目とみなす
+# 丁目表記が無い住所の数字。先頭の数字塊を丁目**候補**とみなす
 # （都市部の賃貸は「西早稲田3-1-1」のように丁目-番-号で書かれる）。
+# ⚠ 候補どまりであって確定ではない。丁目の実在は AddressIndex で確かめる。
 _FIRST_NUMBER = re.compile(r"(\d+)\D*[\d\-]*.*$")
 
 # 住所粒度の分類（dedup-stats の観測用）。
 GRANULARITY_CHOME = "丁目まで"
 GRANULARITY_TOWN = "町名まで"
 GRANULARITY_NONE = "解決不能"
+
+
+@dataclass(frozen=True, slots=True)
+class AddressIndex:
+    """住所マスタの索引。「その町に丁目が実在するか」だけを答える。
+
+    ``m_address_points`` から作る（``dedup/address_master.py``）。
+    ⚠ **キーは正規化済みの町名**（``埼玉県深谷市中瀬``）で、掲載側も原典側も
+    同じ ``_normalize_base`` を通してから突き合わせる。別の正規化を作ると
+    2系統がドリフトして、どちらが正しいか言えなくなる。
+    """
+
+    towns: frozenset[str]
+    chomes: frozenset[tuple[str, int]]
+
+    @classmethod
+    def build(cls, rows: Iterable[tuple[str, int | None]]) -> AddressIndex:
+        """``(town_key, chome_number)`` の並びから索引を作る。"""
+        towns: set[str] = set()
+        chomes: set[tuple[str, int]] = set()
+        for town_key, chome_number in rows:
+            if not town_key:
+                continue
+            towns.add(town_key)
+            if chome_number is not None:
+                chomes.add((town_key, int(chome_number)))
+        return cls(towns=frozenset(towns), chomes=frozenset(chomes))
+
+    @property
+    def is_empty(self) -> bool:
+        """マスタ未同期の検出用。空の索引は「全件フォールバック」と同義になる。"""
+        return not self.towns
+
+    def has_town(self, town_key: str) -> bool:
+        return town_key in self.towns
+
+    def has_chome(self, town_key: str, number: int) -> bool:
+        return (town_key, number) in self.chomes
 
 
 def _kanji_to_int(word: str) -> int | None:
@@ -67,14 +121,13 @@ def _chome_to_arabic(match: re.Match[str]) -> str:
     return f"{value}丁目" if value is not None else match.group(0)
 
 
-def normalize_address(address: str | None, prefecture: str | None = None) -> str | None:
-    """名寄せキーの入力に使う正規化住所を作る。
+def normalize_base(address: str | None, prefecture: str | None = None) -> str | None:
+    """丁目の切り詰めを**しない**共通の正規化。
 
-    ``prefecture`` は住所が都道府県から始まらないとき（賃貸EX が実際にそう書く）に
-    前置するためのもの。``resolve_city`` が解決した値をそのまま渡せばよい。
-
-    町名までしか判らない住所はそのまま返す。**判定不能なら None** を返し、
-    呼び出し側は ``dedup_key`` を作らない（グループ化せず単独で残す）。
+    掲載側（``normalize_address``）と住所マスタ側（``address_master``）の双方が通す。
+    ⚠ **原典にこの関数を通さず別の規則で正規化してはいけない。** 突き合わせが
+    静かに0件になり、「マスタと一致しない」のか「正規化がずれている」のかを
+    区別できなくなる。
     """
     if not address:
         return None
@@ -95,12 +148,75 @@ def normalize_address(address: str | None, prefecture: str | None = None) -> str
     # 「霞ヶ関 / 霞ケ関 / 霞が関」の揺れ。ノ/ツ は町名固有表記を壊すので触らない。
     value = value.replace("ヶ", "が").replace("ケ", "が")
 
-    value = _CHOME.sub(_chome_to_arabic, value)
+    return _CHOME.sub(_chome_to_arabic, value) or None
+
+
+def normalize_address(
+    address: str | None,
+    prefecture: str | None = None,
+    index: AddressIndex | None = None,
+) -> str | None:
+    """名寄せキーの入力に使う正規化住所を作る。
+
+    ``prefecture`` は住所が都道府県から始まらないとき（賃貸EX が実際にそう書く）に
+    前置するためのもの。``resolve_city`` が解決した値をそのまま渡せばよい。
+
+    ``index`` は住所マスタの索引（``sync-addresses`` で作る）。丁目表記の無い住所で
+    数字塊を丁目とみなしてよいかの判定に使う。**渡さなければ従来どおり**
+    「最初の数字塊は丁目」として扱う（→ ADR 0020）。
+
+    町名までしか判らない住所はそのまま返す。**判定不能なら None** を返し、
+    呼び出し側は ``dedup_key`` を作らない（グループ化せず単独で残す）。
+    """
+    value = normalize_base(address, prefecture)
+    if not value:
+        return None
+
+    # 明示的な「丁目」表記は信じる。ここは推測ではないのでマスタに問い合わせない。
     if mark := _CHOME_MARK.search(value):
         return value[: mark.end()] or None
-    # 丁目表記が無いなら、最初の数字塊を丁目とみなして以降を捨てる。
-    # 数字が無ければ町名までで確定（SUUMO の「白子町剃金」など）。
-    return _FIRST_NUMBER.sub(r"\1丁目", value) or None
+
+    match = _FIRST_NUMBER.search(value)
+    if match is None:
+        # 数字が無ければ町名までで確定（SUUMO の「白子町剃金」など）。
+        return value
+    raw_town = value[: match.start()]
+    number = int(match.group(1))
+    fallback = f"{raw_town}{number}丁目"
+    if index is None:
+        return fallback
+
+    for candidate in _town_candidates(raw_town):
+        if not index.has_town(candidate):
+            continue
+        if index.has_chome(candidate, number):
+            # その丁目が実在する。従来どおり丁目として採る。
+            return fallback
+        # 町はマスタにあるのに、その丁目が実在しない = 数字は番地。
+        return candidate
+    # ⚠ 町がマスタに無ければ判定材料が無いので、従来どおり丁目とみなす（安全側）。
+    return fallback
+
+
+def _town_candidates(raw_town: str) -> tuple[str, ...]:
+    """マスタに問い合わせる町名の候補を、確からしい順に返す。
+
+    ⚠ **小字（``早野字下夕田``）はマスタに無い。** 位置参照情報が持つのは大字・町丁目まで
+    なので、小字つきの住所（APAMAN・goo が実際に返す）は「字」の手前で引き直す。
+    そうしないと「町がマスタに無い」経路へ落ちて番地が丁目のまま残る
+    （実測 2026-09-05 で ``千葉県茂原市早野字下夕田1079丁目`` など14件）。
+
+    ⚠ **「字」を ``normalize_base`` で無条件に落としてはいけない。**
+    町名の一部に「字」を含む地名が実在する（小田原市 ``十字四丁目``）。
+    ここでマスタに当たった候補だけを採れば、実在する町名を壊さずに済む。
+    """
+    town = raw_town.rstrip("-")
+    if not town:
+        return ()
+    position = town.find("字")
+    if position > 0:
+        return (town, town[:position])
+    return (town,)
 
 
 def address_granularity(normalized: str | None) -> str:
