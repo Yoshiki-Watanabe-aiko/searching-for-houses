@@ -34,6 +34,71 @@ RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 # 呼び出し側（``is_sold``）が掲載終了の判定に使う。
 NOT_FOUND_STATUS = 404
 
+# robots.txt でグループ（User-agent 行に紐づく規則）の一部になるフィールド。
+# これ以外（Sitemap 等）はどの User-agent にも属さないのでそのまま残す。
+ROBOTS_GROUP_FIELDS = frozenset({"allow", "disallow", "crawl-delay", "request-rate"})
+
+
+def merge_robots_groups(text: str) -> list[str]:
+    """robots.txt の同じ User-agent のグループを1つにまとめて行のリストを返す。
+
+    ⚠ **標準の ``RobotFileParser`` は同じ User-agent のグループが2つ以上あると
+    2つ目以降を丸ごと落とす**（``_add_entry`` が "the first default entry wins"
+    として最初の ``*`` だけを採るため）。RFC 9309 §2.2.1 は
+    「繰り返された user-agent のグループは統合しなければならない」と定めており、
+    これは標準ライブラリ側の仕様違反である（→ 課題#43）。
+
+    ⚠ **黙って禁止パスを叩き始める**類の欠陥なので、パースの前にここで直す。
+    CHINTAI.net の robots.txt が実際に ``User-agent: *`` を2グループ持ち、
+    そのままでは ``/api/`` や ``/list/?b=`` を許可と誤判定する。
+
+    ⚠ **グループが1つ以下の robots.txt では出力の意味を変えない**
+    （既存15サイトはすべてこれに当たる）。
+    """
+    rules: dict[str, list[str]] = {}
+    labels: dict[str, str] = {}  # 小文字キー → 最初に現れた表記
+    order: list[str] = []
+    outside: list[str] = []  # Sitemap など、どのグループにも属さない行
+    agents: list[str] = []  # いま規則を紐づける相手（連続する User-agent 行）
+    in_rules = False
+
+    for raw in text.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line or ":" not in line:
+            continue
+        field_name, _, value = line.partition(":")
+        field_name = field_name.strip().lower()
+        value = value.strip()
+        if field_name == "user-agent":
+            # 規則の直後の User-agent 行は新しいグループの始まり。
+            if in_rules:
+                agents = []
+                in_rules = False
+            key = value.lower()
+            if key not in rules:
+                rules[key] = []
+                labels[key] = value
+                order.append(key)
+            if key not in agents:
+                agents.append(key)
+        elif field_name in ROBOTS_GROUP_FIELDS:
+            # ⚠ User-agent 行より前の規則は標準と同じく捨てる。
+            if not agents:
+                continue
+            in_rules = True
+            for key in agents:
+                rules[key].append(f"{field_name}: {value}")
+        else:
+            outside.append(line)
+
+    merged: list[str] = []
+    for key in order:
+        merged.append(f"User-agent: {labels[key]}")
+        merged.extend(rules[key])
+        merged.append("")  # 空行がグループの区切りになる
+    merged.extend(outside)
+    return merged
+
 
 class SiteAborted(RuntimeError):
     """連続失敗・日次上限などでサイトの取得を打ち切ったことを表す。"""
@@ -96,6 +161,10 @@ class SiteFetcher:
     def _load_robots(self, url: str) -> None:
         """オリジンごとに robots.txt を1回だけ取得する。
 
+        ⚠ **パースの前に ``merge_robots_groups`` を通す。** 標準の
+        ``RobotFileParser`` は同じ User-agent のグループが2つ以上あると
+        2つ目以降を落とし、**禁止パスを黙って許可と誤判定する**（→ 課題#43）。
+
         ⚠ **取得できなかったときは空ルール（＝全許可）で進む。**
         標準の ``RobotFileParser.read()`` は 401/403 を ``disallow_all`` に
         するので、ここは**標準より許可側に倒れている**。
@@ -111,7 +180,7 @@ class SiteFetcher:
         try:
             response = self.client.get(urljoin(origin, "/robots.txt"), timeout=15.0)
             if response.status_code == 200:
-                parser.parse(response.text.splitlines())
+                parser.parse(merge_robots_groups(response.text))
             else:
                 self._warn_robots_unavailable(origin, f"HTTP {response.status_code}")
                 parser.parse([])
