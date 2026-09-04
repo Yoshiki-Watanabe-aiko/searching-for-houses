@@ -20,11 +20,18 @@
   （ADR 0015 の不変条件違反。D-room の ``walk`` → §12.4 と同じ理由）
 * ⚠ **``section.m_prpty_list_item`` が「棟」で、住戸は ``.m_prpty_list_room``**
   （D-room の §12.3・ハウスコムの §13 と同じ二層構造）
-* ⚠⚠ **交通欄は ``ul.m_prpty_list_item_main_info_access`` の1つ目の ``li`` から取る**
+* ⚠⚠ **交通欄と住所は ``ul.m_prpty_list_item_main_info_access`` の ``li`` から取る**
   （→ §13.10）。本文から「◯◯駅まで徒歩N分」を探して切り出すと、その形を持たない
   **バス便**（「東武バス 東金町五丁目停まで徒歩3分、バス乗車してＪＲ常磐線 金町駅まで17分」）が
   交通欄ごと落ち、**駅が同定できず通勤時間が unknown になる**（実測 236掲載中45件＝19%）。
   ⚠ **例外にならない**うえ、交通欄が取れた掲載だけを分母にすると98.4%と健全に見える
+* ⚠⚠ **住所も同じ ``ul`` から取る**（2026-09-05 修正）。本文を ``(?:東京都|…県)`` で
+  探すと**バス停名の都県名**（``西武バス 西団地入口（東京都）停まで徒歩2分、…``）を
+  住所と誤認する。⚠ **例外にならず `city_id` が NULL になって名寄せが黙って失敗する**
+* ⚠⚠ **``li`` の位置で交通欄と住所を決め打ちしない。** 通常は「1つ目＝交通欄／
+  2つ目＝住所」だが、**交通欄が無く住所だけの棟が実在する**（東久留米市「メゾン前沢」）。
+  位置で決めると**住所を交通欄として渡す**ことになる。**住所は都道府県で始まる**という
+  先頭一致で判別する
 * ⚠ **築年月ではなく築年数（「築49年」）しか一覧に無い**ので
   ``ScrapedListing.age_years`` へ渡す（UR と同じ → 課題#37）
 * ⚠ **未知のクエリキーはリダイレクトで落とされる**（``?zzz=1`` を送ると
@@ -75,7 +82,9 @@ _SPEC = re.compile(r"(?:(\d+)\s*階\s+)?([0-9A-Za-zＳ]+)\s+([\d.]+\s*m²)")
 _TOTAL_FLOORS = re.compile(r"(\d+)\s*階建")
 _AGE_YEARS = re.compile(r"築\s*(\d+)\s*年")
 _STATION = re.compile(r"([^\s]+?駅)まで徒歩(\d+)分")
-_ADDRESS = re.compile(r"((?:東京都|北海道|(?:京都|大阪)府|[^\s]{2,3}県)[^\s]{2,24})")
+# 住所の先頭に来る都道府県。⚠ **一致は先頭だけを見る**（`match`）。
+# 本文のどこかを `search` すると、バス停名の「（東京都）」を住所と誤認する。
+_ADDRESS_HEAD = re.compile(r"(?:東京都|北海道|(?:京都|大阪)府|[^\s]{2,3}県)")
 _BUILDING_KIND = re.compile(r"^(アパート|マンション|一戸建て|テラスハウス|貸家)")
 # 設備として扱う詳細ページの見出し。⚠ **ここに費用・案内文の項目を足さない**（→ §13.7）。
 # 同じページに「その他費用」「家賃保証」「よくある質問はこちら」
@@ -202,11 +211,10 @@ class HomemateScraper:
         """棟1つを住戸へ展開する。"""
         text = _flat(section.text_content())
         building_name = self._building_name(section)
-        access = self._access(section)
-        address_match = _ADDRESS.search(text)
+        access, raw_address = self._access_and_address(section)
         # ⚠ 住所は空白を落として他サイトと表記を揃える（dedup_key を一致させるため）。
         #    ⚠ **交通欄の空白は落とさない**（落とすと路線名ごと駅名になる → §12.3）
-        address = clean_address(_squash(address_match.group(1))) if address_match else None
+        address = clean_address(_squash(raw_address)) if raw_address else None
         total_floors = _TOTAL_FLOORS.search(text)
         age_years = _AGE_YEARS.search(text)
         listings: list[ScrapedListing] = []
@@ -223,8 +231,8 @@ class HomemateScraper:
                 listings.append(listing)
         return listings
 
-    def _access(self, section) -> str | None:
-        """交通欄を **DOM から**取る（``ul...._access`` の**1つ目の** ``li``）。
+    def _access_and_address(self, section) -> tuple[str | None, str | None]:
+        """交通欄と住所を **DOM から**取る（``ul...._access`` の ``li``）。
 
         ⚠⚠ **本文から「◯◯駅まで徒歩N分」を探して切り出してはいけない**（→ §13.10）。
         バス便はこの形を持たず、
@@ -233,15 +241,35 @@ class HomemateScraper:
         実測で236掲載中45件（19%）がこれだった。⚠ **例外にならないので気づけない**
         （交通欄が取れた191件の同定率は98.4%で、一見すると健全に見える）。
 
-        ⚠ **2つ目の ``li`` は住所**なので混ぜない。
+        ⚠⚠ **住所も同じ ``ul`` から取る。本文への正規表現で探してはいけない。**
+        交通欄と同じ理屈だが、住所では**バス停名に都県名が入る**という形で出る
+        （``西武バス 西団地入口（東京都）停まで徒歩2分、…``）。本文全体を
+        ``(?:東京都|…県)`` で探すとこのバス停名を住所と誤認し、
+        ``address`` が ``（東京都）停まで徒歩2分、バス乗車して東武東上線`` になる。
+        ⚠ **例外にならず、`city_id` が NULL になり名寄せが黙って失敗するだけ**
+        （2026-09-05 実測で active 6件）。
+
+        ⚠⚠ **``li`` の位置で決め打ちしない。中身で見分ける。**
+        通常は「1つ目＝交通欄／2つ目＝住所」だが、**交通欄が無く住所だけの棟が実在する**
+        （東久留米市「メゾン前沢」を実測）。位置で決めると**住所を交通欄として渡す**ことになり、
+        駅が同定できないうえ ``address`` が空になる。**住所は必ず都道府県で始まる**
+        のに対し交通欄は路線名・バス会社名で始まる（都県名が出るとしても先頭ではない）
+        ので、先頭一致で判別する。
+
         ⚠ **駅名の直前の空白を残す**。落とすと ``commute/matcher`` が路線名ごと
         駅名にしてしまい、実在しない駅名になって同定できない（→ §12.3）。
         """
+        access: str | None = None
+        address: str | None = None
         for block in section.cssselect("ul.m_prpty_list_item_main_info_access"):
-            items = block.cssselect("li")
-            if items and (access := _flat(items[0].text_content())):
-                return access
-        return None
+            for item in block.cssselect("li"):
+                if not (value := _flat(item.text_content())):
+                    continue
+                if _ADDRESS_HEAD.match(value):
+                    address = address or value
+                else:
+                    access = access or value
+        return access, address
 
     def _building_name(self, section) -> str | None:
         for head in section.cssselect("h2, h3, .m_prpty_list_ttl, .m_prpty_list_bill_ttl"):
@@ -324,10 +352,21 @@ class HomemateScraper:
         )
 
     def _detail_address(self, value: str | None) -> str | None:
-        """所在地から郵便番号と「地図」を落とす。"""
+        """所在地から郵便番号と「地図」を落とす。
+
+        ⚠ **見出しの語が値に混入することがある**（``所在地東京都葛飾区細田１丁目``。
+        2026-09-05 実測で active 3件）。``_detail_rows`` は ``th``/``dt`` の
+        テキストを見出しにするが、その語が ``td``/``dd`` 側にも現れる組があるため。
+        住所は都道府県で始まるので、**その手前を捨てる**。
+        ⚠ 落とさないと ``address_normalized`` が他サイトと揃わず、
+        **`dedup_key` が一致せず名寄せが黙って失敗する**。
+        """
         if not value:
             return None
         cleaned = _POSTAL.sub("", value).replace("地図", "")
+        head = _ADDRESS_HEAD.search(cleaned)
+        if head and head.start() > 0:
+            cleaned = cleaned[head.start() :]
         return clean_address(_squash(cleaned))
 
     def _detail_rows(self, doc) -> dict[str, str]:
