@@ -187,7 +187,7 @@ def test_戸建ては土地と建物の2軸で組む() -> None:
         land_area_sqm="120.00",
         building_area_sqm="84.02",
     )
-    assert components == ["v1", "KODATE_BUY", "埼玉県比企郡川島町上伊草", "120.00", "84.02", "3LDK"]
+    assert components == ["v2", "KODATE_BUY", "埼玉県比企郡川島町上伊草", "120.00", "84.02", "3LDK"]
     # 専有面積だけ渡しても戸建てのキーは作れない
     assert (
         compute_dedup_key(
@@ -209,7 +209,7 @@ def test_キーはバージョンタグ付きのsha256() -> None:
         floor_num=4,
     )
     assert components is not None
-    assert components[0] == "v1"
+    assert components[0] == "v2"
     value = compute_dedup_key(
         family=FAMILY_CHINTAI,
         address_normalized="東京都足立区東和5丁目",

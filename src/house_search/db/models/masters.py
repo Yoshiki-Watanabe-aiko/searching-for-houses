@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     ForeignKey,
     Integer,
     Numeric,
@@ -425,4 +426,81 @@ class Station(TimestampMixin, Base):
     )
     lat: Mapped[float] = mapped_column(
         Numeric(9, 6), nullable=False, comment="緯度。Routes API の出発地・目的地に渡す"
+    )
+
+
+class AddressPoint(TimestampMixin, Base):
+    """住所マスタ（大字・町丁目）。**丁目が実在するかの判定に使う**（Phase 5I）。
+
+    正典は国土交通省「位置参照情報」の CSV（``data/address_master/``）で、
+    ``sync-addresses`` で同期する。政府標準利用規約（第2.0版）が再配布を認めているため
+    **原典を Git 管理下に置ける**（総務省コード表と同じ扱い → ADR 0014。
+    再配布不可でGit外へ逃がした駅マスタ → ADR 0016 とは事情が違う）。
+
+    ⚠ **この表が無いと ``normalize_address`` は番地を丁目と誤認する。**
+    丁目表記の無い住所は「最初の数字塊を丁目とみなす」規則で処理されるが、
+    丁目が存在しない町では番地がそのまま丁目になり
+    （``埼玉県深谷市中瀬1480丁目``）、存在しない住所が ``dedup_key`` になる。
+    実測（2026-09-05）で active 掲載の **5.4%（1,074件）** がこれだった（→ ADR 0020）。
+
+    ⚠ **``city_jis_code`` に FK を張らない。** ``m_cities.jis_code`` は
+    部分ユニーク索引（NULL を許す）なので FK の参照先にできない。
+    """
+
+    __tablename__ = "m_address_points"
+    __table_args__ = (
+        UniqueConstraint("normalized_key", "level"),
+        # 丁目行には必ず番号が付き、町名行には付かない。
+        # ⚠ 番号の無い丁目行が入ると「その丁目が実在するか」を引けなくなり、
+        # ガードが黙って素通りする（誤認が直らないのに例外も出ない）。
+        CheckConstraint(
+            "(level = 'chome' AND chome_number IS NOT NULL)"
+            " OR (level = 'town' AND chome_number IS NULL)",
+            name="address_points_level",
+        ),
+        {"comment": "住所マスタ（位置参照情報が正典。丁目の実在判定とハザードの代表点に使う）"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, comment="住所ポイントID")
+    city_jis_code: Mapped[str] = mapped_column(
+        String(5),
+        nullable=False,
+        index=True,
+        comment="市区町村コード（JIS5桁）。m_cities.jis_code と同じ体系だがFKは張らない",
+    )
+    town_key: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+        index=True,
+        comment=(
+            "町名までの正規化キー（例: 埼玉県深谷市中瀬）。"
+            "⚠ 丁目の実在判定の主キーになるので、SQLの文字列操作で導かず物理列で持つ"
+        ),
+    )
+    chome_number: Mapped[int | None] = mapped_column(
+        SmallInteger, comment="丁目番号。町名までの行（大字・字）は NULL"
+    )
+    normalized_key: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+        comment=(
+            "丁目まで（丁目の無い町は町名まで）の正規化キー。"
+            "t_listings.address_normalized と同じ normalize_address を通して作る"
+        ),
+    )
+    level: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        comment="粒度。chome=丁目 / town=大字・字（原典の区分コード 3 かどうかで決まる）",
+    )
+    lon: Mapped[float] = mapped_column(
+        Numeric(9, 6), nullable=False, comment="代表点の経度。ハザードのポリゴン照合に使う"
+    )
+    lat: Mapped[float] = mapped_column(
+        Numeric(9, 6), nullable=False, comment="代表点の緯度。ハザードのポリゴン照合に使う"
+    )
+    source: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        comment="出典と版（例: mlit_isj_19.0b）。原典が改訂されたことを後から言えるようにする",
     )

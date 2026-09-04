@@ -426,7 +426,7 @@ def regroup(runtime: Runtime) -> RegroupResult:
     候補の件数だけを返して実際の通知は次回の ``scan`` の差分に任せる。
     """
     with runtime.engine.begin() as conn:
-        refreshed = dedup.refresh_dedup_keys(conn)
+        refreshed = dedup.refresh_dedup_keys(conn, address_index=runtime.address_index)
         changes = dedup.sync_groups(conn)
         groups = conn.execute(text("SELECT count(*) FROM t_listing_groups")).scalar_one()
         grouped = conn.execute(

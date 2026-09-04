@@ -15,7 +15,7 @@ from typing import Any
 
 from sqlalchemy import Connection, text
 
-from house_search.dedup.address import address_granularity, normalize_address
+from house_search.dedup.address import AddressIndex, address_granularity, normalize_address
 from house_search.dedup.key import compute_dedup_key
 
 
@@ -76,11 +76,19 @@ _SELECT_FOR_KEY = """
 """
 
 
-def refresh_dedup_keys(conn: Connection, listing_ids: list[int] | None = None) -> int:
+def refresh_dedup_keys(
+    conn: Connection,
+    listing_ids: list[int] | None = None,
+    address_index: AddressIndex | None = None,
+) -> int:
     """``address_normalized`` と ``dedup_key`` を計算し直す。
 
     値が変わった行だけ UPDATE する。詳細取得で階数・住所が埋まるとキーが
     後から作られるため、**一覧の upsert 直後と詳細の保存後の双方で呼ぶ**必要がある。
+
+    ``address_index`` は住所マスタの索引（``sync-addresses`` で作る）。
+    ⚠ **渡さないと丁目の実在を確かめられず、番地を丁目と誤認したままになる**
+    （→ ADR 0020）。渡さなくても動くのは、マスタ未同期の環境で結果をぶれさせないため。
 
     戻り値は更新した行数。
     """
@@ -94,7 +102,7 @@ def refresh_dedup_keys(conn: Connection, listing_ids: list[int] | None = None) -
 
     updates: list[dict[str, Any]] = []
     for row in conn.execute(text(sql), params):
-        normalized = normalize_address(row.address, row.prefecture)
+        normalized = normalize_address(row.address, row.prefecture, index=address_index)
         key = compute_dedup_key(
             family=row.family,
             address_normalized=normalized,

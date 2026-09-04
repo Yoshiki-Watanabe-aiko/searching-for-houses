@@ -24,7 +24,9 @@ from house_search.scoring.listing_view import normalize_layout
 
 # キーの世代。正規化ルールを変えたらこれを上げ、``regroup`` で全再計算する
 # （新旧キーが混在して半端に一致する事故を防ぐ）。
-DEDUP_KEY_VERSION = "v1"
+# v2: 住所マスタで丁目の実在を確かめるようにした（→ ADR 0020・課題#48）。
+#     丁目が存在しない町の番地を丁目とみなさなくなったので、正規化住所が変わる。
+DEDUP_KEY_VERSION = "v2"
 
 # ファミリごとのキー構成要素。再設計計画 §6 の定義そのまま。
 FAMILY_CHINTAI = "CHINTAI"

@@ -10,6 +10,8 @@
 > 2つに分割した（→ [ADR 0013](./adr/0013-area-bands.md)・[CONTEXT.md](../CONTEXT.md)）。
 > Phase 5C で**通勤時間**をランキングへ組み込んだ（→ [ADR 0016](./adr/0016-commute-time-rail-graph.md)）。
 > 帯ごとの初回取得とタスク登録は完了し、**2026-09-04 から定期実行が回っている**（→ 課題#23・再設計計画 §16.19）。
+> Phase 5I 前半で**住所マスタ**（`m_address_points`）を入れ、稼働中の名寄せが
+> 番地を丁目と誤認していた欠陥を直した（→ [ADR 0020](./adr/0020-address-master-chome-guard.md)・課題#48）。
 > Phase 4 以降で確定した仕様を各Phase完了時に本書へ反映していく。
 > 移行の全体像・Phase構成・未確定事項は [`再設計計画.md`](./再設計計画.md) を参照。
 > **未確定の節には「Phase N で確定」と明記している。**
@@ -137,6 +139,7 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 | `regroup` | 名寄せキーを全件作り直してグループを同期（ネットワーク不要・**通知なし**） | ✅ Phase 4 |
 | `resolve-cities` | 既存掲載の `city_id` を現在の `m_cities` で引き直す（ネットワーク不要） | ✅ Phase 5A |
 | `sync-site-params` | `data/site_search_params.yaml` → `m_site_search_params` | ✅ Phase 5B |
+| `sync-addresses` | `data/address_master/*.csv` → `m_address_points`（住所マスタ） | ✅ Phase 5I |
 | `sync-stations` | `data/train_master/*.csv` → `m_stations`（駅マスタ） | ✅ Phase 5C |
 | `resolve-stations` | 掲載の駅表記を駅マスタと突き合わせる（ネットワーク不要） | ✅ Phase 5C |
 | `resolve-commutes` | 駅ペアの通勤所要時間を算出してキャッシュ（ネットワーク不要） | ✅ Phase 5C |
@@ -590,6 +593,18 @@ SHA256 を `config_hash` として保存し、不一致なら自動再スコア�
 - **キー**: `sha256("v1|{ファミリ}|{正規化住所}|{ファミリ別の構成要素}")`
   - 賃貸/マンション: 間取り＋専有面積＋所在階
   - 戸建て: 土地面積＋建物面積＋間取り（専有面積を流用しない）
+- ⚠ **丁目表記が無い住所の数字塊は、住所マスタに丁目が実在するときだけ丁目として採る**
+  （→ [ADR 0020](./adr/0020-address-master-chome-guard.md)・課題#48）。
+  丁目が存在しない町では番地がそのまま丁目になり、`埼玉県深谷市中瀬1480丁目` という
+  **実在しない住所が `dedup_key` になる**（実測 2026-09-05 で掲載の5.4%＝1,074件）。
+  ⚠ **例外にならず件数も減らない**（名寄せが静かに失敗してユニーク率が高く見えるだけ）ので、
+  外部の正典と突き合わせるまで検出できない。
+  ⚠ **町がマスタに無いときは従来どおり丁目とみなす**（収録漏れを「丁目が無い」と
+  読み替えると、別の丁目の住戸を同一視する偽陽性を生む）。
+  ⚠ **明示的な「丁目」表記はマスタに問い合わせず信じる**（サイトが番地を丁目欄に
+  書いている掲載が10件残るが、覆すとマスタが古いとき正しい丁目を潰す）。
+  ⚠ **正規化は掲載側と原典側で同じ `normalize_base` を通す**（別の規則を当てると、
+  突き合わせが0件になったとき原因を切り分けられない）
 - **正規化住所は丁目までで打ち切る。** サイトによって粒度が
   「番地まで（HOME'S）／丁目まで（多数）／町名まで（SUUMO）」とばらつき、
   番地を残すとクロスサイトの名寄せが原理的に成立しない
@@ -739,6 +754,7 @@ DDLは Alembic（`migrations/`）、マスタデータは `db/seed/*.sql`（冪�
 | `m_cities` | 市区町村（**1,918行・47都道府県**。総務省の全国地方公共団体コードが正典 → ADR 0014。`canonical_name` がYAML指定値の正典） |
 | `m_site_search_params` | **サイト側の絞り込みパラメータ定義**（MUST限定・サイト×物件種別×軸 → ADR 0015） |
 | `m_stations` | **駅マスタ**（駅データ.jp 無料版が正典・10,465駅 / 8,766駅グループ → ADR 0016） |
+| `m_address_points` | **住所マスタ**（国土交通省「位置参照情報」が正典・4都県 21,471件 → ADR 0020）。丁目の実在判定とハザードの丁目代表点に使う。⚠ **`sync-addresses` は全置換なので `id` を外部から参照しない** |
 | `m_city_site_values` | 市区町村×サイトの検索値（**縦持ち**・1833行。JIS系サイトは `m_cities.jis_code` から導出するのでこの表を引かない） |
 | `t_listings` | **掲載**（1行=1サイトの1件の募集）|
 | `t_listing_features` | 掲載から抽出した設備・特性 |
@@ -1125,7 +1141,8 @@ f:\searching-for-houses\
 │   │   ├── dictionary.py       # 辞書のロードとDB同期
 │   │   └── extractor.py        # 辞書照合・導出・未知表記
 │   ├── dedup/
-│   │   ├── address.py          # 名寄せ用の住所正規化（丁目まで）
+│   │   ├── address.py          # 名寄せ用の住所正規化（丁目まで・AddressIndex）
+│   │   ├── address_master.py   # 住所マスタの読み込みとDB同期（ADR 0020）
 │   │   ├── key.py              # dedup_key の合成
 │   │   └── groups.py           # グループ同期・代表選定・実測
 │   ├── scoring/
@@ -1144,6 +1161,7 @@ f:\searching-for-houses\
 ├── db/seed/                    # マスタデータSQL（冪等）
 ├── configs/                    # 検索パターンYAML（examples/ は読み込み対象外）
 ├── data/feature_dictionary.yaml # 設備抽出辞書（正典）
+├── data/address_master/        # 住所マスタの原典（位置参照情報・Git管理）
 ├── scripts/
 │   ├── setup_db.ps1            # DB・ロール作成（冪等）
 │   ├── run_initial_scan.ps1    # 初回全件スキャン（Start-Process で切り離す側）
@@ -1158,7 +1176,7 @@ f:\searching-for-houses\
 │   ├── test_schema_conventions.py   # DB規約の回帰テスト
 │   ├── test_extract.py / test_scoring.py / test_notify.py / test_fetch.py
 │   ├── test_area.py / test_persist.py
-│   ├── test_dedup_address.py / test_dedup_key.py    # DB不要
+│   ├── test_dedup_address.py / test_dedup_address_master.py / test_dedup_key.py  # DB不要
 │   ├── test_dedup_groups.py                          # DB統合（未設定ならスキップ）
 │   ├── test_scrape_{suumo,homes,goo,able,chintai_ex}.py       # 実HTMLフィクスチャ
 │   ├── test_scrape_{athome,eheya,nifty,apaman,smocca}.py
