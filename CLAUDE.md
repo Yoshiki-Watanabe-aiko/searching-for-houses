@@ -149,6 +149,11 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
   許可側に倒れている**。UR賃貸のAPIホストが実際に **HTTP 403** を返すので、
   オリジンごとに1回だけ警告を記録する（→ ADR 0019）。⚠ 403 は**不在ではなく拒否**なので
   `ignore_robots`（ADR 0011）とは別の話として扱う
+- ⚠ **robots.txt は `merge_robots_groups` を通してから解析する**（→ 課題#43）。
+  標準の `RobotFileParser` は同じ `User-agent` のグループが2つ以上あると
+  **2つ目以降を丸ごと落とす**（`_add_entry` が最初の `*` だけを採る）。
+  RFC 9309 §2.2.1 違反で、**禁止パスを黙って許可と誤判定する**。
+  ⚠ **取得が成功するので気づけない。** CHINTAI.net が実際に2グループを持つ
 - **GET＋HTML の枠に収まらないサイトは任意フックで委譲する**（→ ADR 0019）。
   `pipeline.scan` が `collect_listings` / `fetch_detail` の宣言を `getattr` で見て、
   **一覧の収集／詳細の取得だけ**を差し替える。MUST 1段目・upsert・詳細キュー・

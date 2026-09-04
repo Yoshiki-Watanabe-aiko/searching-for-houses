@@ -1,0 +1,34 @@
+User-agent: *
+Disallow: /info/
+Disallow: /display/
+
+User-agent: *
+Disallow: /common/api/qr/createQrcode/
+Disallow: /api/
+Disallow: /peya/
+Disallow: /tracking/
+Disallow: /pbc/index2.html
+Disallow: /news/*/embed/
+Disallow: /contact/?inqContents1=
+Disallow: /shop/*/?bk4log=
+Disallow: /list/?b=
+Disallow: /list/?b=/list/?e=
+Disallow: /list/?g=
+Disallow: /list/?o2&ue=
+Disallow: /list/?rt=
+Disallow: /list/?ue=
+Disallow: /list/?w=
+Disallow: /rent/detail/?prefKey=
+Disallow: /detail/*/?sidesFlg=1
+Disallow: /detail/*/?vm=
+Disallow: /detail/*/?bld=
+
+User-agent: MauiBot
+Disallow: /
+
+Sitemap: https://www.chintai.net/xml/sitemap.xml
+Sitemap: https://www.chintai.net/xml/sitemap_detail.xml
+Sitemap: https://www.chintai.net/xml/sitemap_bld_true.xml
+Sitemap: https://www.chintai.net/xml/sitemap_list.xml
+Sitemap: https://www.chintai.net/news/sitemap.xml
+Sitemap: https://www.chintai.net/sitemap_faq2_chintai_net.xml

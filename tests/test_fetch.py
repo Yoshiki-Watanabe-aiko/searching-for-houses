@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import urllib.robotparser
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -12,6 +15,7 @@ from house_search.scrape.fetch import (
     RobotsDisallowed,
     SiteAborted,
     SiteFetcher,
+    merge_robots_groups,
 )
 
 ROBOTS_ALLOW_ALL = "User-agent: *\nDisallow: /admin/\n"
@@ -238,3 +242,99 @@ def test_リクエスト間隔をジッタ込みで待つ() -> None:
     # ±30% のジッタが載るので幅で確認する
     assert waits
     assert all(0.0 <= wait <= 2.5 * 1.3 for wait in waits)
+
+
+# ---------------------------------------------------------------------------
+# robots.txt のグループ統合（→ 課題#43・RFC 9309 §2.2.1）
+#
+# ⚠ 標準の RobotFileParser は同じ User-agent のグループが2つ以上あると
+# 2つ目以降を丸ごと落とすため、禁止パスを**黙って許可と誤判定する**。
+# ---------------------------------------------------------------------------
+
+CHINTAI_NET_ROBOTS = Path(__file__).parent / "fixtures" / "robots" / "chintai_net.txt"
+
+
+def _parse(lines: list[str]) -> urllib.robotparser.RobotFileParser:
+    parser = urllib.robotparser.RobotFileParser()
+    parser.parse(lines)
+    return parser
+
+
+def test_2つ目のUserAgentグループのDisallowが効く() -> None:
+    """CHINTAI.net の実 robots.txt。統合前は /api/ を許可と誤判定していた。"""
+    text = CHINTAI_NET_ROBOTS.read_text(encoding="utf-8")
+
+    naive = _parse(text.splitlines())
+    assert naive.can_fetch("house-search/2.0", "https://www.chintai.net/api/") is True
+
+    merged = _parse(merge_robots_groups(text))
+    # 1つ目のグループ
+    assert merged.can_fetch("house-search/2.0", "https://www.chintai.net/info/") is False
+    # 2つ目のグループ（統合しないと落ちる）
+    assert merged.can_fetch("house-search/2.0", "https://www.chintai.net/api/") is False
+    assert merged.can_fetch("house-search/2.0", "https://www.chintai.net/list/?b=1") is False
+    # 実装で使う市区一覧とページ送りは許可されたまま
+    assert merged.can_fetch("house-search/2.0", "https://www.chintai.net/tokyo/area/13121/list/")
+    assert merged.can_fetch(
+        "house-search/2.0", "https://www.chintai.net/tokyo/area/13121/list/page2/"
+    )
+
+
+def test_統合しても他のUserAgentのグループとSitemapは保たれる() -> None:
+    text = CHINTAI_NET_ROBOTS.read_text(encoding="utf-8")
+    merged = _parse(merge_robots_groups(text))
+    assert merged.can_fetch("MauiBot", "https://www.chintai.net/") is False
+    assert len(merged.site_maps() or []) == 6
+
+
+def test_グループが1つのrobotsは判定が変わらない() -> None:
+    """既存15サイトはすべてこの形。統合が既存の挙動を変えないことを固定する。"""
+    text = "User-agent: *\nDisallow: /admin/\nAllow: /admin/public/\nCrawl-delay: 10\n"
+    paths = ["/admin/x", "/admin/public/y", "/list/"]
+    naive = _parse(text.splitlines())
+    merged = _parse(merge_robots_groups(text))
+    for path in paths:
+        url = "https://example.com" + path
+        assert merged.can_fetch("house-search/2.0", url) == naive.can_fetch(
+            "house-search/2.0", url
+        )
+    assert merged.crawl_delay("house-search/2.0") == naive.crawl_delay("house-search/2.0")
+
+
+def test_1つのグループに複数のUserAgentがあれば両方に規則が配られる() -> None:
+    text = "User-agent: alpha\nUser-agent: beta\nDisallow: /x/\n"
+    merged = _parse(merge_robots_groups(text))
+    assert merged.can_fetch("alpha", "https://example.com/x/") is False
+    assert merged.can_fetch("beta", "https://example.com/x/") is False
+    assert merged.can_fetch("gamma", "https://example.com/x/") is True
+
+
+def test_UserAgent行より前の規則は捨てる() -> None:
+    """標準の挙動に合わせる（どのグループにも属さない規則は無効）。"""
+    merged = merge_robots_groups("Disallow: /orphan/\nUser-agent: *\nDisallow: /x/\n")
+    assert "disallow: /orphan/" not in merged
+    assert _parse(merged).can_fetch("house-search/2.0", "https://example.com/orphan/") is True
+
+
+def test_コメントと空行は統合の妨げにならない() -> None:
+    text = (
+        "# 1つ目\nUser-agent: *\nDisallow: /a/  # 末尾コメント\n\n"
+        "# 2つ目\nUser-agent: *\n\nDisallow: /b/\n"
+    )
+    merged = _parse(merge_robots_groups(text))
+    assert merged.can_fetch("house-search/2.0", "https://example.com/a/") is False
+    assert merged.can_fetch("house-search/2.0", "https://example.com/b/") is False
+
+
+def test_取得したrobotsがグループ統合を通る() -> None:
+    """SiteFetcher 経由でも統合が効くこと（配線の確認）。"""
+    two_groups = "User-agent: *\nDisallow: /a/\n\nUser-agent: *\nDisallow: /b/\n"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/robots.txt":
+            return httpx.Response(200, text=two_groups)
+        return httpx.Response(200, text="ok")
+
+    fetcher = build_fetcher(handler)
+    with pytest.raises(RobotsDisallowed):
+        fetcher.get("https://example.com/b/page")
