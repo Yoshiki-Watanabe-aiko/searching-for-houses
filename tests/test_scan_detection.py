@@ -81,10 +81,10 @@ def table():
     return load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
 
 
-def _run(fetcher: _Fetcher, table, *, site_params=True) -> SiteOutcome:
+def _run(fetcher: _Fetcher, table, *, site_params=True, scraper=None) -> SiteOutcome:
     outcome = SiteOutcome(site_code="GOO")
     _collect_listings(
-        _Scraper(),
+        scraper or _Scraper(),
         fetcher,
         _Pattern(),
         areas=[],
@@ -126,3 +126,58 @@ def test_フィルタを使っていないサイトでは対照を取らない(t
     outcome = _run(fetcher, table, site_params=False)
     assert fetcher.calls == [BASE]
     assert outcome.errors == []
+
+
+BASE2 = "https://example.test/b.html"
+FILTERED2 = f"{BASE2}?fl=30"
+
+
+class _TwoAreaScraper(_Scraper):
+    """市区を2つ持つサイト（実運用は帯82市区）。"""
+
+    def list_urls(self, pattern: object, areas: object) -> list[str]:
+        return [BASE, BASE2]
+
+
+def test_他の市区で取れていればフィルタ0件を申告しない(table) -> None:
+    """⚠ 一部の市区が0件になるのは**正しい絞り込み**である（→ 課題#45）。
+
+    千代田区・中央区に「30㎡以上・13万円以下」の住戸は実在しない。実測では
+    SUUMO・GOO・HOMEMATE・CHINTAI_NET・DROOM から**2時間ごとに6件**の
+    エラーが飛んでおり、⚠ **読まれない通知は本物のエラーを見逃す形で実害になる**
+    （requirements.md §14.1 が1件ずつ送るのをやめたのと同じ理由）。
+    """
+    fetcher = _Fetcher({FILTERED: "0", BASE: "5", FILTERED2: "3"})
+    outcome = _run(fetcher, table, scraper=_TwoAreaScraper())
+    # 対照取得そのものは行う（原因の切り分けはしておく）
+    assert fetcher.calls == [FILTERED, BASE, FILTERED2]
+    assert outcome.errors == []
+
+
+def test_サイト全体が0件ならフィルタ0件を申告する(table) -> None:
+    """⚠ 検出力は落ちない。
+
+    丸めは ``AXIS_BOUND`` が型で強制するので、フィルタ値が壊れるなら
+    **そのサイトの全URLで壊れ**、1件も取れなくなる。
+    """
+    fetcher = _Fetcher({FILTERED: "0", BASE: "5", FILTERED2: "0"})
+    outcome = _run(fetcher, table, scraper=_TwoAreaScraper())
+    assert any("フィルタで0件になった疑い" in e for e in outcome.errors)
+    assert any("外すと5件" in e for e in outcome.errors)
+
+
+def test_対照取得の失敗は即エラーにする(table) -> None:
+    """⚠ これは「絞り込めた結果の0件」ではなく取得そのものの失敗。
+
+    サイト全体が0件かどうかに関わらず知りたいので、保留せず即記録する。
+    """
+
+    class _Broken(_Fetcher):
+        def get(self, url: str) -> _Response:
+            if url == BASE:
+                raise ValueError("認証ページ")
+            return super().get(url)
+
+    fetcher = _Broken({FILTERED: "0", FILTERED2: "3"})
+    outcome = _run(fetcher, table, scraper=_TwoAreaScraper())
+    assert any("対照取得に失敗" in e for e in outcome.errors)
