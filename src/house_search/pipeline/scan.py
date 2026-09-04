@@ -280,6 +280,8 @@ def _collect_listings(
     # 結果を1:1で加工するので、順序と件数が一致する（strict=True で担保）
     plain_urls = list(scraper.list_urls(pattern, areas))
     control_checked = False
+    # 対照取得で分かったことは**すぐには申告しない**（下の「サイト全体が0件のときだけ」を参照）
+    blackout: str | None = None
     for base_url, plain_url in zip(filtered_urls, plain_urls, strict=True):
         for page in range(1, max_pages + 1):
             url = scraper.page_url(base_url, page)
@@ -309,17 +311,38 @@ def _collect_listings(
                 # 上限を踏んで検知ページを掴むので、「対照取得に失敗」という
                 # **原因を取り違えたエラー**が出るだけで切り分けの役に立たない
                 if getattr(scraper, "city_rotation_limit", None) is None:
-                    _check_filter_blackout(scraper, fetcher, plain_url, outcome)
+                    blackout = _check_filter_blackout(scraper, fetcher, plain_url, outcome)
             if scraper.is_last_page(len(listings)):
                 break
+    # ⚠⚠ **申告するのは「そのサイトから1件も取れなかったとき」だけ**
+    # （ユーザー判断 2026-09-05 → 課題#45）。
+    # 一部の市区が0件になるのは**正しい絞り込み**である。千代田区・中央区に
+    # 「30㎡以上・13万円以下」の住戸が実在しないのがその例で、実測では
+    # SUUMO・GOO・HOMEMATE・CHINTAI_NET・DROOM の5サイトから
+    # **2時間ごとに6件**のエラーが飛んでいた。
+    # ⚠ **読まれない通知は、本物のエラーを見逃すという形で実害になる**
+    # （→ requirements.md §14.1。1件ずつ送るのをやめた理由と同じ）。
+    # ⚠ 検出力は落ちない。丸めは `AXIS_BOUND` が型で強制するので、
+    # フィルタ値が壊れるならそのサイトの全URLで壊れ、`collected` が空になる。
+    if blackout and not collected:
+        outcome.errors.append(blackout)
     return collected
 
 
-def _check_filter_blackout(scraper, fetcher: SiteFetcher, plain_url: str, outcome) -> None:
+def _check_filter_blackout(
+    scraper, fetcher: SiteFetcher, plain_url: str, outcome
+) -> str | None:
     """サイト側フィルタを外した対照を1回だけ取り、0件の原因を切り分ける。
 
     対照にも掲載が無ければ「そのエリアに掲載が無い」だけなので何も言わない。
-    対照に掲載があれば**フィルタが原因で0件になっている**ので異常として記録する。
+    対照に掲載があれば**フィルタが原因で0件になっている**ので、その旨を**返す**。
+
+    ⚠ **ここでは `outcome.errors` へ入れない。** 一部の市区が0件になるのは
+    正常なので、呼び出し側が「そのサイトから1件も取れなかったか」を見てから
+    申告する（→ 課題#45）。
+
+    ⚠ **対照取得そのものの失敗は即エラーにする。** これは取得の失敗であって
+    「絞り込めた結果の0件」ではなく、頻度も低い。
     """
     try:
         listings = scraper.parse_list(fetcher.get(plain_url).text)
@@ -327,12 +350,13 @@ def _check_filter_blackout(scraper, fetcher: SiteFetcher, plain_url: str, outcom
         raise
     except Exception as exc:  # noqa: BLE001 - 対照取得の失敗で実行を止めない
         outcome.errors.append(f"対照取得に失敗: {plain_url} ({exc})")
-        return
-    if listings:
-        outcome.errors.append(
-            "サイト側フィルタで0件になった疑い: "
-            f"フィルタ有り0件 / 外すと{len(listings)}件 ({plain_url})"
-        )
+        return None
+    if not listings:
+        return None
+    return (
+        "サイト側フィルタで0件になった疑い: "
+        f"フィルタ有り0件 / 外すと{len(listings)}件 ({plain_url})"
+    )
 
 
 def _fetch_details(
