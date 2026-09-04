@@ -48,6 +48,11 @@ sites:
   - "HOMEMATE"   # ホームメイト。市区の検索値がJIS5桁そのもの。
                  #   ⚠ robots は ClaudeBot を全面禁止だが名乗るUAには * が適用される
                  #   （ユーザー判断 2026-09-04 → §13.2）
+  - "CHINTAI_NET" # CHINTAI.net。市区の検索値がJIS5桁そのもの。
+                 #   ⚠⚠ 一覧に返る住戸が実行のたびに入れ替わるので「新着を確実に拾う」
+                 #   ことはできない。⚠ 棟(.cassette_item)でなく住戸(tbody[data-bkkey])
+                 #   を数える。⚠ 詳細の .detail_specTable は用語集の解説文が同居する
+                 #   （→ 詳細設計書 §14）
 
 search:
   prefectures:
