@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -20,6 +21,9 @@ from house_search.scrape.homemate import (
 )
 
 FIXTURES = Path(__file__).parent / "fixtures" / "homemate"
+# 住所の先頭に来る都道府県。⚠ **実装の定数を import しない**（実装が壊れても
+# テストが道連れで collect エラーになり、回帰テストとして働かなくなる）。
+_STARTS_WITH_PREFECTURE = re.compile(r"(?:東京都|北海道|(?:京都|大阪)府|[^\s]{2,3}県)")
 
 
 @dataclass(frozen=True)
@@ -53,6 +57,19 @@ def list_bus_html() -> str:
     検出できなかった。
     """
     return (FIXTURES / "list_bus.html").read_text(encoding="utf-8", errors="replace")
+
+
+@pytest.fixture(scope="module")
+def list_address_only_html() -> str:
+    """交通欄が無く住所だけの棟を含む一覧（東久留米市・2026-09-05 取得）。
+
+    ⚠ 既存の2本（足立区・葛飾区）は**全棟が交通欄と住所を1つずつ持つ**ため、
+    ``li`` の位置で決め打ちする欠陥を検出できなかった。この一覧の
+    「メゾン前沢」は交通欄が無く ``li`` が住所1つだけで、位置で決めると
+    **住所を交通欄として渡してしまう**。あわせてバス停名に都県名を含む
+    バス便（``西武バス 西団地入口（東京都）停まで…``）も3件入っている。
+    """
+    return (FIXTURES / "list_address_only.html").read_text(encoding="utf-8", errors="replace")
 
 
 @pytest.fixture(scope="module")
@@ -222,3 +239,63 @@ def test_declares_no_city_rotation(scraper: HomemateScraper) -> None:
     """連続取得の上限は実測で見つからなかった（20市区すべて正常 → §13.3）。"""
     assert scraper.city_rotation_limit is None
     assert scraper.ignore_robots is False
+
+
+def test_address_is_read_from_dom_not_body_text(
+    scraper: HomemateScraper, list_address_only_html: str
+) -> None:
+    """住所を**本文への正規表現**で探してはいけない（2026-09-05 の実測）。
+
+    ⚠ バス停名に都県名が入る（``西武バス 西団地入口（東京都）停まで徒歩2分、…``）ので、
+    本文を ``(?:東京都|…県)`` で ``search`` すると**バス停名を住所と誤認する**。
+    実測では ``address`` が ``（東京都）停まで徒歩2分、バス乗車して東武東上線`` になり、
+    ⚠ **例外にならず `city_id` が NULL になって名寄せが黙って失敗していた**（active 6件）。
+    """
+    listings = scraper.parse_list(list_address_only_html)
+    assert listings
+    broken = [
+        listing.address
+        for listing in listings
+        if listing.address and re.search(r"停|徒歩|バス|乗車", listing.address)
+    ]
+    assert broken == []
+    assert all(listing.address for listing in listings)
+
+
+def test_access_and_address_are_told_apart_by_content_not_position(
+    scraper: HomemateScraper, list_address_only_html: str
+) -> None:
+    """``li`` の位置ではなく**中身**で交通欄と住所を見分ける。
+
+    ⚠ **交通欄が無く住所だけの棟が実在する**（東久留米市「メゾン前沢」）。
+    「1つ目＝交通欄」と決め打ちすると**住所を交通欄として渡す**ことになり、
+    駅が同定できないまま ``address`` も空になる。⚠ 例外にならない。
+    """
+    listings = scraper.parse_list(list_address_only_html)
+    # 交通欄に住所が紛れ込んでいない（住所は必ず都道府県で始まる）
+    assert [
+        listing.station_info
+        for listing in listings
+        if listing.station_info and _STARTS_WITH_PREFECTURE.match(listing.station_info)
+    ] == []
+    # 交通欄が無い棟でも住所は取れている
+    address_only = [
+        listing
+        for listing in listings
+        if listing.address == "東京都東久留米市前沢５丁目" and listing.station_info is None
+    ]
+    assert address_only, "交通欄が無く住所だけの棟が拾えていない"
+
+
+def test_detail_address_strips_leaked_heading(scraper: HomemateScraper) -> None:
+    """見出しの語が値に混入しても住所は都道府県から始まる。
+
+    ⚠ ``_detail_rows`` は ``th``/``dt`` を見出しにするが、その語が ``td``/``dd``
+    側にも現れる組があり ``所在地東京都葛飾区細田１丁目`` になっていた（active 3件）。
+    ⚠ **`dedup_key` が他サイトと一致せず名寄せが黙って失敗する**だけで例外にならない。
+    """
+    assert scraper._detail_address("所在地東京都葛飾区細田１丁目") == "東京都葛飾区細田１丁目"
+    assert scraper._detail_address("〒124-0022 東京都葛飾区細田１丁目 地図") == (
+        "東京都葛飾区細田１丁目"
+    )
+    assert scraper._detail_address(None) is None
