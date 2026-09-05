@@ -6,9 +6,10 @@ import datetime as dt
 from pathlib import Path
 
 import pytest
+from lxml import html as lxml_html
 
 from house_search.config.pattern import parse_pattern
-from house_search.scrape.apaman import PAGE_SIZE, ApamanScraper
+from house_search.scrape.apaman import PAGE_SIZE, ApamanScraper, _detail_tables
 from house_search.scrape.area import CITY_VALUE_JIS, AreaTarget
 
 FIXTURES = Path(__file__).parent / "fixtures" / "apaman"
@@ -157,3 +158,33 @@ def test_構造と方位を派生トークンへ寄せる(detail) -> None:
     # 「木造/アパート」の前半が構造
     assert "木造" in detail.raw_features_text
     assert "南向き" in detail.raw_features_text
+
+
+def test_未知表記の収集元は設備欄だけ() -> None:
+    """⚠ 「条件等」欄には初期費用の説明文が入る（→ 課題#15）。
+
+    そのまま収集すると ``t_unknown_tokens`` が金額の断片で埋まる。実データでは
+    ``000円``（464回）・``鍵セット費3``（394回）のように**カンマで切れた金額**として
+    貯まっており、実測312種あった。
+
+    ⚠ **実フィクスチャの「条件等」は空なので、ここだけ合成HTMLで固定する。**
+    実HTMLに該当ケースが無い以上フィクスチャ方式では検出できない
+    （課題#44 で踏んだ「既存フィクスチャでは検出できない」と同じ形）。
+
+    ⚠ **照合には「条件等」込みの原文を使う**（ペット相談可などの入居条件が
+    入りうるため。外すと設備数が減る恐れがある → 課題#19 と同じ判断）。
+    """
+    doc = lxml_html.fromstring(
+        "<table>"
+        "<tr><th>設備</th><td>エアコン･オートロック</td></tr>"
+        "<tr><th>条件等</th><td>鍵交換費:ご契約時16,500円(税込)がかかります。"
+        "契約時にクリーニング費60,000円がかかります。</td></tr>"
+        "</table>"
+    )
+    _fields, features, tagged = _detail_tables(doc)
+
+    # 照合用の原文には両方入る
+    assert len(features) == 2
+    assert any("鍵交換費" in f for f in features)
+    # 収集元は設備欄だけ
+    assert tagged == ["エアコン･オートロック"]

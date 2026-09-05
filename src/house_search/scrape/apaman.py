@@ -90,6 +90,9 @@ class ApamanScraper:
     site_code = SITE_CODE
     requires_city = True
     city_value_source = CITY_VALUE_JIS
+    # 「条件等」欄に初期費用の説明文が入るので unknown_token_text で分離する。
+    # ⚠ 再抽出は raw_features_text しか持たず分離できないので収集を止める（→ 課題#15）
+    mine_unknown_tokens = False
     user_agent = None
     # robots.txt が全パスを禁じているサイト。ユーザーの明示的な判断で取得する
     # （→ ADR 0011）。他のサイトでこのフラグを立ててはいけない
@@ -159,17 +162,19 @@ class ApamanScraper:
         """詳細ページから設備原文と補足項目を取り出す。"""
         doc = lxml_html.fromstring(html_text)
         headings = _heading_fields(doc)
-        fields, features = _detail_tables(doc)
+        fields, features, tagged = _detail_tables(doc)
 
         blocks = list(features)
         if derived := _derived_tokens(fields, headings):
             blocks.append("、".join(derived))
+            tagged.append("、".join(derived))
 
         rent = parse_yen(fields.get("rent"))
         deposit, key_money = _deposit_and_key(fields.get("deposit_key"), rent)
         floors_text = headings.get("floors")
         return ScrapedDetail(
             raw_features_text="\n".join(blocks) or None,
+            unknown_token_text="\n".join(tagged) or None,
             built_on=parse_built_on(headings.get("built")),
             floor_num=_floor_from_pair(floors_text),
             total_floors=parse_total_floors(floors_text),
@@ -332,10 +337,21 @@ def _heading_fields(doc) -> dict[str, str]:
     return fields
 
 
-def _detail_tables(doc) -> tuple[dict[str, str], list[str]]:
-    """詳細ページの ``th/td`` を構造化項目と設備原文へ振り分ける。"""
+def _detail_tables(doc) -> tuple[dict[str, str], list[str], list[str]]:
+    """詳細ページの ``th/td`` を構造化項目と設備原文へ振り分ける。
+
+    3つ目は未知表記の収集元で、「設備」欄（タグ列）だけ。
+
+    ⚠ 「条件等」欄には初期費用の説明文が入り、そのまま収集すると
+    ``t_unknown_tokens`` が金額の断片で埋まる（実測312種。``000円``・
+    ``鍵セット費3`` のように**カンマで切れた金額**になる → 課題#15）。
+
+    ⚠ **照合には「条件等」込みの原文を使う**（ペット相談可などの入居条件が
+    入りうるため。外すと設備数が減る恐れがある → 課題#19 と同じ判断）。
+    """
     fields: dict[str, str] = {}
     features: list[str] = []
+    tagged: list[str] = []
     seen: set[str] = set()
     for th in doc.cssselect("th"):
         label = "".join(th.text_content().split())
@@ -349,11 +365,13 @@ def _detail_tables(doc) -> tuple[dict[str, str], list[str]]:
             if label not in seen:
                 seen.add(label)
                 features.append(value)
+                if label == "設備":
+                    tagged.append(value)
             continue
         key = _TH_LABELS.get(label)
         if key and key not in fields:
             fields[key] = value
-    return fields, features
+    return fields, features, tagged
 
 
 def _floor_from_pair(value: str | None) -> int | None:
