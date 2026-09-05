@@ -106,3 +106,59 @@ class Test取りこぼしていた表記:
 
         only_24h = extract_from_text("24時間ゴミ出し可", dictionary, family="CHINTAI")
         assert "EQUIP_TRASH" not in only_24h.codes
+
+
+class Test2面採光とクローゼットの表記:
+    """課題#15 で追加した2条件（各 weight 3）。
+
+    ⚠ 追加は実データの分布を測ってから決めた（2面採光 9.8% / クローゼット 40.9%）。
+    洗面化粧台・脱衣所を見送ったのは、``INT_WASHROOM``（weight 7）と
+    90.8% / 84.3% 重なり、同じことに二重の重みが掛かるため。
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "2面採光",
+            "２面採光",  # ⚠ 全角。NFKC 正規化が効かないと黙って抽出0件になる（→ 課題#51 と同型）
+            "二面採光",
+            "南向き、2面採光、角部屋",
+        ],
+    )
+    def test_2面採光の表記ゆれを拾える(self, text: str, dictionary: FeatureDictionary) -> None:
+        result = extract_from_text(text, dictionary, family="CHINTAI")
+        assert "LOC_TWO_SIDE_LIGHT" in result.codes
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "クローゼット",
+            "クロゼット",  # ⚠ SUUMO の表記は長音符なし
+        ],
+    )
+    def test_クローゼットの表記ゆれを拾える(
+        self, text: str, dictionary: FeatureDictionary
+    ) -> None:
+        result = extract_from_text(text, dictionary, family="CHINTAI")
+        assert "STORAGE_CLOSET" in result.codes
+
+    def test_ウォークインクローゼットは収納2条件の両方に当たる(
+        self, dictionary: FeatureDictionary
+    ) -> None:
+        """⚠ 部分一致の既知の性質。WIC はクローゼットの一種なので意図どおり。
+
+        ⚠ ``STORAGE_WIC`` は WANT に配点していないので二重加点にはならない。
+        配点済みの ``STORAGE_SHOE``（weight 3）と重なる
+        「シューズインクローゼット」は実測4件で、いずれも他のクローゼット表記も
+        持っていた（＝下駄箱だけでクローゼット扱いされる掲載は0件）。
+        """
+        codes = extract_from_text("ウォークインクローゼット", dictionary, family="CHINTAI").codes
+        assert {"STORAGE_CLOSET", "STORAGE_WIC"} <= set(codes)
+
+    def test_2面採光と南向きは別の条件(self, dictionary: FeatureDictionary) -> None:
+        """⚠ どちらも採光の話だが、南向きでない2面採光は実在する。"""
+        only_light = extract_from_text("2面採光", dictionary, family="CHINTAI")
+        assert "LOC_SOUTH_FACING" not in only_light.codes
+
+        only_south = extract_from_text("南向き", dictionary, family="CHINTAI")
+        assert "LOC_TWO_SIDE_LIGHT" not in only_south.codes

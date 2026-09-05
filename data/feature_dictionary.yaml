@@ -75,6 +75,8 @@ chintai:
     patterns: ["角部屋", "角住戸"]
   LOC_SOUTH_FACING:
     patterns: ["南向き", "南面", "南東向き", "南西向き"]
+  LOC_TWO_SIDE_LIGHT:
+    patterns: ["2面採光", "二面採光"]
 
   # ---- 室内設備 ----
   INT_LAUNDRY:
@@ -212,6 +214,8 @@ chintai:
     patterns: ["シューズボックス", "下駄箱", "シューズインクローゼット", "sic"]
   STORAGE_TRUNK:
     patterns: ["トランクルーム"]
+  STORAGE_CLOSET:
+    patterns: ["クローゼット", "クロゼット"]
 
   # ---- 入居条件 ----
   # SUUMO の「入居」欄が「即」なら、アダプタが「即入居可」へ正規化して載せる
