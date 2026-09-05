@@ -662,6 +662,12 @@ SHA256 を `config_hash` として保存し、不一致なら自動再スコア�
   読み替えると、別の丁目の住戸を同一視する偽陽性を生む）。
   ⚠ **明示的な「丁目」表記はマスタに問い合わせず信じる**（サイトが番地を丁目欄に
   書いている掲載が10件残るが、覆すとマスタが古いとき正しい丁目を潰す）。
+  ⚠ **`t_listings.prefecture` を住所へ前置してよいのは、住所がどの都道府県でも
+  始まっていないときだけ**（賃貸EX は「足立区竹の塚６」と書く）。⚠ 判定を
+  「渡された prefecture で始まるか」にすると、列が誤っているとき
+  `長野県東京都立川市富士見町4丁目` という**実在しない住所**が `dedup_key` になる
+  （実測3件 → 課題#48）。⚠ **列は別経路で古くなる**（`resolve-cities` が city_id だけ
+  直して `prefecture` を放置していた）ので、**住所側に都道府県があればそちらを信じる**
   ⚠ **正規化は掲載側と原典側で同じ `normalize_base` を通す**（別の規則を当てると、
   突き合わせが0件になったとき原因を切り分けられない）
 - **正規化住所は丁目までで打ち切る。** サイトによって粒度が
@@ -995,6 +1001,8 @@ uv run house-search db-seed --test-db
 | `DISCORD_WEBHOOK_CHINTAI_23KU` | ✅ | 「東京23区賃貸」の個別通知 |
 | `DISCORD_WEBHOOK_CHINTAI_SUBURB60` | ✅ | 「近郊60分圏賃貸」の個別通知 |
 | `DISCORD_WEBHOOK_DIGEST` | ✅ | 上位15件ダイジェスト専用（両帯が共有） |
+| `DISCORD_WEBHOOK_MANSION_23KU` / `_MANSION_DIGEST` | — | マンション売買（Phase 6）。**新築・中古で分けずファミリ単位で共有**する → 課題#4 |
+| `DISCORD_WEBHOOK_KODATE_23KU` / `_KODATE_DIGEST` | — | 戸建て売買（Phase 6）。同上 |
 | `CONFIGS_DIR` | — | 検索パターンYAMLのディレクトリ |
 | `DATA_DIR` | — | 設備抽出辞書などGit管理データのディレクトリ |
 | `DEFAULT_MIN_INTERVAL_SEC` | — | サイト個別設定が無い場合のリクエスト間隔（秒） |
@@ -1004,6 +1012,11 @@ uv run house-search db-seed --test-db
 - **Webhook URL は全て `.env` に集約する。** YAMLは `webhook_ref` で論理名を参照し、
   未定義参照は `validate-config` と起動時バリデーションでエラーにする
 - 空値項目にインラインコメントを書かない（python-dotenv が `# コメント` を値として読む）
+- ⚠ **キーだけ用意して値を空にしておくのは安全。** `Settings.webhooks()` が空値を
+  除外するため、書き忘れは「未定義」として `validate-config` と `webhook_url` が弾く。
+  売買（Phase 6）の4キーはこの状態で `.env` に置いてある（帯が確定する手順7 まで
+  スコープ名は暫定）。⚠ **空値が「定義済み」と誤判定されると送信時まで気づけない**ので、
+  キーを足したら `webhook_url` が弾くことを実際に確かめる
 
 ---
 
