@@ -381,7 +381,12 @@ def _fetch_details(
         # 「N回に1回の詳細回」を入れるか決める
         return
     with runtime.engine.connect() as conn:
-        queue = persist.detail_queue(conn, site_id=site_id, limit=limit)
+        # 枠の半分を「古い順」に充てて滞留を必ず削る（→ 課題#54）。
+        # ⚠ 滞留が解消すれば未取得は新しい掲載だけになり、古い順と新しい順が
+        # 同じ集合を指すので**恒常的な副作用は無い**。効くのは詰まっている間だけ
+        queue = persist.detail_queue(
+            conn, site_id=site_id, limit=limit, oldest_limit=limit // 2
+        )
 
     # ⚠ **詳細もGETとは限らない。** UR賃貸は住戸詳細がJSON APIへの POST なので、
     # 任意フック ``fetch_detail`` を宣言したアダプタには「取得＋解析」を委譲する。
