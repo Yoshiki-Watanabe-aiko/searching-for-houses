@@ -25,6 +25,7 @@ from house_search.extract.extractor import (
 from house_search.notify.format import build_listing_message, notifiable_from
 from house_search.pipeline import persist
 from house_search.pipeline.runtime import Runtime
+from house_search.scoring.anomaly import collect_price_anomalies
 from house_search.scoring.listing_view import ListingView
 from house_search.scoring.must import evaluate_must
 from house_search.scoring.score import calculate_score
@@ -87,6 +88,10 @@ class ScanSummary:
     # 意図どおりなのか不具合なのか見分けられない
     notify_out_of_rank: int = 0
     groups_changed: int = 0
+    # 相場に対して極端に安い掲載（サイト側のデータ異常の疑い → 課題#50）。
+    # ⚠ エラーではないので errors には入れない。既知の偽陽性で
+    # エラーチャンネルが埋まると本物を見逃す（→ 課題#45）
+    price_anomalies: list[str] = field(default_factory=list)
     # サイトに属さないエラー（通勤時間の目的地が引けない等）。
     # errors は property なので、ここに入れないと append しても消える
     pattern_errors: list[str] = field(default_factory=list)
@@ -558,6 +563,7 @@ def _score_pattern(runtime: Runtime, pattern, summary: ScanSummary) -> dict[int,
             commute_destination_g_cd=destination,
         )
 
+    passed: list[ListingView] = []
     with runtime.engine.begin() as conn:
         for view in views.values():
             must = evaluate_must(view, pattern.must)
@@ -574,9 +580,13 @@ def _score_pattern(runtime: Runtime, pattern, summary: ScanSummary) -> dict[int,
             summary.scored += 1
             if must.passes(pattern.must.unknown_policy):
                 summary.must_pass += 1
+                passed.append(view)
         # エリア帯から外れた掲載の古いスコア行を消す（残すと二重採点になる）
         persist.prune_scores(conn, pattern.name, list(views))
         persist.update_ranks(conn, pattern.name)
+    # ⚠ MUST を通った掲載だけを見る。fail はランキングにも通知にも出ないので
+    # 警告しても行動につながらない
+    summary.price_anomalies = collect_price_anomalies(passed)
     return views
 
 
