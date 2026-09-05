@@ -153,6 +153,39 @@ METRICS: tuple[MetricSpec, ...] = (
         # 最寄り駅ごとの最短値。列名としてはここにしか現れない。
         source_columns=("commute_minutes",),
     ),
+    # --- ハザード評価（→ 課題#46） -------------------------------------
+    # ⚠ いずれも t_listings の物理列ではない。address_normalized から
+    # m_hazard_levels を JOIN して引く（丁目、無ければ町の値）。
+    # ⚠⚠ **0.0 は「区域外だと確認した」で、未解決は None**。混ぜると
+    # 「危険なのに情報が無いから減点されない」掲載が満点になる。
+    MetricSpec(
+        name="flood_rank_avg",
+        label="洪水浸水深（丁目の面積加重平均ランク）",
+        direction=Direction.LOWER_IS_BETTER,
+        unit="ランク",
+        property_types=ALL_PROPERTY_TYPES,
+        # ⚠ 最大ランクではなく加重平均を主力にする。最大は外れ値に引っ張られ、
+        # 水路際のランク6がごく一部でも丁目全体が最悪扱いになる（→ 課題#46 の実測）。
+        source_columns=("flood_rank_avg",),
+    ),
+    MetricSpec(
+        name="flood_area_ratio",
+        label="洪水浸水域の面積比",
+        direction=Direction.LOWER_IS_BETTER,
+        unit="割合",
+        property_types=ALL_PROPERTY_TYPES,
+        source_columns=("flood_area_ratio",),
+    ),
+    MetricSpec(
+        name="landslide_area_ratio",
+        label="土砂災害警戒区域の面積比",
+        direction=Direction.LOWER_IS_BETTER,
+        unit="割合",
+        property_types=ALL_PROPERTY_TYPES,
+        # ⚠ 土砂は該当が18.9%と少なく、その大半が「丁目の端に5%未満」の形。
+        # 洪水（該当72.9%）とは分布が正反対なので、同じ best/worst を流用しない。
+        source_columns=("landslide_area_ratio",),
+    ),
 )
 
 METRICS_BY_NAME: dict[str, MetricSpec] = {m.name: m for m in METRICS}
@@ -209,6 +242,24 @@ MUST_ITEMS: tuple[MustSpec, ...] = (
         ("commute_minutes",),
         # 駅の同定と所要時間キャッシュの解決が要るため一覧だけでは判定できない。
         # 未解決は unknown になり、unknown_policy に従う（既定 keep）。
+        False,
+    ),
+    MustSpec(
+        "flood_rank_max",
+        "洪水浸水深ランクの上限",
+        ALL_PROPERTY_TYPES,
+        ("flood_rank_max",),
+        # 住所の解決（address_normalized → m_hazard_levels）に依存するため
+        # 一覧だけでは判定できない。住所が詳細で初めて埋まるサイトもある。
+        # ⚠ 未解決は unknown。unknown_policy の既定 keep を drop へ倒さないこと
+        # （情報が無いだけの掲載が黙って消える。町名までしか出さないサイトが全滅する）。
+        False,
+    ),
+    MustSpec(
+        "landslide_special_ratio_max",
+        "土砂災害特別警戒区域の面積比の上限",
+        ALL_PROPERTY_TYPES,
+        ("landslide_special_ratio",),
         False,
     ),
     MustSpec(

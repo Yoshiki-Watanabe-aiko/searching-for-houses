@@ -36,6 +36,10 @@ _VALUE_METRIC: dict[str, str] = {
     "age_max": "age_years",
     "walk_minutes_max": "walk_minutes",
     "commute_minutes_max": "commute_minutes",
+    # ハザード評価（→ 課題#46）。⚠ 0.0（区域外と確認）は pass、
+    # None（住所を照合できず情報が無い）は unknown になる。
+    "flood_rank_max": "flood_rank_max",
+    "landslide_special_ratio_max": "landslide_special_ratio",
     "floor_min": "floor_num",
 }
 

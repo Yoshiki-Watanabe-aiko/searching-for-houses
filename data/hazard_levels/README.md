@@ -66,6 +66,25 @@ uv run house-search rescore
 - **位置参照情報に無い町丁も含む**（実測1,960件）。境界データの方が網羅的なため。
   住所マスタ（`m_address_points`）に載っていない町の掲載も評価できる。
 
+## 採点での使われ方（→ [ADR 0021](../../docs/adr/0021-hazard-as-want-metric.md)）
+
+`scan` / `rescore` は `t_listings.address_normalized` からこの表を JOIN するだけで、
+**幾何ライブラリには触れない**（`tests/test_no_geo_runtime_deps.py` が固定）。
+
+| 使いどころ | 値 |
+|---|---|
+| WANT（加点） | `flood_rank_avg` weight 15（best 0 / worst 4）・`landslide_area_ratio` weight 5（best 0 / worst 0.1） |
+| MUST（足切り） | `flood_rank_max` / `landslide_special_ratio_max` を配線済みだが**実運用では未設定** |
+| 粒度 | 丁目 → 引けなければ `m_address_points.town_key` 経由で町 |
+| グループ | 名寄せしたグループ内で**最も細かい住所**を持つ掲載の値を採る |
+
+- ⚠ **`area_ratio` は帯によって判別力が無い。** 23区は3,124丁目のうち浸水想定に
+  一切掛からないのが2丁目だけで、`flood_area_ratio` は99.1%が0.25以上に固まる。
+  **`rank_avg` を主力にする**（25%点0.71・中央2.0・最大4.0と階調が出る）。
+- ⚠ **`rank_max` を加点に使わない。** 水路際のランク6がごく一部でも丁目全体が
+  最悪扱いになる（市川市菅野5丁目は max=6 だが加重平均2.52）。足切り専用。
+- **減点は実装していない。** 加点で数学的に等価で、点を差し引くと0〜100点の意味が壊れる。
+
 ## 実測（2026-09-05）
 
 | 指標 | 値 |

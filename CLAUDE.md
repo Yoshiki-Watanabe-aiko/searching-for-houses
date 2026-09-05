@@ -50,6 +50,7 @@ uv run house-search regroup                # 名寄せの再構築（ネット�
 uv run house-search resolve-cities         # 市区町村IDの引き直し（マスタ入替後・ネットワーク不要）
 uv run house-search sync-site-params       # サイト側フィルタ定義の同期（scan の前に必要）
 uv run house-search sync-addresses         # 住所マスタ（data/address_master/*.csv）→ DB
+uv run house-search sync-hazards           # ハザード評価（data/hazard_levels/*.csv）→ DB
 uv run house-search sync-stations          # 駅マスタ（data/train_master/*.csv）→ DB
 uv run house-search resolve-stations       # 掲載の駅表記を駅マスタと突き合わせる（ネットワーク不要）
 uv run house-search resolve-commutes       # 駅ペアの通勤所要時間を算出しキャッシュ（ネットワーク不要）
@@ -58,6 +59,7 @@ uv run house-search fetch-commutes --region 関東   # 全国網羅。その地�
 uv run house-search re-segment             # 経路の原文から乗車区間を作り直す（ネットワーク不要）
 uv run house-search re-segment --region 沖縄  # 地方ごと。索引もその地方に合わせる（→ 課題#35）
 uv run house-search commute-stats          # 通勤時間の分布（best/worst を決める材料）
+uv run house-search hazard-stats           # ハザードの解決率と分布（weight・best/worst の材料）
 uv run house-search dedup-stats            # サイト別の重複率・ユニーク率（ネットワーク不要）
 uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観測モード
 uv run house-search scan --detail-limit 800         # 詳細取得の上限を上書き（既定40 / --full時400）
@@ -206,6 +208,26 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
   （町名の正規表現から推測しない）。⚠ **`sync-addresses` は全置換なので `id` を参照しない**
 - **正規化は掲載側と原典側で `normalize_base` を共用する。** 別の規則を当てると、
   突き合わせが0件になったとき「マスタに無い」のか「正規化がずれている」のかを区別できない
+- ⚠⚠ **ハザード評価は「区域外（`value=0`）」と「未解決（行が無い）」を混ぜない**
+  （→ ADR 0021・課題#46）。混ぜると**「危険なのに情報が無いから減点されない」掲載が
+  「安全」と同じ扱いになり、例外にならないまま順位が狂う**。
+  ⚠ **`float(value or 0)` と書かない**（0.0 は falsy なので未解決に化ける）。
+  担保は生成の恒等式 assert・読み込みの検証・採点（0.0 は満点の hit / None は
+  `missing` で分母から除外）の3層
+- **ハザードは丁目で引き、無ければ `m_address_points.town_key` 経由で町へ落とす。**
+  ⚠ **SQL の文字列操作で「N丁目」を剥がさない**（丁目の無い町で番地を削り別の町を指す →
+  ADR 0020 と同じ失敗）。⚠ **ハウスコムは住所が町名までしか無い**ので、
+  この経路が無いとそのサイトの掲載が丸ごと未解決になる
+- ⚠ **ハザードの丁目照合に「代表点がポリゴン内か」を使わない。** 実測で
+  **12分の1しか拾えない**（東京都のA33で代表点80丁目 vs 交差判定1,140丁目）。
+  ⚠ **例外にならず静かに過小評価される。** 丁目境界ポリゴンとの交差で判定する。
+  ⚠ ハザード側の所在地属性（A33_006）で代替するのも誤り（A31 に住所属性が無く、
+  A33 も県によって欠損する）
+- ⚠ **洪水と土砂で集計方式を分ける。** 該当する丁目は洪水72.9% / 土砂18.9% と
+  分布が正反対で、1つの方式では両方に判別力を出せない。
+  ⚠ **23区は3,124丁目のうち浸水想定に一切掛からないのが2丁目だけ**なので、
+  面積比は判別力を持たない（浸水深の面積加重平均を使う）。
+  ⚠ **最大ランクは外れ値に引っ張られる**（水路際のランク6がごく一部でも丁目全体が最悪扱い）
 - **名寄せキーに建物名・築年月・総階数・賃料を入れてはいけない。** 匿名掲載
   （`ＪＲ相模線 上溝駅 2階建 築41年`）が実在し、入れると真の一致が分断される。
   面積も丸めない（丸めても一致は増えず隣接住戸を余分に潰すだけ）
