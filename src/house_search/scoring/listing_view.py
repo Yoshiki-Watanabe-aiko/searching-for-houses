@@ -45,6 +45,9 @@ class ListingView:
     mgmt_fee_monthly: int | None = None
     rent_total: int | None = None
     repair_reserve_monthly: int | None = None
+    # 物件種別のファミリ（CHINTAI / MANSION_BUY / KODATE_BUY）。
+    # 通知の金額表示が賃貸と売買で変わるので、採点用ビューから運ぶ。
+    property_family: str | None = None
 
     area_sqm: float | None = None
     land_area_sqm: float | None = None

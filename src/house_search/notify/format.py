@@ -54,6 +54,12 @@ class NotifiableListing:
     address: str | None
     image_url: str | None = None
     price_prev: int | None = None
+    # --- 売買（Phase 6） ---
+    # ⚠ **既定値付きにして、賃貸だけの呼び出しをこれまでどおり動かす。**
+    # ⚠ `property_family` が None のときは賃貸として表示する（既定を売買側に
+    # 倒すと、渡し忘れた稼働中の経路が黙って売買表示になる）。
+    repair_reserve_monthly: int | None = None
+    property_family: str | None = None
     # 通勤時間は目的地（commute セクション）を設定したパターンでだけ付く任意の属性。
     # 既定値付きにして、設定していない呼び出しをこれまでどおり動かす。
     commute_minutes: int | None = None
@@ -64,6 +70,17 @@ class NotifiableListing:
     other_site_codes: tuple[str, ...] = ()
     previous_total: int | None = None
     previous_site_code: str | None = None
+
+    @property
+    def monthly_cost(self) -> int | None:
+        """売買の月々の負担（管理費＋修繕積立金）。⚠ 両方 None のときだけ None。
+
+        片方だけ判っている掲載を0円扱いにしないため、`ListingView.monthly_cost`
+        と同じ規則にしてある。
+        """
+        if self.mgmt_fee_monthly is None and self.repair_reserve_monthly is None:
+            return None
+        return (self.mgmt_fee_monthly or 0) + (self.repair_reserve_monthly or 0)
 
     @property
     def listing_sites(self) -> tuple[str, ...]:
@@ -97,6 +114,8 @@ def notifiable_from(
         price=view.price,
         mgmt_fee_monthly=view.mgmt_fee_monthly,
         rent_total=view.rent_total,
+        repair_reserve_monthly=view.repair_reserve_monthly,
+        property_family=view.property_family,
         layout=view.layout,
         area_sqm=view.area_sqm,
         age_years=view.age_years,
@@ -113,6 +132,53 @@ def notifiable_from(
 
 def _yen(value: int | None) -> str:
     return f"{value:,}円" if value is not None else "—"
+
+
+# 売買のファミリ。⚠ ここに無いもの（CHINTAI・未設定）は賃貸として表示する。
+_BUY_FAMILIES = frozenset({"MANSION_BUY", "KODATE_BUY", "TOCHI_BUY"})
+
+
+def _is_buy(prop: NotifiableListing) -> bool:
+    return (prop.property_family or "CHINTAI") in _BUY_FAMILIES
+
+
+def _man_yen(value: int | None) -> str:
+    """売買価格を万円・億円で表す。⚠ 未定は「価格未定」と明示する。
+
+    0円やハイフンで出すと「安い」と誤読される（新築は価格未定が実在する）。
+    """
+    if value is None:
+        return "価格未定"
+    if value >= 100_000_000:
+        oku, rest = divmod(value, 100_000_000)
+        man = rest // 10_000
+        return f"{oku}億{man:,}万円" if man else f"{oku}億円"
+    if value % 10_000:
+        return f"{value / 10_000:,.1f}万円"
+    return f"{value // 10_000:,}万円"
+
+
+def price_field(prop: NotifiableListing) -> tuple[str, str]:
+    """個別通知に出す金額欄の ``(見出し, 本文)``。
+
+    ⚠⚠ **`rent_total` は生成列 `price + 管理費` なので売買でも値が入る。**
+    賃貸前提のまま出すと、中古マンションの通知に「35,012,000円」が**賃料**として
+    並び、物件価格と管理費を足した無意味な数字を誰も異常と思わない（→ 課題#4）。
+    """
+    if _is_buy(prop):
+        monthly = prop.monthly_cost
+        note = f"\n（月々 {_yen(monthly)}）" if monthly is not None else ""
+        return "価格", f"{_man_yen(prop.price)}{note}"
+    return (
+        "月額",
+        f"{_yen(prop.rent_total)}\n（賃料 {_yen(prop.price)} + 管理費 "
+        f"{_yen(prop.mgmt_fee_monthly)}）",
+    )
+
+
+def price_summary(prop: NotifiableListing) -> str:
+    """ダイジェスト1行に出す金額。⚠ 売買と賃貸で意味が変わる。"""
+    return _man_yen(prop.price) if _is_buy(prop) else _yen(prop.rent_total)
 
 
 def _summary_line(prop: NotifiableListing) -> str:
@@ -150,12 +216,7 @@ def build_listing_embed(
             "value": f"**{score.score:.1f}** / 100（{rank_text}）",
             "inline": True,
         },
-        {
-            "name": "月額",
-            "value": f"{_yen(prop.rent_total)}\n（賃料 {_yen(prop.price)} + 管理費 "
-            f"{_yen(prop.mgmt_fee_monthly)}）",
-            "inline": True,
-        },
+        dict(zip(("name", "value"), price_field(prop), strict=True), inline=True),
         {"name": "条件", "value": _summary_line(prop), "inline": False},
     ]
 
@@ -262,7 +323,7 @@ def _digest_line(entry: DigestEntry) -> str:
     site_note = f"{prop.site_code} ほか{others}サイト" if others > 0 else prop.site_code
     return (
         f"**{entry.rank}. [{title}]({prop.url})**\n"
-        f"　`{entry.score.score:5.1f}点` {_yen(prop.rent_total)} / "
+        f"　`{entry.score.score:5.1f}点` {price_summary(prop)} / "
         f"{_summary_line(prop)}\n"
         f"　{prop.address or '住所不明'} ({site_note}){unknown_note}"
     )
