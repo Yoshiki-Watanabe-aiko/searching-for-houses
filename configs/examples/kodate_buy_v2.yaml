@@ -1,0 +1,61 @@
+# ============================================================
+# 検索パターン YAML v2 の雛形（戸建て売買）
+#
+# ⚠⚠ **この雛形の数値はすべて暫定である**（マンション雛形と同じ理由）。
+# 手順8（戸建て2種別）の実測で母集団の分布を見てから確定する。
+#
+# ⚠ **戸建てに area_sqm は使えない。** 専有面積という概念が無く、
+# 土地面積（land_area_sqm）と建物面積（building_area_sqm）の2軸になる。
+# 流用すると名寄せキー（dedup_key）とも食い違う（→ 再設計計画 §4.5）。
+#
+# 検証: uv run house-search validate-config
+# ============================================================
+
+name: "中古戸建て（雛形）"
+property_type: "CHUKO_KODATE"      # 新築は SHINCHIKU_KODATE（age_years が使えない）
+
+# マンションとは別チャンネル（ファミリ単位で共有 → 課題#4）
+webhook_ref: "KODATE_23KU"
+digest_webhook_ref: "KODATE_DIGEST"
+
+sites:
+  - "SUUMO"
+
+search:
+  prefectures:
+    - "東京都"
+  cities: []
+  price_max_hint: null
+  # ⚠ site_filters は手順3で実測してから。戸建ての面積軸は土地・建物の2つがあり、
+  # サイト側のキーがどちらを指すかまで確かめないと**黙って別の軸で絞られる**
+
+commute:
+  destination_station: "芝公園"
+  destination_prefecture: "東京都"
+
+must:
+  price_max: 70000000          # 7,000万円（円単位）
+  layouts: ["3LDK", "4LDK"]
+  land_area_min: 80.0
+  building_area_min: 90.0
+  walk_minutes_max: 15
+  commute_minutes_max: 45
+  features: []
+  unknown_policy: keep
+
+want:
+  features: []                 # 売買辞書の育成後に足す（手順5）
+  numeric:
+    - { metric: price,                weight: 40, best: 50000000, worst: 70000000 }
+    - { metric: land_area_sqm,        weight: 15, best: 120,      worst: 80 }
+    - { metric: building_area_sqm,    weight: 15, best: 120,      worst: 90 }
+    - { metric: age_years,            weight: 15, best: 0,        worst: 40 }
+    - { metric: walk_minutes,         weight: 10, best: 3,        worst: 15 }
+    - { metric: commute_minutes,      weight: 25, best: 25,       worst: 45 }
+    - { metric: flood_rank_avg,       weight: 15, best: 0,        worst: 4 }
+    - { metric: landslide_area_ratio, weight: 5,  best: 0,        worst: 0.1 }
+
+ranking:
+  top_n: 15
+  digest_group: null
+  notify_max_rank: 200

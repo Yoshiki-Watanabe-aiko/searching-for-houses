@@ -218,7 +218,17 @@ MUST_ITEMS: tuple[MustSpec, ...] = (
         # 売買の管理費・修繕積立金は一覧に出ないため詳細を見ないと判定できない。
         False,
     ),
-    MustSpec("layouts", "間取り", ALL_PROPERTY_TYPES, ("layout",), True),
+    MustSpec(
+        "layouts",
+        "間取り",
+        # ⚠ ALL_PROPERTY_TYPES を使わない。土地（Phase 9）を足すとその瞬間に
+        # 間取りが土地へも適用可能になり、土地パターンに間取りMUSTが書けてしまう
+        # （validate は通り、実行時に全件 unknown になるだけで例外にならない）。
+        # 現時点の値は ALL_PROPERTY_TYPES と同一集合（→ 課題#4）。
+        frozenset({CHINTAI}) | BUY_TYPES,
+        ("layout",),
+        True,
+    ),
     MustSpec(
         "area_min", "専有面積の下限", frozenset({CHINTAI}) | MANSION_TYPES, ("area_sqm",), True
     ),

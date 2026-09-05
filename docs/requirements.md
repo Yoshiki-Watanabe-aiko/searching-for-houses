@@ -258,7 +258,9 @@ check-sold は 200件（100件/パターン × 2帯）× 約4.5秒で **約15分
   - [`configs/chintai_23ku.yaml`](../configs/chintai_23ku.yaml) — 東京23区（23市区・個別通知は `CHINTAI_23KU`）
   - [`configs/chintai_suburb60.yaml`](../configs/chintai_suburb60.yaml) — 近郊60分圏（59市区・個別通知は `CHINTAI_SUBURB60`）
   - **個別通知は帯ごとに別チャンネル、ダイジェストは両帯とも `DIGEST` へ集約**する（→ §9.1）
-- 雛形: [`configs/examples/chintai_v2.yaml`](../configs/examples/chintai_v2.yaml)
+- 雛形: [`configs/examples/`](../configs/examples/)
+  — 賃貸 `chintai_v2.yaml` / マンション売買 `mansion_buy_v2.yaml` / 戸建て売買 `kodate_buy_v2.yaml`
+  ⚠ **売買雛形の weight・best/worst は暫定値**（母集団の分布を見てから決める → 課題#31・#34）
   — **`configs/` 直下に置くと実パターンとして走ってしまう**ため `examples/` に置く
 - v1形式の設定は `configs/_v1/`（Git管理外）へ退避してある
 
@@ -579,6 +581,12 @@ YAMLは読み込み時にこのレジストリと突き合わせて検証され�
 MUST判定は `pass` / `fail` / `unknown` の3値。**詳細ページの取得をスキップするのは `fail` のみ。**
 一覧ページだけで判定できない項目（`monthly_cost_max` / `floor_min` / `features`）は
 レジストリの `available_on_list=False` で明示している。
+
+⚠ **間取り（`layouts`）は共通部ではなくファミリごとの MUST クラスが持つ。**
+土地（Phase 9）には間取りの概念が無いのに、共通部に置くと土地パターンにも
+書けてしまう。書けても判定はされず**全件 unknown になるだけで例外にならない**
+（→ 課題#4）。`tests/test_pattern.py` がレジストリと MUST クラスの対応を
+**双方向で**固定しているので、片方だけ増やすと落ちる。
 
 ---
 

@@ -1,0 +1,83 @@
+# ============================================================
+# 検索パターン YAML v2 の雛形（マンション売買）
+#
+# ⚠⚠ **この雛形の数値はすべて暫定である。** weight と best/worst は
+# 母集団の分布を見てから決める（→ 課題#31・#34）。売買の掲載はまだ1件も
+# 取っていないので、賃貸の値を機械的に流用すると配点が死ぬ
+# （築年数 worst=30 が母集団の9割に張り付いた前例がある）。
+# 手順5（中古Mの縦切り実測）で `commute-stats` と同じ要領で分布を測ってから確定する。
+#
+# ⚠ **configs/ 直下に置かないこと。** 直下の *.yaml は実パターンとして scan が走る
+#   （glob は非再帰なので examples/ は読まれない）。
+#
+# 検証: uv run house-search validate-config
+# ============================================================
+
+name: "中古マンション（雛形）"
+property_type: "CHUKO_MANSION"     # 新築は SHINCHIKU_MANSION（age_years が使えない）
+
+# 通知先はファミリ単位で共有する（新築・中古で分けない。売買は掲載の回転が遅く
+# 新着が少ないので、細分すると監視が形骸化する → 課題#4）。
+# .env の DISCORD_WEBHOOK_MANSION_23KU / _MANSION_DIGEST を参照する
+webhook_ref: "MANSION_23KU"
+digest_webhook_ref: "MANSION_DIGEST"
+
+# ⚠ ライフルホームズは入れない。1実行5リクエストの上限を賃貸と食い合い、
+# 市区ローテーションの一巡が 1.4日 → 倍以上に伸びて**取得の鮮度が黙って落ちる**
+sites:
+  - "SUUMO"
+
+# ---- サイト側へ渡す唯一の条件 ----
+search:
+  prefectures:
+    - "東京都"
+  # ⚠ 採点も帯に閉じる。空のままだとDBに残る帯外の掲載にも帯のスコアが付く（→ ADR 0013）
+  cities: []
+  # ⚠ **売買の価格上限は単位も選択肢も未測定**（手順3で実測する）。
+  # 賃貸の ct（万円・端数で0件）と同じ事故が起きうるので、実測前に有効化しない
+  price_max_hint: null
+  # ⚠ site_filters は手順3でキー名・選択肢・不等号の向きを実測してから有効にする。
+  # 推測で書くと「0件になる／黙って無視される／向きが逆」のいずれかになり、
+  # **どれも例外にならない**（→ ADR 0015・課題#29）
+  # site_filters:
+  #   enabled: true
+  #   axes: ["area_min", "layouts"]
+
+commute:
+  destination_station: "芝公園"
+  destination_prefecture: "東京都"
+
+# ---- MUST: 未充足なら除外 ----
+must:
+  price_max: 60000000          # 6,000万円（円単位）
+  # monthly_cost_max は一覧に出ないので詳細を見るまで unknown になる
+  monthly_cost_max: 40000
+  layouts: ["2LDK", "3LDK"]
+  area_min: 50.0
+  walk_minutes_max: 15
+  commute_minutes_max: 45
+  features: []
+  # ⚠ drop へ倒さないこと。新築の価格未定・管理費未取得が「情報が無いだけ」で消える
+  unknown_policy: keep
+
+# ---- WANT: 重み付き加点。合計 0〜100点へ正規化される ----
+want:
+  # ⚠ 売買の辞書（data/feature_dictionary.yaml の buy:）はまだ空。
+  # 手順5で未知表記を貯めてから育てる。空の辞書のまま条件を書くと全件 miss になり、
+  # 分母にだけ乗ってスコア全体が沈む
+  features: []
+  numeric:
+    - { metric: price,                weight: 40, best: 40000000, worst: 60000000 }
+    - { metric: area_sqm,             weight: 20, best: 75,       worst: 50 }
+    - { metric: age_years,            weight: 15, best: 0,        worst: 40 }
+    - { metric: monthly_cost,         weight: 10, best: 15000,    worst: 40000 }
+    - { metric: walk_minutes,         weight: 10, best: 3,        worst: 15 }
+    - { metric: commute_minutes,      weight: 25, best: 25,       worst: 45 }
+    # ハザードは全種別で共通に効く（→ ADR 0021）
+    - { metric: flood_rank_avg,       weight: 15, best: 0,        worst: 4 }
+    - { metric: landslide_area_ratio, weight: 5,  best: 0,        worst: 0.1 }
+
+ranking:
+  top_n: 15
+  digest_group: null
+  notify_max_rank: 200

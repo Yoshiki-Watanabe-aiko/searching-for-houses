@@ -7,11 +7,12 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from pydantic import ValidationError
 
+from house_search.config.metrics import must_items_for
 from house_search.config.pattern import (
     ChintaiPattern,
     KodateBuyPattern,
@@ -196,6 +197,33 @@ def test_同梱の雛形YAMLが読める() -> None:
     assert len(pattern.want.numeric) == 4
 
 
+@pytest.mark.parametrize(
+    ("filename", "expected_cls", "expected_type"),
+    [
+        ("mansion_buy_v2.yaml", MansionBuyPattern, "CHUKO_MANSION"),
+        ("kodate_buy_v2.yaml", KodateBuyPattern, "CHUKO_KODATE"),
+    ],
+)
+def test_売買の雛形YAMLが読める(
+    filename: str, expected_cls: type, expected_type: str
+) -> None:
+    pattern = load_pattern_file(REPO_ROOT / "configs" / "examples" / filename)
+    assert isinstance(pattern, expected_cls)
+    assert pattern.property_type == expected_type
+
+
+def test_雛形YAMLはconfigs直下に置かない() -> None:
+    """⚠ 直下の *.yaml は実パターンとして scan が走り、同じ Webhook へ二重通知される。
+
+    実際に起きた事故なので、雛形が増えるたびに人力で気をつけるのではなく固定する
+    （glob は非再帰なので examples/ 配下は読まれない）。
+    """
+    live = {p.name for p in (REPO_ROOT / "configs").glob("*.yaml")}
+    assert live == {"chintai_23ku.yaml", "chintai_suburb60.yaml"}, (
+        f"configs/ 直下に実運用しないパターンがある: {sorted(live)}"
+    )
+
+
 @pytest.mark.parametrize("filename", ["chintai_23ku.yaml", "chintai_suburb60.yaml"])
 def test_実運用の検索パターンが読める(filename: str) -> None:
     """エリア帯ごとの実運用パターンが v2 スキーマを満たすこと（課題#9）。"""
@@ -347,3 +375,57 @@ def test_config_hashはany_ofの記法を区別する() -> None:
     )
     # スコアの出方が変わる以上、自動再スコアが走るようハッシュも変わるべき
     assert merged.config_hash() != split.config_hash()
+
+
+# --- MUST項目のレジストリと Must クラスの突き合わせ ---------------------------
+#
+# ⚠ 片方だけ増やしても既存テストは緑のまま通る。レジストリが「使える」と言う項目が
+# Must クラスに無ければ YAML に書いた時点で extra="forbid" に弾かれ、逆に Must クラス
+# にしか無い項目は _validate_against_registry が制御項目（unknown_policy 等）とみなして
+# 素通りさせる。前者は明示エラーだが、後者は**設定したのに効かない**まま通る。
+# 種別を足すときに黙って古くならないよう機械的に固定する（→ 課題#4）。
+
+_PATTERN_CLASSES = (ChintaiPattern, MansionBuyPattern, KodateBuyPattern)
+
+# レジストリに対応する MustSpec を持たない制御項目。
+_CONTROL_FIELDS = frozenset({"unknown_policy"})
+
+
+def _property_types_of(pattern_cls: type) -> tuple[str, ...]:
+    """パターンクラスが受け持つ物件種別（Literal の値）。"""
+    return get_args(pattern_cls.model_fields["property_type"].annotation)
+
+
+def _must_fields_of(pattern_cls: type) -> set[str]:
+    """そのパターンの must クラスが持つ条件フィールド。"""
+    must_cls = pattern_cls.model_fields["must"].annotation
+    return set(must_cls.model_fields) - _CONTROL_FIELDS
+
+
+@pytest.mark.parametrize("pattern_cls", _PATTERN_CLASSES)
+def test_レジストリが使えると言うMUST項目はYAMLに書ける(pattern_cls: type) -> None:
+    fields = _must_fields_of(pattern_cls)
+    for ptype in _property_types_of(pattern_cls):
+        missing = {spec.name for spec in must_items_for(ptype)} - fields
+        assert not missing, (
+            f"{ptype} で使えるはずの MUST が {pattern_cls.__name__} の "
+            f"must クラスに無い: {sorted(missing)}"
+        )
+
+
+@pytest.mark.parametrize("pattern_cls", _PATTERN_CLASSES)
+def test_MustクラスのフィールドはそのファミリのMUSTに限られる(pattern_cls: type) -> None:
+    """⚠ 土地（Phase 9）を足したとき、間取りが土地に書けてしまうのを防ぐ側の担保。
+
+    レジストリが許していない項目をクラスに置くと、YAML には書けるのに判定されない
+    （実行時に全件 unknown になるだけで例外にならない）。
+    """
+    allowed = {
+        spec.name
+        for ptype in _property_types_of(pattern_cls)
+        for spec in must_items_for(ptype)
+    }
+    extra = _must_fields_of(pattern_cls) - allowed
+    assert not extra, (
+        f"{pattern_cls.__name__} の must クラスにレジストリ外の項目がある: {sorted(extra)}"
+    )
