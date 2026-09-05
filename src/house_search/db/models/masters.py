@@ -586,3 +586,96 @@ class HazardLevel(TimestampMixin, Base):
     acquired_on: Mapped[object] = mapped_column(
         Date, nullable=False, comment="原典の取得日。年次更新の判断に使う"
     )
+
+
+class MarketRate(TimestampMixin, Base):
+    """相場（市区 × 間取り）。「相場より安いか」を測る分母になる（→ 課題#49）。
+
+    ⚠⚠ **自DBの掲載から相場を作ってはいけない。** ``t_listings`` には MUST 1段目を
+    通った掲載しか残らず、賃料上限で分布の右側が切断されている。実測（2026-09-05）で
+    **3分の2のセルが中央値＝MUST上限の90%以上**に張り付いており、自DB中央値は
+    「実勢相場」ではなく「上限の93%」をなぞっているだけだった。しかも切断の度合いは
+    セルごとにバラつく（足立区で実勢比 1LDK 75% / 2DK 60%）ので、
+    **ものさしの目盛りが市区・間取りごとに変わる**。例外にならず順位だけが狂う。
+
+    ⚠ **``scan`` / ``rescore`` はこの表を読むだけ**にする（ハザードと同じ形 → ADR 0021）。
+    取得と集計はオフラインのCLIで終わらせ、再採点がネットワーク不要のまま保たれるようにする。
+
+    ⚠ **縦持ちにしてある**（``family`` × ``source`` × ``segment`` の行）。
+    売買の㎡単価や別の取得元の追加が**行の挿入だけ**で済む。列で持つと
+    監査カラムを最終列に保つためのテーブル再作成が要る。
+    """
+
+    __tablename__ = "m_market_rates"
+    __table_args__ = (
+        UniqueConstraint("family", "source", "level", "city_id", "segment", "period"),
+        {"comment": "相場（市区×間取りの家賃相場・売買の単価）。割安さの分母になる"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, comment="相場ID")
+    family: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        comment="種別ファミリ。CHINTAI / MANSION_BUY / KODATE_BUY",
+    )
+    source: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        comment=(
+            "取得元。suumo_soba=SUUMO家賃相場 / mlit_library=国交省 不動産情報ライブラリ。"
+            "⚠ 取得元を差し替えても過去の行を消さずに済むよう列で持つ"
+        ),
+    )
+    level: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        comment=(
+            "粒度。city=市区。⚠ 都道府県へは落とさない"
+            "（相場が一様な範囲ではない。粗い粒度の誤った相場は欠損より有害 → ADR 0013）"
+        ),
+    )
+    city_id: Mapped[int] = mapped_column(
+        ForeignKey("m_cities.id"), nullable=False, index=True, comment="市区町村ID"
+    )
+    segment: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        comment=(
+            "区分。賃貸は正規化済みの間取り（1LDK・2DK…）。"
+            "⚠ 集計側と採点側で同じ normalize_layout を通す"
+            "（別の規則を当てると突き合わせ0件の原因を切り分けられない）"
+        ),
+    )
+    stat_basis: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        comment=(
+            "何の相場かを行が自己記述する。rent_listed=掲載賃料。"
+            "⚠ SUUMO の相場ページには管理費の扱いも平均/中央値の別も**書かれていない**。"
+            "取り違えると全掲載が一律「相場より高い」と出て例外にならないので、"
+            "best/worst は 1.0 を中心と仮定せず実測した ratio 分布に合わせる"
+        ),
+    )
+    rate_value: Mapped[object] = mapped_column(
+        Numeric(14, 2),
+        nullable=False,
+        comment="相場の値。賃貸は月額（円）、売買は㎡単価（円/㎡）。単位は stat_basis が示す",
+    )
+    sample_count: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+        comment=(
+            "集計に使った件数。⚠ **外部の相場では取れないので NULL になる**。"
+            "自前集計に切り替えたときだけ入る（薄いセルを除外する根拠に使う）"
+        ),
+    )
+    period: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        comment="相場の対象期間（2026-09 など）。⚠ 履歴を消さずに追記し、採点は最新を採る",
+    )
+    acquired_on: Mapped[object] = mapped_column(
+        Date,
+        nullable=False,
+        comment="取得日。⚠ 鮮度が切れても採点は続くので、古さに気づく手掛かりとして持つ",
+    )

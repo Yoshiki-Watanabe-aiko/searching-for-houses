@@ -143,6 +143,7 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 | `sync-site-params` | `data/site_search_params.yaml` → `m_site_search_params` | ✅ Phase 5B |
 | `sync-addresses` | `data/address_master/*.csv` → `m_address_points`（住所マスタ） | ✅ Phase 5I |
 | `sync-hazards` | `data/hazard_levels/hazard_levels.csv` → `m_hazard_levels`（ハザード評価） | ✅ Phase 5I |
+| `sync-market-rates` | `data/market_rates/rent_rates.csv` → `m_market_rates`（相場） | ✅ 2026-09-05 |
 | `sync-stations` | `data/train_master/*.csv` → `m_stations`（駅マスタ） | ✅ Phase 5C |
 | `resolve-stations` | 掲載の駅表記を駅マスタと突き合わせる（ネットワーク不要） | ✅ Phase 5C |
 | `resolve-commutes` | 駅ペアの通勤所要時間を算出してキャッシュ（ネットワーク不要） | ✅ Phase 5C |
@@ -829,6 +830,7 @@ DDLは Alembic（`migrations/`）、マスタデータは `db/seed/*.sql`（冪�
 | `m_stations` | **駅マスタ**（駅データ.jp 無料版が正典・10,465駅 / 8,766駅グループ → ADR 0016） |
 | `m_address_points` | **住所マスタ**（国土交通省「位置参照情報」が正典・4都県 21,471件 → ADR 0020）。丁目の実在判定とハザードの丁目代表点に使う。⚠ **`sync-addresses` は全置換なので `id` を外部から参照しない** |
 | `m_hazard_levels` | **ハザード評価**（丁目・町単位。国土数値情報 A31 洪水・A33 土砂が正典 → 課題#46）。⚠ **区域外は `value=0` の明示行を書く**（行が無い＝未解決と区別するため）。⚠ **縦持ち**（`hazard_type` × `aggregation`）なので高潮・津波の追加は行の挿入で済む。⚠ `m_address_points.id` は参照しない（`sync-addresses` は全置換で id が振り直される） |
+| `m_market_rates` | **相場**（市区×間取りの家賃相場）。「相場より安いか」の分母（→ 課題#49）。⚠ **自DBの掲載からは作れない**（MUST 上限で切断され、中央値が上限の93%をなぞるだけになる）。正典は SUUMO の家賃相場ページ。⚠ **縦持ち**なので売買の㎡単価は行の追加で足せる |
 | `m_city_site_values` | 市区町村×サイトの検索値（**縦持ち**・1833行。JIS系サイトは `m_cities.jis_code` から導出するのでこの表を引かない） |
 | `t_listings` | **掲載**（1行=1サイトの1件の募集）|
 | `t_listing_features` | 掲載から抽出した設備・特性 |

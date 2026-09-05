@@ -1,0 +1,822 @@
+{
+  "あきる野市": {
+    "jis": "13228",
+    "slug": "sc_akiruno"
+  },
+  "いすみ市": {
+    "jis": "12238",
+    "slug": "sc_isumi"
+  },
+  "さいたま市中央区": {
+    "jis": "11105",
+    "slug": "sc_saitamashichuo"
+  },
+  "さいたま市北区": {
+    "jis": "11102",
+    "slug": "sc_saitamashikita"
+  },
+  "さいたま市南区": {
+    "jis": "11108",
+    "slug": "sc_saitamashiminami"
+  },
+  "さいたま市大宮区": {
+    "jis": "11103",
+    "slug": "sc_saitamashiomiya"
+  },
+  "さいたま市岩槻区": {
+    "jis": "11110",
+    "slug": "sc_saitamashiiwatsuki"
+  },
+  "さいたま市桜区": {
+    "jis": "11106",
+    "slug": "sc_saitamashisakura"
+  },
+  "さいたま市浦和区": {
+    "jis": "11107",
+    "slug": "sc_saitamashiurawa"
+  },
+  "さいたま市緑区": {
+    "jis": "11109",
+    "slug": "sc_saitamashimidori"
+  },
+  "さいたま市西区": {
+    "jis": "11101",
+    "slug": "sc_saitamashinishi"
+  },
+  "さいたま市見沼区": {
+    "jis": "11104",
+    "slug": "sc_saitamashiminuma"
+  },
+  "ふじみ野市": {
+    "jis": "11245",
+    "slug": "sc_fujimino"
+  },
+  "三浦市": {
+    "jis": "14210",
+    "slug": "sc_miura"
+  },
+  "三浦郡葉山町": {
+    "jis": "14300",
+    "slug": "sc_miuragun"
+  },
+  "三郷市": {
+    "jis": "11237",
+    "slug": "sc_misato"
+  },
+  "三鷹市": {
+    "jis": "13204",
+    "slug": "sc_mitaka"
+  },
+  "上尾市": {
+    "jis": "11219",
+    "slug": "sc_ageo"
+  },
+  "世田谷区": {
+    "jis": "13112",
+    "slug": "sc_setagaya"
+  },
+  "中央区": {
+    "jis": "13102",
+    "slug": "sc_chuo"
+  },
+  "中郡": {
+    "jis": "14340",
+    "slug": "sc_nakagun"
+  },
+  "中野区": {
+    "jis": "13114",
+    "slug": "sc_nakano"
+  },
+  "久喜市": {
+    "jis": "11232",
+    "slug": "sc_kuki"
+  },
+  "伊勢原市": {
+    "jis": "14214",
+    "slug": "sc_isehara"
+  },
+  "佐倉市": {
+    "jis": "12212",
+    "slug": "sc_sakura"
+  },
+  "児玉郡": {
+    "jis": "11380",
+    "slug": "sc_kodamagun"
+  },
+  "入間市": {
+    "jis": "11225",
+    "slug": "sc_iruma"
+  },
+  "入間郡": {
+    "jis": "11320",
+    "slug": "sc_irumagun"
+  },
+  "八千代市": {
+    "jis": "12221",
+    "slug": "sc_yachiyo"
+  },
+  "八潮市": {
+    "jis": "11234",
+    "slug": "sc_yashio"
+  },
+  "八王子市": {
+    "jis": "13201",
+    "slug": "sc_hachioji"
+  },
+  "八街市": {
+    "jis": "12230",
+    "slug": "sc_yachimata"
+  },
+  "加須市": {
+    "jis": "11210",
+    "slug": "sc_kazo"
+  },
+  "勝浦市": {
+    "jis": "12218",
+    "slug": "sc_katsuura"
+  },
+  "北区": {
+    "jis": "13117",
+    "slug": "sc_kita"
+  },
+  "北本市": {
+    "jis": "11233",
+    "slug": "sc_kitamoto"
+  },
+  "北葛飾郡": {
+    "jis": "11460",
+    "slug": "sc_kitakatsushikagun"
+  },
+  "北足立郡": {
+    "jis": "11300",
+    "slug": "sc_kitaadachigun"
+  },
+  "匝瑳市": {
+    "jis": "12235",
+    "slug": "sc_sosa"
+  },
+  "千代田区": {
+    "jis": "13101",
+    "slug": "sc_chiyoda"
+  },
+  "千葉市中央区": {
+    "jis": "12101",
+    "slug": "sc_chibashichuo"
+  },
+  "千葉市稲毛区": {
+    "jis": "12103",
+    "slug": "sc_chibashiinage"
+  },
+  "千葉市緑区": {
+    "jis": "12105",
+    "slug": "sc_chibashimidori"
+  },
+  "千葉市美浜区": {
+    "jis": "12106",
+    "slug": "sc_chibashimihama"
+  },
+  "千葉市花見川区": {
+    "jis": "12102",
+    "slug": "sc_chibashihanamigawa"
+  },
+  "千葉市若葉区": {
+    "jis": "12104",
+    "slug": "sc_chibashiwakaba"
+  },
+  "南埼玉郡": {
+    "jis": "11440",
+    "slug": "sc_minamisaitamagun"
+  },
+  "南房総市": {
+    "jis": "12234",
+    "slug": "sc_minamiboso"
+  },
+  "南足柄市": {
+    "jis": "14217",
+    "slug": "sc_minamiashigara"
+  },
+  "印旛郡": {
+    "jis": "12320",
+    "slug": "sc_imbagun"
+  },
+  "印西市": {
+    "jis": "12231",
+    "slug": "sc_inzai"
+  },
+  "厚木市": {
+    "jis": "14212",
+    "slug": "sc_atsugi"
+  },
+  "台東区": {
+    "jis": "13106",
+    "slug": "sc_taito"
+  },
+  "吉川市": {
+    "jis": "11243",
+    "slug": "sc_yoshikawa"
+  },
+  "君津市": {
+    "jis": "12225",
+    "slug": "sc_kimitsu"
+  },
+  "和光市": {
+    "jis": "11229",
+    "slug": "sc_wako"
+  },
+  "品川区": {
+    "jis": "13109",
+    "slug": "sc_shinagawa"
+  },
+  "四街道市": {
+    "jis": "12228",
+    "slug": "sc_yotsukaido"
+  },
+  "国分寺市": {
+    "jis": "13214",
+    "slug": "sc_kokubunji"
+  },
+  "国立市": {
+    "jis": "13215",
+    "slug": "sc_kunitachi"
+  },
+  "坂戸市": {
+    "jis": "11239",
+    "slug": "sc_sakado"
+  },
+  "墨田区": {
+    "jis": "13107",
+    "slug": "sc_sumida"
+  },
+  "多摩市": {
+    "jis": "13224",
+    "slug": "sc_tama"
+  },
+  "大和市": {
+    "jis": "14213",
+    "slug": "sc_yamato"
+  },
+  "大田区": {
+    "jis": "13111",
+    "slug": "sc_ota"
+  },
+  "大網白里市": {
+    "jis": "12239",
+    "slug": "sc_oamishirasato"
+  },
+  "大里郡": {
+    "jis": "11400",
+    "slug": "sc_osatogun"
+  },
+  "夷隅郡": {
+    "jis": "12440",
+    "slug": "sc_isumigun"
+  },
+  "安房郡": {
+    "jis": "12460",
+    "slug": "sc_awagun"
+  },
+  "富士見市": {
+    "jis": "11235",
+    "slug": "sc_fujimi"
+  },
+  "富津市": {
+    "jis": "12226",
+    "slug": "sc_futtsu"
+  },
+  "富里市": {
+    "jis": "12233",
+    "slug": "sc_tomisato"
+  },
+  "小平市": {
+    "jis": "13211",
+    "slug": "sc_kodaira"
+  },
+  "小田原市": {
+    "jis": "14206",
+    "slug": "sc_odawara"
+  },
+  "小金井市": {
+    "jis": "13210",
+    "slug": "sc_koganei"
+  },
+  "山武市": {
+    "jis": "12237",
+    "slug": "sc_sammu"
+  },
+  "山武郡": {
+    "jis": "12400",
+    "slug": "sc_sambugun"
+  },
+  "川口市": {
+    "jis": "11203",
+    "slug": "sc_kawaguchi"
+  },
+  "川崎市中原区": {
+    "jis": "14133",
+    "slug": "sc_kawasakishinakahara"
+  },
+  "川崎市多摩区": {
+    "jis": "14135",
+    "slug": "sc_kawasakishitama"
+  },
+  "川崎市宮前区": {
+    "jis": "14136",
+    "slug": "sc_kawasakishimiyamae"
+  },
+  "川崎市川崎区": {
+    "jis": "14131",
+    "slug": "sc_kawasakishikawasaki"
+  },
+  "川崎市幸区": {
+    "jis": "14132",
+    "slug": "sc_kawasakishisaiwai"
+  },
+  "川崎市高津区": {
+    "jis": "14134",
+    "slug": "sc_kawasakishitakatsu"
+  },
+  "川崎市麻生区": {
+    "jis": "14137",
+    "slug": "sc_kawasakishiasao"
+  },
+  "川越市": {
+    "jis": "11201",
+    "slug": "sc_kawagoe"
+  },
+  "市原市": {
+    "jis": "12219",
+    "slug": "sc_ichihara"
+  },
+  "市川市": {
+    "jis": "12203",
+    "slug": "sc_ichikawa"
+  },
+  "平塚市": {
+    "jis": "14203",
+    "slug": "sc_hiratsuka"
+  },
+  "幸手市": {
+    "jis": "11240",
+    "slug": "sc_satte"
+  },
+  "府中市": {
+    "jis": "13206",
+    "slug": "sc_fuchu"
+  },
+  "座間市": {
+    "jis": "14216",
+    "slug": "sc_zama"
+  },
+  "志木市": {
+    "jis": "11228",
+    "slug": "sc_shiki"
+  },
+  "愛甲郡": {
+    "jis": "14400",
+    "slug": "sc_aikogun"
+  },
+  "成田市": {
+    "jis": "12211",
+    "slug": "sc_narita"
+  },
+  "我孫子市": {
+    "jis": "12222",
+    "slug": "sc_abiko"
+  },
+  "戸田市": {
+    "jis": "11224",
+    "slug": "sc_toda"
+  },
+  "所沢市": {
+    "jis": "11208",
+    "slug": "sc_tokorozawa"
+  },
+  "文京区": {
+    "jis": "13105",
+    "slug": "sc_bunkyo"
+  },
+  "新宿区": {
+    "jis": "13104",
+    "slug": "sc_shinjuku"
+  },
+  "新座市": {
+    "jis": "11230",
+    "slug": "sc_niiza"
+  },
+  "日野市": {
+    "jis": "13212",
+    "slug": "sc_hino"
+  },
+  "日高市": {
+    "jis": "11242",
+    "slug": "sc_hidaka"
+  },
+  "旭市": {
+    "jis": "12215",
+    "slug": "sc_asahi"
+  },
+  "春日部市": {
+    "jis": "11214",
+    "slug": "sc_kasukabe"
+  },
+  "昭島市": {
+    "jis": "13207",
+    "slug": "sc_akishima"
+  },
+  "朝霞市": {
+    "jis": "11227",
+    "slug": "sc_asaka"
+  },
+  "木更津市": {
+    "jis": "12206",
+    "slug": "sc_kisarazu"
+  },
+  "本庄市": {
+    "jis": "11211",
+    "slug": "sc_honjo"
+  },
+  "杉並区": {
+    "jis": "13115",
+    "slug": "sc_suginami"
+  },
+  "東久留米市": {
+    "jis": "13222",
+    "slug": "sc_higashikurume"
+  },
+  "東大和市": {
+    "jis": "13220",
+    "slug": "sc_higashiyamato"
+  },
+  "東村山市": {
+    "jis": "13213",
+    "slug": "sc_higashimurayama"
+  },
+  "東松山市": {
+    "jis": "11212",
+    "slug": "sc_higashimatsuyama"
+  },
+  "東金市": {
+    "jis": "12213",
+    "slug": "sc_togane"
+  },
+  "松戸市": {
+    "jis": "12207",
+    "slug": "sc_matsudo"
+  },
+  "板橋区": {
+    "jis": "13119",
+    "slug": "sc_itabashi"
+  },
+  "柏市": {
+    "jis": "12217",
+    "slug": "sc_kashiwa"
+  },
+  "桶川市": {
+    "jis": "11231",
+    "slug": "sc_okegawa"
+  },
+  "横浜市中区": {
+    "jis": "14104",
+    "slug": "sc_yokohamashinaka"
+  },
+  "横浜市保土ケ谷区": {
+    "jis": "14106",
+    "slug": "sc_yokohamashihodogaya"
+  },
+  "横浜市南区": {
+    "jis": "14105",
+    "slug": "sc_yokohamashiminami"
+  },
+  "横浜市戸塚区": {
+    "jis": "14110",
+    "slug": "sc_yokohamashitotsuka"
+  },
+  "横浜市旭区": {
+    "jis": "14112",
+    "slug": "sc_yokohamashiasahi"
+  },
+  "横浜市栄区": {
+    "jis": "14115",
+    "slug": "sc_yokohamashisakae"
+  },
+  "横浜市泉区": {
+    "jis": "14116",
+    "slug": "sc_yokohamashiizumi"
+  },
+  "横浜市港北区": {
+    "jis": "14109",
+    "slug": "sc_yokohamashikohoku"
+  },
+  "横浜市港南区": {
+    "jis": "14111",
+    "slug": "sc_yokohamashikonan"
+  },
+  "横浜市瀬谷区": {
+    "jis": "14114",
+    "slug": "sc_yokohamashiseya"
+  },
+  "横浜市磯子区": {
+    "jis": "14107",
+    "slug": "sc_yokohamashiisogo"
+  },
+  "横浜市神奈川区": {
+    "jis": "14102",
+    "slug": "sc_yokohamashikanagawa"
+  },
+  "横浜市緑区": {
+    "jis": "14113",
+    "slug": "sc_yokohamashimidori"
+  },
+  "横浜市西区": {
+    "jis": "14103",
+    "slug": "sc_yokohamashinishi"
+  },
+  "横浜市都筑区": {
+    "jis": "14118",
+    "slug": "sc_yokohamashitsuzuki"
+  },
+  "横浜市金沢区": {
+    "jis": "14108",
+    "slug": "sc_yokohamashikanazawa"
+  },
+  "横浜市青葉区": {
+    "jis": "14117",
+    "slug": "sc_yokohamashiaoba"
+  },
+  "横浜市鶴見区": {
+    "jis": "14101",
+    "slug": "sc_yokohamashitsurumi"
+  },
+  "横須賀市": {
+    "jis": "14201",
+    "slug": "sc_yokosuka"
+  },
+  "武蔵村山市": {
+    "jis": "13223",
+    "slug": "sc_musashimurayama"
+  },
+  "武蔵野市": {
+    "jis": "13203",
+    "slug": "sc_musashino"
+  },
+  "比企郡": {
+    "jis": "11340",
+    "slug": "sc_hikigun"
+  },
+  "江戸川区": {
+    "jis": "13123",
+    "slug": "sc_edogawa"
+  },
+  "江東区": {
+    "jis": "13108",
+    "slug": "sc_koto"
+  },
+  "流山市": {
+    "jis": "12220",
+    "slug": "sc_nagareyama"
+  },
+  "浦安市": {
+    "jis": "12227",
+    "slug": "sc_urayasu"
+  },
+  "海老名市": {
+    "jis": "14215",
+    "slug": "sc_ebina"
+  },
+  "深谷市": {
+    "jis": "11218",
+    "slug": "sc_fukaya"
+  },
+  "清瀬市": {
+    "jis": "13221",
+    "slug": "sc_kiyose"
+  },
+  "渋谷区": {
+    "jis": "13113",
+    "slug": "sc_shibuya"
+  },
+  "港区": {
+    "jis": "13103",
+    "slug": "sc_minato"
+  },
+  "熊谷市": {
+    "jis": "11202",
+    "slug": "sc_kumagaya"
+  },
+  "狛江市": {
+    "jis": "13219",
+    "slug": "sc_komae"
+  },
+  "狭山市": {
+    "jis": "11215",
+    "slug": "sc_sayama"
+  },
+  "町田市": {
+    "jis": "13209",
+    "slug": "sc_machida"
+  },
+  "白井市": {
+    "jis": "12232",
+    "slug": "sc_shiroi"
+  },
+  "白岡市": {
+    "jis": "11246",
+    "slug": "sc_shiraoka"
+  },
+  "目黒区": {
+    "jis": "13110",
+    "slug": "sc_meguro"
+  },
+  "相模原市中央区": {
+    "jis": "14152",
+    "slug": "sc_sagamiharashichuo"
+  },
+  "相模原市南区": {
+    "jis": "14153",
+    "slug": "sc_sagamiharashiminami"
+  },
+  "相模原市緑区": {
+    "jis": "14151",
+    "slug": "sc_sagamiharashimidori"
+  },
+  "福生市": {
+    "jis": "13218",
+    "slug": "sc_fussa"
+  },
+  "秦野市": {
+    "jis": "14211",
+    "slug": "sc_hadano"
+  },
+  "秩父市": {
+    "jis": "11207",
+    "slug": "sc_chichibu"
+  },
+  "秩父郡": {
+    "jis": "11360",
+    "slug": "sc_chichibugun"
+  },
+  "稲城市": {
+    "jis": "13225",
+    "slug": "sc_inagi"
+  },
+  "立川市": {
+    "jis": "13202",
+    "slug": "sc_tachikawa"
+  },
+  "綾瀬市": {
+    "jis": "14218",
+    "slug": "sc_ayase"
+  },
+  "練馬区": {
+    "jis": "13120",
+    "slug": "sc_nerima"
+  },
+  "羽村市": {
+    "jis": "13227",
+    "slug": "sc_hamura"
+  },
+  "羽生市": {
+    "jis": "11216",
+    "slug": "sc_hanyu"
+  },
+  "習志野市": {
+    "jis": "12216",
+    "slug": "sc_narashino"
+  },
+  "船橋市": {
+    "jis": "12204",
+    "slug": "sc_funabashi"
+  },
+  "茂原市": {
+    "jis": "12210",
+    "slug": "sc_mobara"
+  },
+  "茅ヶ崎市": {
+    "jis": "14207",
+    "slug": "sc_chigasaki"
+  },
+  "草加市": {
+    "jis": "11221",
+    "slug": "sc_soka"
+  },
+  "荒川区": {
+    "jis": "13118",
+    "slug": "sc_arakawa"
+  },
+  "葛飾区": {
+    "jis": "13122",
+    "slug": "sc_katsushika"
+  },
+  "蓮田市": {
+    "jis": "11238",
+    "slug": "sc_hasuda"
+  },
+  "蕨市": {
+    "jis": "11223",
+    "slug": "sc_warabi"
+  },
+  "藤沢市": {
+    "jis": "14205",
+    "slug": "sc_fujisawa"
+  },
+  "行田市": {
+    "jis": "11206",
+    "slug": "sc_gyoda"
+  },
+  "袖ケ浦市": {
+    "jis": "12229",
+    "slug": "sc_sodegaura"
+  },
+  "西多摩郡": {
+    "jis": "13300",
+    "slug": "sc_nishitamagun"
+  },
+  "西東京市": {
+    "jis": "13229",
+    "slug": "sc_nishitokyo"
+  },
+  "調布市": {
+    "jis": "13208",
+    "slug": "sc_chofu"
+  },
+  "豊島区": {
+    "jis": "13116",
+    "slug": "sc_toshima"
+  },
+  "越谷市": {
+    "jis": "11222",
+    "slug": "sc_koshigaya"
+  },
+  "足柄上郡": {
+    "jis": "14360",
+    "slug": "sc_ashigarakamigun"
+  },
+  "足柄下郡": {
+    "jis": "14380",
+    "slug": "sc_ashigarashimogun"
+  },
+  "足立区": {
+    "jis": "13121",
+    "slug": "sc_adachi"
+  },
+  "逗子市": {
+    "jis": "14208",
+    "slug": "sc_zushi"
+  },
+  "野田市": {
+    "jis": "12208",
+    "slug": "sc_noda"
+  },
+  "銚子市": {
+    "jis": "12202",
+    "slug": "sc_choshi"
+  },
+  "鎌ケ谷市": {
+    "jis": "12224",
+    "slug": "sc_kamagaya"
+  },
+  "鎌倉市": {
+    "jis": "14204",
+    "slug": "sc_kamakura"
+  },
+  "長生郡": {
+    "jis": "12420",
+    "slug": "sc_choseigun"
+  },
+  "青梅市": {
+    "jis": "13205",
+    "slug": "sc_ome"
+  },
+  "飯能市": {
+    "jis": "11209",
+    "slug": "sc_hanno"
+  },
+  "館山市": {
+    "jis": "12205",
+    "slug": "sc_tateyama"
+  },
+  "香取市": {
+    "jis": "12236",
+    "slug": "sc_katori"
+  },
+  "香取郡": {
+    "jis": "12340",
+    "slug": "sc_katorigun"
+  },
+  "高座郡": {
+    "jis": "14320",
+    "slug": "sc_kozagun"
+  },
+  "鴨川市": {
+    "jis": "12223",
+    "slug": "sc_kamogawa"
+  },
+  "鴻巣市": {
+    "jis": "11217",
+    "slug": "sc_konosu"
+  },
+  "鶴ヶ島市": {
+    "jis": "11241",
+    "slug": "sc_tsurugashima"
+  }
+}

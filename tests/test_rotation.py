@@ -206,3 +206,23 @@ def test_パターンが1つだけなら毎回そのパターンが回る(test_e
             assert persist.claim_city_rotation(
                 conn, site_id=homes_site_id, pattern_name="唯一の帯", run_id=uuid.uuid4()
             ).claimed
+
+
+def test_ローテーションサイトは一覧0件のバックストップから外れる() -> None:
+    """⚠ 予算切れで全市区が0件になるのは**正常**なので、異常として申告しない。
+
+    申告すると2時間ごとに偽陽性が飛び、本物のエラーが読まれなくなる（→ 課題#45）。
+    実測（2026-09-05 14:13）で HOMES が
+    「一覧が0件。過去に 636件 取り込んでいるサイトなので異常の疑い」を出していた。
+
+    ⚠ 判定は ``scan.py`` の1行なので、単体では捕まえられない。消えたことに
+    気づけるようソースを直接固定する（``test_notify_rank.py`` が
+    ``notify_error`` の呼び出し元を固定したのと同じ手法）。
+    """
+    from pathlib import Path
+
+    source = (
+        Path(__file__).resolve().parents[1] / "src" / "house_search" / "pipeline" / "scan.py"
+    ).read_text(encoding="utf-8")
+    assert "rotates_cities" in source, "ローテーションサイトの判定が消えている"
+    assert "if not listings and not rotates_cities:" in source
