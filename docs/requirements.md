@@ -249,7 +249,8 @@ last_seen_at の古い順だけで選ぶと**順位がまったく考慮され�
 `<Enabled>false</Enabled>` で登録され、`register_tasks.ps1 -EnableScraping` で有効化する。
 初回スキャンと並走させないための措置（上記のプロセス内レート制御の話と同じ理由）。
 
-**✅ 2026-09-04 に登録と有効化が完了した**（→ 課題#23）。5本とも `State=Ready`・
+**✅ 2026-09-04 に登録と有効化が完了し、2026-09-06 に `HouseSearch-MarketRates` を
+加えて6本を再登録した**（→ 課題#23・#49）。6本とも `State=Ready`・
 実行ユーザー `wy469` を実測で確認している。
 ⚠ **登録が意図どおりかを自動で確かめる手段はない。** 再登録したら毎回
 `Get-ScheduledTask -TaskName 'HouseSearch-*'` で `State` と `Principal.UserId` を目視する。
