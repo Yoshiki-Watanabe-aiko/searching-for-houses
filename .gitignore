@@ -61,3 +61,4 @@ data/odpt/*
 
 # セッション引継ぎメモ（一時ファイル。正典は docs/再設計計画.md と docs/課題管理表.md）
 docs/引継ぎ_*.md
+data/hazard_sources/

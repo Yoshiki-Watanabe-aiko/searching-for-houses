@@ -14,6 +14,7 @@ from __future__ import annotations
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     ForeignKey,
     Integer,
     Numeric,
@@ -503,4 +504,85 @@ class AddressPoint(TimestampMixin, Base):
         String(50),
         nullable=False,
         comment="出典と版（例: mlit_isj_19.0b）。原典が改訂されたことを後から言えるようにする",
+    )
+
+
+class HazardLevel(TimestampMixin, Base):
+    """ハザード評価（丁目・町単位）。洪水と土砂災害の危険度を持つ（Phase 5I → 課題#46）。
+
+    正典は国土数値情報の **A31（洪水浸水想定区域・想定最大規模）** と
+    **A33（土砂災害警戒区域）** で、丁目の面は e-Stat「町丁・字等境界データ」から採る。
+    ポリゴンの交差計算は ``scripts/tools/build_hazard_levels.py``（オフライン）で行い、
+    この表には**集計済みの値だけ**を ``sync-hazards`` で入れる。
+    ⚠ **``scan`` / ``rescore`` はこの表を JOIN するだけ**にして、
+    再採点がネットワーク不要・軽量依存のまま保たれるようにしている。
+
+    ⚠ **``m_address_points.id`` を参照しない。** ``sync-addresses`` は全置換なので
+    id が振り直される。突き合わせは ``normalized_key``（同じ ``normalize_base`` を
+    通した値）で行う。
+
+    ⚠⚠ **「区域外」と「未解決」を必ず区別する。** 丁目を照合できたら、
+    区域に掛からなくても **``value = 0`` の行を必ず書く**（安全だと確認した証拠）。
+    行が無い＝そもそも照合できなかった、という意味にする。
+    これを混ぜると「危険なのに情報が無いから減点されない」掲載が
+    「安全」と同じ扱いになり、**例外にならないまま順位が狂う**。
+
+    ⚠ **縦持ちにしてある**（``hazard_type`` × ``aggregation`` の行）。
+    高潮・津波の追加や集計方式の変更が**行の追加だけ**で済む。
+    列で持つと、監査カラムを最終列に保つためのテーブル再作成が要る。
+    """
+
+    __tablename__ = "m_hazard_levels"
+    __table_args__ = (
+        UniqueConstraint("normalized_key", "level", "hazard_type", "aggregation"),
+        {"comment": "ハザード評価（丁目・町単位。国土数値情報 A31・A33 が正典）"},
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, comment="ハザード評価ID")
+    normalized_key: Mapped[str] = mapped_column(
+        String(200),
+        nullable=False,
+        index=True,
+        comment=(
+            "丁目まで（丁目の無い町は町名まで）の正規化キー。"
+            "m_address_points.normalized_key・t_listings.address_normalized と同じ規則"
+        ),
+    )
+    level: Mapped[str] = mapped_column(
+        String(10),
+        nullable=False,
+        comment=(
+            "粒度。chome=丁目 / town=町"
+            "（配下の丁目を集約した値。町名までしか出さないサイト向け）"
+        ),
+    )
+    hazard_type: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        comment=(
+            "災害の種類。flood=洪水浸水想定（A31 想定最大規模） / "
+            "landslide=土砂災害警戒区域（A33 警戒＋特別） / landslide_special=同 特別警戒のみ"
+        ),
+    )
+    aggregation: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        comment=(
+            "集計方式。area_ratio=丁目に占める区域の面積比（0〜1） / "
+            "rank_avg=丁目全面積で加重した平均ランク（区域外を0として含む） / "
+            "rank_max=丁目内の最大ランク"
+        ),
+    )
+    value: Mapped[float] = mapped_column(
+        Numeric(8, 4),
+        nullable=False,
+        comment="集計値。⚠ 区域外は 0 を明示的に書く（行が無い＝未解決と区別するため）",
+    )
+    source: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        comment="出典と版（例: mlit_a31-22 / mlit_a33-23）。区域の指定替えを追うために持つ",
+    )
+    acquired_on: Mapped[object] = mapped_column(
+        Date, nullable=False, comment="原典の取得日。年次更新の判断に使う"
     )

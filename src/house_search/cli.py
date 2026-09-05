@@ -115,6 +115,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser(
+        "sync-hazards",
+        help=(
+            "data/hazard_levels/hazard_levels.csv を m_hazard_levels へ同期する"
+            "（ネットワーク不要）"
+        ),
+    )
+
+    sub.add_parser(
         "sync-stations",
         help="data/train_master/*.csv を m_stations へ同期する（ネットワーク不要）",
     )
@@ -640,6 +648,33 @@ def _cmd_sync_site_params(args: argparse.Namespace) -> int:
     for spec in table.specs:
         state = "有効" if spec.is_enabled else "無効"
         print(f"  {spec.site_code}/{spec.property_type}/{spec.axis} -> {spec.param_name} [{state}]")
+    return 0
+
+
+def _cmd_sync_hazards(args: argparse.Namespace) -> int:
+    from house_search.config.settings import load_settings
+    from house_search.db.session import get_engine
+    from house_search.hazard.levels import load_hazard_rows, sync_hazard_levels
+
+    settings = load_settings()
+    loaded = load_hazard_rows(settings.data_dir)
+    engine = get_engine()
+    applied, deleted = sync_hazard_levels(engine, loaded.rows)
+    print(
+        f"同期しました: {applied:,}件"
+        f"（丁目 {loaded.chome_count:,} / 町名 {loaded.town_count:,}"
+        f"・対象キー {loaded.key_count:,}・入れ替え前 {deleted:,}件）"
+    )
+    print(f"  災害種別: {' / '.join(loaded.hazard_types)}")
+    # ⚠ 全置換なのでデータが静かに痩せうる（生成スクリプトが一部の
+    #    データセットしか読まなかった場合など、エラーにならないまま行が減る）。
+    if deleted and applied < deleted * 0.8:
+        print(
+            f"  ⚠ 件数が入れ替え前の {applied / deleted:.0%} まで減っています。"
+            "生成スクリプトが全データセットを読んだか確認してください"
+        )
+    print()
+    print("採点へ反映するには `house-search rescore` を実行してください。")
     return 0
 
 
@@ -1360,6 +1395,7 @@ _COMMANDS = {
     "resolve-cities": _cmd_resolve_cities,
     "sync-site-params": _cmd_sync_site_params,
     "sync-addresses": _cmd_sync_addresses,
+    "sync-hazards": _cmd_sync_hazards,
     "sync-stations": _cmd_sync_stations,
     "resolve-stations": _cmd_resolve_stations,
     "resolve-commutes": _cmd_resolve_commutes,
