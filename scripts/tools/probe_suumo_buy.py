@@ -215,12 +215,69 @@ def stage_forms(cache_dir: Path, label: str) -> None:
         print(f"    {node.get('name')!r} = {node.get('value')!r}")
 
 
+def stage_listing(cache_dir: Path, label: str) -> None:
+    """保存済みの一覧HTMLから掲載を取り出して分布を見る（ネットワーク不要）。
+
+    ⚠ **``div.property_unit`` を起点に取る。** 本文への正規表現で ``nc_`` を
+    拾うと一覧の外の別枠が混ざる（実測で28ユニークのうち8件が別枠）。
+    ⚠ **``property_unit--osusume`` を除外してはいけない**（20件中16件に付いており、
+    中身は通常の掲載。除外すると件数が減るだけでエラーにならない）。
+    """
+    raw = (cache_dir / f"{label}.html").read_text(encoding="utf-8")
+    doc = lxml_html.fromstring(raw)
+
+    total = re.search(r"([0-9,]+)件", raw)
+    print(f"  総件数の表示: {total.group(1) if total else '(見つからない)'}")
+
+    rows: list[dict[str, str]] = []
+    for unit in doc.cssselect("div.property_unit"):
+        item: dict[str, str] = {}
+        for dt in unit.cssselect("dt"):
+            parent = dt.getparent()
+            dds = parent.cssselect("dd") if parent is not None else []
+            key = " ".join(dt.text_content().split())
+            value = " ".join(dds[0].text_content().split()) if dds else ""
+            if key and key not in item:
+                item[key] = value
+        # ⚠ タグを決め打ちしない（実測では h2.property_unit-title だった）
+        anchors = unit.cssselect(".property_unit-title a[href]")
+        item["_url"] = anchors[0].get("href") or "" if anchors else ""
+        rows.append(item)
+
+    print(f"  div.property_unit: {len(rows)} 件")
+    if not rows:
+        print("  ⚠ 掲載が1件も取れない（検知ページ・エラーページの疑い）")
+        title = doc.cssselect("title")
+        if title:
+            print(f"    title: {title[0].text_content().strip()[:80]}")
+        return
+
+    keys: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in keys:
+                keys.append(key)
+    for key in keys:
+        values: list[str] = []
+        for row in rows:
+            v = row.get(key, "")
+            if v and v not in values:
+                values.append(v)
+        filled = sum(1 for r in rows if r.get(key))
+        print(f"    {key:<10} 充足 {filled}/{len(rows)}  例: {values[:2]}")
+
+    bus = [r.get("沿線・駅", "") for r in rows if "バス" in r.get("沿線・駅", "")]
+    print(f"  バス便: {len(bus)}/{len(rows)} 件")
+    for b in bus[:3]:
+        print(f"    {b}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--stage",
         required=True,
-        choices=["robots", "city", "fetch", "links", "forms", "measure"],
+        choices=["robots", "city", "fetch", "links", "forms", "measure", "listing"],
     )
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE)
     parser.add_argument("--kind", action="append", choices=sorted(CITY_PAGES))
@@ -240,11 +297,13 @@ def main() -> int:
         stage_robots(None, args.cache_dir, reuse=True)
         return 0
 
-    if args.stage in {"links", "forms"}:
+    if args.stage in {"links", "forms", "listing"}:
         if not args.label:
             parser.error("--label が要ります")
         if args.stage == "links":
             stage_links(args.cache_dir, args.label, args.pattern)
+        elif args.stage == "listing":
+            stage_listing(args.cache_dir, args.label)
         else:
             stage_forms(args.cache_dir, args.label)
         return 0
