@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import logging
 import random
+import re
 import time
-import urllib.robotparser
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import NoReturn
 from urllib.parse import urljoin, urlsplit
@@ -100,6 +101,136 @@ def merge_robots_groups(text: str) -> list[str]:
     return merged
 
 
+def robots_path_pattern(value: str) -> re.Pattern[str]:
+    """Allow/Disallow の値を正規表現へ変換する（RFC 9309 §2.2.3）。
+
+    ``*`` は任意長、``$`` は末尾を表す。⚠ **標準の ``RobotFileParser`` は
+    これを展開せず単純な前方一致で見る**ため、``/*?*sort=`` のような規則は
+    「そういう名前のパス」として扱われ**どのURLにも当たらない**（→ 課題#52）。
+    """
+    body = ".*".join(re.escape(chunk) for chunk in value.split("*"))
+    tail = re.escape("$")
+    if body.endswith(tail):
+        body = body[: -len(tail)] + r"\Z"
+    return re.compile("^" + body)
+
+
+@dataclass(frozen=True)
+class _RobotsRule:
+    allow: bool
+    value: str
+    pattern: re.Pattern[str]
+
+
+class RobotsRules:
+    """robots.txt の Allow/Disallow を、ワイルドカード込みで判定する。
+
+    ⚠ 標準の ``urllib.robotparser`` には**許可側に倒れる**欠陥が2つある。
+    ①同じ User-agent のグループが2つ以上あると2つ目以降を丸ごと落とす
+    （→ 課題#43。こちらは ``merge_robots_groups`` が前処理で直す）
+    ②``Disallow`` の値の ``*`` / ``$`` を展開しない（→ 課題#52。本クラス）。
+    どちらも robots を尊重するつもりのコードが**禁止パスを叩く**形になり、
+    ⚠ **取得は成功するので例外にもログにも現れない。**
+
+    ⚠ **RFC 9309 §2.2.2 の「最長一致優先」は採らない。** 標準と同じ
+    「宣言順で最初に当たった規則」のままにしてあり、標準との差は
+    ``*`` / ``$`` の展開だけに閉じている。そうすることで
+    「既存16サイトの判定が変わらない」ことを実測で担保できる
+    （2026-09-06 実測。差分は SUUMO の2本のみ → 課題#52）。
+
+    ⚠ **判定にはクエリまで含める。** ``/*?*sort=`` はクエリを見る規則なので、
+    パスだけで判定すると展開しても当たらない。
+    """
+
+    def __init__(self, lines: Iterable[str]) -> None:
+        groups: dict[str, list[_RobotsRule]] = {}
+        order: list[str] = []
+        agents: list[str] = []
+        in_rules = False
+        for raw in lines:
+            line = raw.split("#", 1)[0].strip()
+            if not line or ":" not in line:
+                continue
+            field_name, _, value = line.partition(":")
+            field_name = field_name.strip().lower()
+            value = value.strip()
+            if field_name == "user-agent":
+                # 規則の直後の User-agent 行は新しいグループの始まり。
+                if in_rules:
+                    agents = []
+                    in_rules = False
+                key = value.lower()
+                if key not in groups:
+                    groups[key] = []
+                    order.append(key)
+                if key not in agents:
+                    agents.append(key)
+            elif field_name in {"allow", "disallow"}:
+                # ⚠ User-agent 行より前の規則は標準と同じく捨てる。
+                if not agents:
+                    continue
+                in_rules = True
+                # ⚠ 値が空の Disallow は「全許可」の意味（標準と同じ扱い）。
+                rule = _RobotsRule(
+                    allow=field_name == "allow" or not value,
+                    value=value,
+                    pattern=robots_path_pattern(value),
+                )
+                for key in agents:
+                    groups[key].append(rule)
+        self._groups: list[tuple[str, list[_RobotsRule]]] = [
+            (key, groups[key]) for key in order
+        ]
+
+    @classmethod
+    def parse(cls, text: str) -> RobotsRules:
+        """robots.txt の本文から作る。⚠ **グループ統合を必ず通す**（→ 課題#43）。"""
+        return cls(merge_robots_groups(text))
+
+    def can_fetch(self, user_agent: str, url: str) -> bool:
+        """このUAでこのURLを取得してよいか。規則が無ければ全許可。"""
+        rules = self._rules_for(user_agent)
+        if not rules:
+            return True
+        target = self._target(url)
+        for rule in rules:
+            if rule.pattern.match(target):
+                return rule.allow
+        return True
+
+    def matched_rule(self, user_agent: str, url: str) -> str | None:
+        """判定に効いた規則の値（診断用）。当たる規則が無ければ ``None``。"""
+        target = self._target(url)
+        for rule in self._rules_for(user_agent):
+            if rule.pattern.match(target):
+                return rule.value
+        return None
+
+    def _rules_for(self, user_agent: str) -> list[_RobotsRule]:
+        """適用するグループを選ぶ（標準の ``Entry.applies_to`` と同じ規則）。
+
+        名乗るUAの製品トークンに、robots 側のトークンが部分文字列として
+        含まれれば適用する。名指しが1つも当たらなければ ``*`` を使う。
+        """
+        agent = user_agent.split("/")[0].lower()
+        default: list[_RobotsRule] | None = None
+        for token, rules in self._groups:
+            if token == "*":
+                if default is None:
+                    default = rules
+                continue
+            if token in agent:
+                return rules
+        return default or []
+
+    @staticmethod
+    def _target(url: str) -> str:
+        """判定に当てる文字列。⚠ **クエリまで含める**（→ 課題#52）。"""
+        split = urlsplit(url)
+        target = split.path or "/"
+        return f"{target}?{split.query}" if split.query else target
+
+
 class SiteAborted(RuntimeError):
     """連続失敗・日次上限などでサイトの取得を打ち切ったことを表す。"""
 
@@ -146,7 +277,7 @@ class SiteFetcher:
     # （→ ADR 0011）。取得間隔・日次上限はこのフラグでも一切緩めない
     ignore_robots: bool = False
     _last_request_at: float = 0.0
-    _robots: urllib.robotparser.RobotFileParser | None = None
+    _robots: RobotsRules | None = None
     _robots_origin: str | None = None
 
     def _wait(self) -> None:
@@ -176,18 +307,16 @@ class SiteFetcher:
         origin = "{0.scheme}://{0.netloc}".format(urlsplit(url))
         if self._robots_origin == origin:
             return
-        parser = urllib.robotparser.RobotFileParser()
+        rules = RobotsRules([])
         try:
             response = self.client.get(urljoin(origin, "/robots.txt"), timeout=15.0)
             if response.status_code == 200:
-                parser.parse(merge_robots_groups(response.text))
+                rules = RobotsRules.parse(response.text)
             else:
                 self._warn_robots_unavailable(origin, f"HTTP {response.status_code}")
-                parser.parse([])
         except httpx.HTTPError as exc:
             self._warn_robots_unavailable(origin, type(exc).__name__)
-            parser.parse([])
-        self._robots = parser
+        self._robots = rules
         self._robots_origin = origin
 
     def _warn_robots_unavailable(self, origin: str, reason: str) -> None:

@@ -111,7 +111,14 @@ class SuumoScraper:
     def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
         """検索パターンと対象エリアから一覧ページのURL（1ページ目）を組み立てる。"""
         search = pattern.search  # type: ignore[attr-defined]
-        params = {"sort": "2"}  # 新着順
+        # ⚠⚠ **並び順（sort）は送らない**（→ 課題#52）。SUUMO の robots.txt は
+        # `Disallow: /*?*sort=` を持つ。標準の ``RobotFileParser`` が
+        # ワイルドカードを展開しないため許可と誤判定され、
+        # **新着順（sort=2）で禁止パスを叩き続けていた**（2026-09-06 発覚）。
+        # ⚠ 既定の並びに戻るので新着の拾い方が変わる。1市区あたり
+        # `max_pages_per_run` ページまで見るので即座に取りこぼすとは限らないが、
+        # 影響は実測して記録すること。
+        params: dict[str, str] = {}
         if search.price_max_hint:
             # ct は万円単位だが**選択肢が決まっており、端数を渡すと
             # HTTP 200 のまま掲載0件になる**（実測: ct=15.6 で0件 /

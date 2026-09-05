@@ -13,6 +13,7 @@ from house_search.scrape.fetch import (
     MAX_RETRIES,
     RateLimit,
     RobotsDisallowed,
+    RobotsRules,
     SiteAborted,
     SiteFetcher,
     merge_robots_groups,
@@ -255,6 +256,11 @@ CHINTAI_NET_ROBOTS = Path(__file__).parent / "fixtures" / "robots" / "chintai_ne
 
 
 def _parse(lines: list[str]) -> urllib.robotparser.RobotFileParser:
+    """⚠ **統合もワイルドカード展開もしない標準の判定**（比較対象）。
+
+    本体の判定は ``RobotsRules`` なので、テストの「直った側」は必ずそちらを通す。
+    検証が実装の経路を通らないと、正しい実装を壊れていると誤診する（→ 課題#46）。
+    """
     parser = urllib.robotparser.RobotFileParser()
     parser.parse(lines)
     return parser
@@ -267,7 +273,7 @@ def test_2つ目のUserAgentグループのDisallowが効く() -> None:
     naive = _parse(text.splitlines())
     assert naive.can_fetch("house-search/2.0", "https://www.chintai.net/api/") is True
 
-    merged = _parse(merge_robots_groups(text))
+    merged = RobotsRules.parse(text)
     # 1つ目のグループ
     assert merged.can_fetch("house-search/2.0", "https://www.chintai.net/info/") is False
     # 2つ目のグループ（統合しないと落ちる）
@@ -282,9 +288,11 @@ def test_2つ目のUserAgentグループのDisallowが効く() -> None:
 
 def test_統合しても他のUserAgentのグループとSitemapは保たれる() -> None:
     text = CHINTAI_NET_ROBOTS.read_text(encoding="utf-8")
-    merged = _parse(merge_robots_groups(text))
+    merged = RobotsRules.parse(text)
     assert merged.can_fetch("MauiBot", "https://www.chintai.net/") is False
-    assert len(merged.site_maps() or []) == 6
+    # ⚠ Sitemap はどのグループにも属さない行。統合で落とさないこと
+    lines = merge_robots_groups(text)
+    assert sum(1 for line in lines if line.lower().startswith("sitemap:")) == 6
 
 
 def test_グループが1つのrobotsは判定が変わらない() -> None:
@@ -292,18 +300,20 @@ def test_グループが1つのrobotsは判定が変わらない() -> None:
     text = "User-agent: *\nDisallow: /admin/\nAllow: /admin/public/\nCrawl-delay: 10\n"
     paths = ["/admin/x", "/admin/public/y", "/list/"]
     naive = _parse(text.splitlines())
-    merged = _parse(merge_robots_groups(text))
+    merged = RobotsRules.parse(text)
     for path in paths:
         url = "https://example.com" + path
         assert merged.can_fetch("house-search/2.0", url) == naive.can_fetch(
             "house-search/2.0", url
         )
-    assert merged.crawl_delay("house-search/2.0") == naive.crawl_delay("house-search/2.0")
+    # ⚠ Crawl-delay は判定に使わない（レート制御は m_sites が正典）。
+    # ここでは統合が行を落とさないことだけを見る。
+    assert "crawl-delay: 10" in merge_robots_groups(text)
 
 
 def test_1つのグループに複数のUserAgentがあれば両方に規則が配られる() -> None:
     text = "User-agent: alpha\nUser-agent: beta\nDisallow: /x/\n"
-    merged = _parse(merge_robots_groups(text))
+    merged = RobotsRules.parse(text)
     assert merged.can_fetch("alpha", "https://example.com/x/") is False
     assert merged.can_fetch("beta", "https://example.com/x/") is False
     assert merged.can_fetch("gamma", "https://example.com/x/") is True
@@ -321,7 +331,7 @@ def test_コメントと空行は統合の妨げにならない() -> None:
         "# 1つ目\nUser-agent: *\nDisallow: /a/  # 末尾コメント\n\n"
         "# 2つ目\nUser-agent: *\n\nDisallow: /b/\n"
     )
-    merged = _parse(merge_robots_groups(text))
+    merged = RobotsRules.parse(text)
     assert merged.can_fetch("house-search/2.0", "https://example.com/a/") is False
     assert merged.can_fetch("house-search/2.0", "https://example.com/b/") is False
 
@@ -338,3 +348,98 @@ def test_取得したrobotsがグループ統合を通る() -> None:
     fetcher = build_fetcher(handler)
     with pytest.raises(RobotsDisallowed):
         fetcher.get("https://example.com/b/page")
+
+
+# ---------------------------------------------------------------------------
+# robots.txt のワイルドカード（→ 課題#52・RFC 9309 §2.2.3）
+#
+# ⚠ 標準の RobotFileParser は Disallow の値の `*` を展開せず**単純な前方一致**で
+# 見るため、`/*?*sort=` は「そういう名前のパス」として扱われどのURLにも当たらない。
+# ⚠⚠ 課題#43 と同じく**許可側に倒れる**ので、取得は成功したまま禁止パスを叩く。
+# ---------------------------------------------------------------------------
+
+SUUMO_ROBOTS = Path(__file__).parent / "fixtures" / "robots" / "suumo.txt"
+UA = "house-search/2.0"
+
+
+def _suumo() -> RobotsRules:
+    return RobotsRules.parse(SUUMO_ROBOTS.read_text(encoding="utf-8"))
+
+
+def test_sortつきのURLは標準では許可と誤判定される() -> None:
+    """⚠ 実際にこれで賃貸の一覧が2時間ごとに禁止パスを叩いていた。"""
+    text = SUUMO_ROBOTS.read_text(encoding="utf-8")
+    url = "https://suumo.jp/jj/chintai/ichiran/FR301FC001/?ar=030&bs=040&sort=2"
+
+    assert _parse(merge_robots_groups(text)).can_fetch(UA, url) is True
+    assert _suumo().can_fetch(UA, url) is False
+
+
+def test_効いた規則が分かる() -> None:
+    """診断のため、どの規則で禁止になったかを引けること。"""
+    url = "https://suumo.jp/jj/chintai/ichiran/FR301FC001/?ar=030&sort=2"
+    assert _suumo().matched_rule(UA, url) == "/*?*sort="
+
+
+def test_sortを外せば取得できる() -> None:
+    """⚠ この1本が「sort=2 を外す」という運用判断の根拠になっている。"""
+    url = "https://suumo.jp/jj/chintai/ichiran/FR301FC001/?ar=030&bs=040&ta=13&sc=13121"
+    assert _suumo().can_fetch(UA, url) is True
+
+
+def test_売買のSEOパスは許可で検索フォームのパスは禁止() -> None:
+    """Phase 6 の実測（2026-09-06）を固定する。⚠ 賃貸からの連想で
+    ``/jj/bukken/ichiran/`` を使うと**明示的な禁止パス**を叩く（→ 課題#4）。
+    """
+    rules = _suumo()
+    assert rules.can_fetch(UA, "https://suumo.jp/ms/chuko/tokyo/sc_chiyoda/") is True
+    assert rules.can_fetch(UA, "https://suumo.jp/ms/chuko/tokyo/sc_chiyoda/?kt=5000") is True
+    assert rules.can_fetch(UA, "https://suumo.jp/jj/bukken/ichiran/JJ010FJ001/") is False
+
+
+def test_ワイルドカードを含まない規則は従来どおり() -> None:
+    """⚠ 標準との差は ``*`` / ``$`` の展開だけに閉じていること。"""
+    text = """User-agent: *
+Disallow: /info/
+Allow: /info/ok/
+"""
+    rules = RobotsRules.parse(text)
+    standard = _parse(merge_robots_groups(text))
+    for path in ("/info/", "/info/x", "/other/", "/"):
+        url = f"https://example.com{path}"
+        assert rules.can_fetch(UA, url) is standard.can_fetch(UA, url)
+
+
+def test_末尾一致のドル記号() -> None:
+    rules = RobotsRules.parse("""User-agent: *
+Disallow: /*.pdf$
+""")
+    assert rules.can_fetch(UA, "https://example.com/a/b.pdf") is False
+    assert rules.can_fetch(UA, "https://example.com/a/b.pdf?x=1") is True
+
+
+def test_名指しのグループが優先される() -> None:
+    """標準と同じUA選択規則であること（名指しが当たれば ``*`` は見ない）。"""
+    text = """User-agent: *
+Disallow: /
+
+User-agent: house-search
+Disallow: /ng/
+"""
+    rules = RobotsRules.parse(text)
+    assert rules.can_fetch(UA, "https://example.com/ok/") is True
+    assert rules.can_fetch(UA, "https://example.com/ng/") is False
+    assert rules.can_fetch("other-bot/1.0", "https://example.com/ok/") is False
+
+
+def test_値が空のDisallowは全許可() -> None:
+    """``Disallow:``（値なし）は「禁止なし」を意味する（標準と同じ扱い）。"""
+    rules = RobotsRules.parse("""User-agent: *
+Disallow:
+""")
+    assert rules.can_fetch(UA, "https://example.com/anything") is True
+
+
+def test_規則が無ければ全許可() -> None:
+    """robots.txt を取得できなかったときの経路（→ ADR 0019）。"""
+    assert RobotsRules([]).can_fetch(UA, "https://example.com/x") is True
