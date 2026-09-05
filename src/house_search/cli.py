@@ -74,6 +74,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_sold = sub.add_parser("check-sold", help="成約・掲載終了の確認")
     p_sold.add_argument("--pattern", help="対象の検索パターン名")
     p_sold.add_argument("--limit", type=int, default=100, help="1回に確認する件数（既定100）")
+    p_sold.add_argument(
+        "--top-rank-limit",
+        type=int,
+        default=50,
+        help="毎回確認する上位順位（既定50。0で無効 → 課題#26）",
+    )
 
     p_digest = sub.add_parser("digest", help="日次ランキングダイジェストの送信")
     p_digest.add_argument("--pattern", help="対象の検索パターン名")
@@ -494,8 +500,14 @@ def _cmd_check_sold(args: argparse.Namespace) -> int:
 
 def _run_check_sold(args: argparse.Namespace, runtime, check_sold) -> int:
     for pattern in _load_patterns(args.pattern):
-        result = check_sold(runtime, pattern, limit=args.limit)
-        print(f"{pattern.name}: 確認 {result.checked}件 / 成約・掲載終了 {result.sold}件")
+        result = check_sold(
+            runtime, pattern, limit=args.limit, top_rank_limit=args.top_rank_limit
+        )
+        print(
+            f"{pattern.name}: 確認 {result.checked}件"
+            f"（うち上位{args.top_rank_limit}位 {result.from_top_rank}件）"
+            f" / 成約・掲載終了 {result.sold}件"
+        )
     return 0
 
 
