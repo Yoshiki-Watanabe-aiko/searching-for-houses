@@ -19,6 +19,12 @@ from house_search.scrape.fetch import SiteFetcher
 
 # 「3.5万円」「10万5000円」などの金額表記。ABLE の敷金欄は「23.9万」と
 # 「円」を省くため、円は任意にしてある。
+# 「1億2,800万円」「1億円」。売買の価格表記（→ 課題#4）。
+# ⚠⚠ **万より先に試すこと。** 後にすると「1億2,800万円」から「2,800万」だけを拾い、
+# **1億円ぶんが黙って落ちる**（実測で 128,000,000 が 28,000,000 になった）。
+# ⚠ NULL になるならまだ気づけるが、「それらしい値」が入ると MUST の価格上限を
+# 通ってランキング上位に来るので、例外にも件数の減少にもならない
+_OKU_YEN = re.compile(r"([\d,]+(?:\.\d+)?)\s*億\s*(?:([\d,]+(?:\.\d+)?)\s*万)?")
 _MAN_YEN = re.compile(r"([\d,]+(?:\.\d+)?)\s*万円?")
 _YEN = re.compile(r"([\d,]+)\s*円")
 # 面積表記。入力を NFKC 正規化してから当てるので「㎡」「m²」「m<sup>2</sup>」が
@@ -170,10 +176,19 @@ def _normalize_money_text(text: str) -> str:
 
 
 def parse_yen(text: str | None) -> int | None:
-    """「3.5万円」「25000円」などを円の整数へ。取れなければ None。"""
+    """「3.5万円」「1億2,800万円」「25000円」などを円の整数へ。取れなければ None。
+
+    ⚠ **レンジ表記は下限を採る**（``search`` が最初のマッチを返すため）。
+    新築の「5,000万円～7,000万円」は 50,000,000 になる（→ 要件定義書 §11.4）。
+    ⚠ **「価格未定」は None**。0 にすると「安い」と誤読される。
+    """
     if not text:
         return None
     normalized = _normalize_money_text(text)
+    if match := _OKU_YEN.search(normalized):
+        oku = float(match.group(1).replace(",", ""))
+        man = float(match.group(2).replace(",", "")) if match.group(2) else 0.0
+        return int(round(oku * 100_000_000 + man * 10_000))
     if match := _MAN_YEN.search(normalized):
         return int(round(float(match.group(1).replace(",", "")) * 10_000))
     if match := _YEN.search(normalized):

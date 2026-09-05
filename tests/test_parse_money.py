@@ -80,3 +80,51 @@ class Test管理費と敷金:
         assert parse_months_fee("1.5ヶ月", 100_000) == 150_000
         assert parse_months_fee("2ヶ月", 80_000) == 160_000
         assert parse_months_fee("なし", 80_000) == 0
+
+class Test売買の億表記:
+    """⚠ **売買データが入る前に塞いだ**（→ 課題#4 手順3の下ごしらえ）。
+
+    ⚠⚠ **NULL になるのではなく「それらしい値」が入るのが最も危険。**
+    ``1億2,800万円`` が 2,800万円として記録されると、MUST の価格上限を
+    通ってランキング上位に来る（課題#50 と同じ「値だけが静かに狂う」形）。
+    """
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("1億円", 100_000_000),
+            ("1億2,800万円", 128_000_000),
+            ("1億2800万円", 128_000_000),
+            ("2億5,000万円", 250_000_000),
+            ("10億円", 1_000_000_000),
+            # レンジは下限を採る（新築の価格帯表示 → 要件定義書 §11.4）
+            ("1億2,800万円 ～ 1億5,000万円", 128_000_000),
+        ],
+    )
+    def test_億を含む価格(self, text: str, expected: int) -> None:
+        assert parse_yen(text) == expected
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("2,980万円", 29_800_000),
+            ("4980万円", 49_800_000),
+            ("9,800万円", 98_000_000),
+            ("3,480万円(税込)", 34_800_000),
+            # 新築のレンジ表示。下限を採る
+            ("5,000万円～7,000万円", 50_000_000),
+        ],
+    )
+    def test_億を含まない価格は変わらない(self, text: str, expected: int) -> None:
+        assert parse_yen(text) == expected
+
+    @pytest.mark.parametrize("text", ["価格未定", "未定", "応相談"])
+    def test_価格未定はNone(self, text: str) -> None:
+        """⚠ 0 にしてはいけない（「安い」と誤読される → 要件定義書 §9）。"""
+        assert parse_yen(text) is None
+
+    def test_賃貸の表記に影響しない(self) -> None:
+        """⚠ 賃貸に「億」は出ないが、正規表現の順序を変えるので回帰を固定する。"""
+        assert parse_yen("8.4万円") == 84_000
+        assert parse_yen("13.4万円") == 134_000
+        assert parse_yen("3,000円") == 3_000
