@@ -27,8 +27,10 @@ from house_search.pipeline import tasks
 # `rescore` が全件走り、通知と順位が動く。
 # 意図してスコア設定（want / commute / property_type）を変えたときだけ更新する。
 BASELINE_CONFIG_HASH = {
-    "東京23区賃貸": "5791d4f05f6e496973d82e9b178f076ff56ee26e4b7fbd8091ee43fbeb1cc916",
-    "近郊60分圏賃貸": "9d182e3f30be4445201e8fe4f696d62fef994ecf18f6630e227c42990f80efbe",
+    # 2026-09-05: 相場との比較（market_rate_ratio・weight 15）を want へ追加した
+    # （→ 課題#49）。⚠ 意図した変更なので基準値を更新している
+    "東京23区賃貸": "81bbd0a380b69aa7fe8982136a720ecf1e01c17298c2bf92774638a4ad67da5a",
+    "近郊60分圏賃貸": "b5db53a53ad1e9cc021d1ab1bb2bb99738d04c50e5dad918d9526d97d9a4697f",
 }
 
 
