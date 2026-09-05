@@ -17,15 +17,21 @@ from typing import Protocol
 from house_search.scrape.area import CITY_VALUE_MAPPING, AreaTarget
 from house_search.scrape.fetch import SiteFetcher
 
-# 「3.5万円」「10万5000円」などの金額表記。ABLE の敷金欄は「23.9万」と
-# 「円」を省くため、円は任意にしてある。
-# 「1億2,800万円」「1億円」。売買の価格表記（→ 課題#4）。
-# ⚠⚠ **万より先に試すこと。** 後にすると「1億2,800万円」から「2,800万」だけを拾い、
-# **1億円ぶんが黙って落ちる**（実測で 128,000,000 が 28,000,000 になった）。
-# ⚠ NULL になるならまだ気づけるが、「それらしい値」が入ると MUST の価格上限を
-# 通ってランキング上位に来るので、例外にも件数の減少にもならない
-_OKU_YEN = re.compile(r"([\d,]+(?:\.\d+)?)\s*億\s*(?:([\d,]+(?:\.\d+)?)\s*万)?")
-_MAN_YEN = re.compile(r"([\d,]+(?:\.\d+)?)\s*万円?")
+# 「3.5万円」「1万3020円」「1億2,800万円」などの金額表記。
+# ⚠⚠ **上位の単位だけを拾って下位桁を落とさないこと**（→ 課題#4・課題#53）。
+# 初版は億を見ず「1億2,800万円」を 28,000,000 と読み、次の版は万の後ろを見ず
+# 「1万3020円」を 10,000 と読んだ。**同じ欠陥を2度踏んでいる。**
+# ⚠ NULL になるならまだ気づけるが、「それらしい値」が入ると
+# 例外にも件数の減少にもならないまま MUST を通って順位だけが狂う。
+# そのため億・万・円をひとつの正規表現の中で連結して読み、
+# **「どちらを先に試すか」という順序への依存そのものを無くしてある。**
+# ⚠ 下位桁は「万」の直後に数字が続くときだけ拾う（間に空白を許さない）。
+# 許すと「15万 5000円」のように並んだ別々の金額を誤って結合する。
+# ⚠ ABLE の敷金欄は「23.9万」と円を省くので、円の部分は任意のまま。
+_OKU_YEN = re.compile(
+    r"([\d,]+(?:\.\d+)?)\s*億\s*(?:([\d,]+(?:\.\d+)?)\s*万)?(?:([\d,]+)\s*円)?"
+)
+_MAN_YEN = re.compile(r"([\d,]+(?:\.\d+)?)\s*万(?:([\d,]+)\s*円)?")
 _YEN = re.compile(r"([\d,]+)\s*円")
 # 面積表記。入力を NFKC 正規化してから当てるので「㎡」「m²」「m<sup>2</sup>」が
 # すべて "m2" に寄る。正規化しないと ABLE の「42.9㎡」を取りこぼす。
@@ -188,9 +194,12 @@ def parse_yen(text: str | None) -> int | None:
     if match := _OKU_YEN.search(normalized):
         oku = float(match.group(1).replace(",", ""))
         man = float(match.group(2).replace(",", "")) if match.group(2) else 0.0
-        return int(round(oku * 100_000_000 + man * 10_000))
+        yen = int(match.group(3).replace(",", "")) if match.group(3) else 0
+        return int(round(oku * 100_000_000 + man * 10_000)) + yen
     if match := _MAN_YEN.search(normalized):
-        return int(round(float(match.group(1).replace(",", "")) * 10_000))
+        man = float(match.group(1).replace(",", ""))
+        yen = int(match.group(2).replace(",", "")) if match.group(2) else 0
+        return int(round(man * 10_000)) + yen
     if match := _YEN.search(normalized):
         return int(match.group(1).replace(",", ""))
     return None
