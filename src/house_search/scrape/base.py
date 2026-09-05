@@ -146,13 +146,37 @@ def query_separator(url: str) -> str:
     return "&" if "?" in url else "?"
 
 
+def _normalize_money_text(text: str) -> str:
+    """金額表記の全角を半角へ寄せる（→ 課題#51）。
+
+    ⚠ 正規表現の ``\\d`` は全角数字にマッチするが、``\\.`` と ``[,]`` は
+    **半角しか受けない**。正規化しないと全角の区切りを含む金額で
+    **値だけが静かに狂う**（例外にならない）。
+
+    ============  ==========  ==========
+    入力          正規化なし  正しい値
+    ============  ==========  ==========
+    １４．３万円   30,000      143,000
+    ３，０００円   **0**       3,000
+    １．５ヶ月     5ヶ月分     1.5ヶ月分
+    ============  ==========  ==========
+
+    ⚠ とくに「３，０００円 → 0」は ``int("０００")`` が 0 になるためで、
+    **管理費が黙って0円として ``rent_total`` に足される**。
+    面積（``parse_area_sqm``）は元から NFKC を通していたのに、
+    金額だけ通っていなかった。
+    """
+    return unicodedata.normalize("NFKC", text)
+
+
 def parse_yen(text: str | None) -> int | None:
     """「3.5万円」「25000円」などを円の整数へ。取れなければ None。"""
     if not text:
         return None
-    if match := _MAN_YEN.search(text):
+    normalized = _normalize_money_text(text)
+    if match := _MAN_YEN.search(normalized):
         return int(round(float(match.group(1).replace(",", "")) * 10_000))
-    if match := _YEN.search(text):
+    if match := _YEN.search(normalized):
         return int(match.group(1).replace(",", ""))
     return None
 
@@ -263,7 +287,7 @@ def parse_months_fee(value: str | None, rent: int | None) -> int | None:
     stripped = value.strip()
     if is_empty_fee(stripped):
         return 0
-    if match := _MONTHS.search(stripped):
+    if match := _MONTHS.search(_normalize_money_text(stripped)):
         if rent is None:
             return None
         return int(round(float(match.group(1)) * rent))
