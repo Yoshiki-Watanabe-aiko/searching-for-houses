@@ -6,7 +6,14 @@ from pathlib import Path
 
 import pytest
 
-from house_search.market.soba import SobaParseError, parse_soba
+from house_search.market.soba import (
+    STAT_BASIS_APART,
+    STAT_BASIS_MANSION,
+    SobaParseError,
+    SobaRate,
+    merge_rates,
+    parse_soba,
+)
 from house_search.scoring.listing_view import normalize_layout
 
 FIXTURES = Path(__file__).parent / "fixtures" / "suumo_soba"
@@ -56,3 +63,34 @@ def test_相場表が無ければ例外にする() -> None:
     """⚠ 0件を黙って返すと、相場が無いまま正常終了して気づけない。"""
     with pytest.raises(SobaParseError):
         parse_soba("<html><body><table><tr><td>なにもない</td></tr></table></body></html>")
+
+
+def test_マンションに無い間取りだけアパートで補完される() -> None:
+    """⚠ 2DK はマンションの掲載が少なく 26市区で相場が出ない（2026-09-05 実測）。
+
+    アパート相場で埋めると 56 → 約80市区になる。⚠ ただし建物種別で相場は
+    0.75〜0.92 倍と系統的に違うので、**どちらの相場かを行に残す**。
+    """
+    mansion = [SobaRate(layout="1LDK", rent_yen=124_000)]
+    apart = [SobaRate(layout="1LDK", rent_yen=111_000), SobaRate(layout="2DK", rent_yen=127_000)]
+    merged = {r.layout: r for r in merge_rates(mansion, apart)}
+
+    assert merged["1LDK"].rent_yen == 124_000, "マンションにある間取りは上書きしない"
+    assert merged["1LDK"].stat_basis == STAT_BASIS_MANSION
+    assert merged["2DK"].rent_yen == 127_000, "マンションに無い間取りはアパートで埋める"
+    assert merged["2DK"].stat_basis == STAT_BASIS_APART
+
+
+def test_アパート相場が無ければマンションだけを返す() -> None:
+    mansion = [SobaRate(layout="2DK", rent_yen=130_000)]
+    merged = merge_rates(mansion, [])
+    assert [(r.layout, r.rent_yen, r.stat_basis) for r in merged] == [
+        ("2DK", 130_000, STAT_BASIS_MANSION)
+    ]
+
+
+def test_補完の結果は間取り順で決まる() -> None:
+    """⚠ 出力順が揺れるとCSVの差分が読めなくなる（決定性）。"""
+    mansion = [SobaRate(layout="2LDK", rent_yen=159_000)]
+    apart = [SobaRate(layout="1K", rent_yen=71_000), SobaRate(layout="2DK", rent_yen=127_000)]
+    assert [r.layout for r in merge_rates(mansion, apart)] == ["1K", "2DK", "2LDK"]
