@@ -130,7 +130,14 @@ class CommuteSpec(Strict):
 
 
 class MustBase(Strict):
-    """MUST条件の共通部。"""
+    """MUST条件の共通部。全ファミリで意味が通る項目だけを置く。
+
+    ⚠ **間取り（layouts）はここに置かない。** 土地（Phase 9）には間取りの概念が
+    無いのに、共通部にあると土地パターンにも書けてしまう。書けたところで判定は
+    されず全件 unknown になるだけで**例外にならない**ので、ファミリごとの Must
+    クラスへ降ろしてある（→ 課題#4）。レジストリとの対応は
+    ``tests/test_pattern.py`` が双方向で固定している。
+    """
 
     commute_minutes_max: int | None = Field(
         default=None,
@@ -160,7 +167,6 @@ class MustBase(Strict):
         ),
     )
 
-    layouts: list[str] = Field(default_factory=list, description="許容する間取り")
     walk_minutes_max: int | None = Field(default=None, description="駅徒歩の上限（分）")
     features: list[str] = Field(
         default_factory=list, description="必須の条件コード（m_conditions.code）"
@@ -177,6 +183,7 @@ class MustBase(Strict):
 class ChintaiMust(MustBase):
     """賃貸のMUST条件。"""
 
+    layouts: list[str] = Field(default_factory=list, description="許容する間取り")
     rent_total_max: int | None = Field(default=None, description="賃料＋管理費の上限（円/月）")
     area_min: float | None = Field(default=None, description="専有面積の下限（㎡）")
     area_max: float | None = Field(default=None, description="専有面積の上限（㎡）")
@@ -185,20 +192,23 @@ class ChintaiMust(MustBase):
 
 
 class MansionBuyMust(MustBase):
-    """マンション売買のMUST条件（Phase 6 で肉付けする骨格）。"""
+    """マンション売買のMUST条件。"""
 
+    layouts: list[str] = Field(default_factory=list, description="許容する間取り")
     price_max: int | None = Field(default=None, description="物件価格の上限（円）")
     monthly_cost_max: int | None = Field(
         default=None, description="管理費＋修繕積立金の上限（円/月）"
     )
     area_min: float | None = Field(default=None, description="専有面積の下限（㎡）")
+    area_max: float | None = Field(default=None, description="専有面積の上限（㎡）")
     age_max: int | None = Field(default=None, description="築年数の上限（年・中古のみ）")
     floor_min: int | None = Field(default=None, description="所在階の下限")
 
 
 class KodateBuyMust(MustBase):
-    """戸建て売買のMUST条件（Phase 6 で肉付けする骨格）。"""
+    """戸建て売買のMUST条件。"""
 
+    layouts: list[str] = Field(default_factory=list, description="許容する間取り")
     price_max: int | None = Field(default=None, description="物件価格の上限（円）")
     land_area_min: float | None = Field(default=None, description="土地面積の下限（㎡）")
     building_area_min: float | None = Field(default=None, description="建物面積の下限（㎡）")
