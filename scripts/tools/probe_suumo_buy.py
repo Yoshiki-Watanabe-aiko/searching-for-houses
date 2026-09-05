@@ -131,8 +131,14 @@ def stage_city(client: httpx.Client, cache_dir: Path, kinds: list[str]) -> None:
         _fetch(client, url, cache_dir, f"city_{kind}")
 
 
-def stage_fetch(client: httpx.Client, cache_dir: Path, url: str, label: str) -> None:
-    _fetch(client, url, cache_dir, label)
+def stage_fetch(
+    client: httpx.Client, cache_dir: Path, urls: list[str], labels: list[str]
+) -> None:
+    """URLとラベルを対で受け取り、間隔を空けて取る。"""
+    for i, (url, label) in enumerate(zip(urls, labels, strict=True)):
+        if i:
+            _sleep(MIN_INTERVAL_SEC)
+        _fetch(client, url, cache_dir, label)
 
 
 def stage_measure(
@@ -281,12 +287,12 @@ def main() -> int:
     )
     parser.add_argument("--cache-dir", type=Path, default=DEFAULT_CACHE)
     parser.add_argument("--kind", action="append", choices=sorted(CITY_PAGES))
-    parser.add_argument("--url")
+    parser.add_argument("--url", action="append", default=[])
     parser.add_argument("--base", help="measure: 共通のベースURL")
     parser.add_argument(
         "--param", action="append", default=[], help="measure: 付けるクエリ（空文字で対照）"
     )
-    parser.add_argument("--label")
+    parser.add_argument("--label", action="append", default=[])
     parser.add_argument("--pattern", help="links: このパターンを含むhrefだけ出す")
     parser.add_argument(
         "--reuse", action="store_true", help="保存済みの応答を使い、取得をやり直さない"
@@ -300,6 +306,7 @@ def main() -> int:
     if args.stage in {"links", "forms", "listing"}:
         if not args.label:
             parser.error("--label が要ります")
+        args.label = args.label[0] if isinstance(args.label, list) else args.label
         if args.stage == "links":
             stage_links(args.cache_dir, args.label, args.pattern)
         elif args.stage == "listing":
@@ -321,7 +328,8 @@ def main() -> int:
         elif args.stage == "measure":
             if not (args.base and args.label):
                 parser.error("--base と --label が要ります")
-            stage_measure(client, args.cache_dir, args.base, args.param or [""], args.label)
+            label = args.label[0] if isinstance(args.label, list) else args.label
+            stage_measure(client, args.cache_dir, args.base, args.param or [""], label)
         else:
             if not (args.url and args.label):
                 parser.error("--url と --label が要ります")
