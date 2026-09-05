@@ -255,8 +255,8 @@ def test_個別通知は帯ごとに別チャンネルへ送る(filename: str, w
 def test_ダイジェストは専用チャンネルへ集約する(filename: str) -> None:
     """上位N件は帯をまたいで1つの「厳選」チャンネルへ送る。"""
     pattern = load_pattern_file(REPO_ROOT / "configs" / filename)
-    assert pattern.digest_webhook_ref == "DIGEST"
-    assert pattern.effective_digest_webhook_ref == "DIGEST"
+    assert pattern.digest_webhook_ref == "CHINTAI_DIGEST"
+    assert pattern.effective_digest_webhook_ref == "CHINTAI_DIGEST"
     # ⚠ 個別通知と同じチャンネルに戻っていないこと
     assert pattern.effective_digest_webhook_ref != pattern.webhook_ref
 

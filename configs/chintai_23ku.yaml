@@ -20,7 +20,7 @@ property_type: "CHINTAI"
 # 個別通知（新着・価格変動・他サイト安値）の通知先。帯ごとにチャンネルを分ける
 webhook_ref: "CHINTAI_23KU"
 # 上位15件のダイジェストは帯をまたいで1つの「厳選」チャンネルへ集める
-digest_webhook_ref: "DIGEST"
+digest_webhook_ref: "CHINTAI_DIGEST"
 
 sites:
   - "SUUMO"

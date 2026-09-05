@@ -18,8 +18,8 @@ property_type: "CHUKO_MANSION"     # 新築は SHINCHIKU_MANSION（age_years が
 
 # 通知先はファミリ単位で共有する（新築・中古で分けない。売買は掲載の回転が遅く
 # 新着が少ないので、細分すると監視が形骸化する → 課題#4）。
-# .env の DISCORD_WEBHOOK_MANSION_23KU / _MANSION_DIGEST を参照する
-webhook_ref: "MANSION_23KU"
+# .env の DISCORD_WEBHOOK_MANSION / _MANSION_DIGEST を参照する
+webhook_ref: "MANSION"
 digest_webhook_ref: "MANSION_DIGEST"
 
 # ⚠ ライフルホームズは入れない。1実行5リクエストの上限を賃貸と食い合い、

@@ -19,7 +19,7 @@ webhook_ref: "CHINTAI_ALONE"
 
 # 日次ダイジェスト（上位N件）の通知先。省略すると webhook_ref と同じチャンネルへ送る。
 # 上位N件だけを別チャンネルへ集めたいときに指定する
-# digest_webhook_ref: "DIGEST"
+# digest_webhook_ref: "CHINTAI_DIGEST"
 
 sites:
   - "SUUMO"

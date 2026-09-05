@@ -507,7 +507,7 @@ discriminated union で3ファミリへ分岐する。未知のキーはエラ�
 name: "東京賃貸一人暮らし"
 property_type: "CHINTAI"
 webhook_ref: "CHINTAI_ALONE"       # 個別通知の宛先。.env の DISCORD_WEBHOOK_CHINTAI_ALONE を参照
-digest_webhook_ref: "DIGEST"       # ダイジェストの宛先。省略時は webhook_ref と同じ
+digest_webhook_ref: "CHINTAI_DIGEST"  # ダイジェストの宛先。省略時は webhook_ref と同じ
 sites: [SUUMO, HOMES, ATHOME, GOO, ABLE, MINIMINI, EHEYA, NIFTY, APAMAN, SMOCCA]
 
 search:                             # サイト側へ渡す唯一の条件
@@ -1000,9 +1000,9 @@ uv run house-search db-seed --test-db
 | `DISCORD_WEBHOOK_{論理名}` | ✅ | 検索パターンの `webhook_ref` / `digest_webhook_ref` が参照する通知先 |
 | `DISCORD_WEBHOOK_CHINTAI_23KU` | ✅ | 「東京23区賃貸」の個別通知 |
 | `DISCORD_WEBHOOK_CHINTAI_SUBURB60` | ✅ | 「近郊60分圏賃貸」の個別通知 |
-| `DISCORD_WEBHOOK_DIGEST` | ✅ | 上位15件ダイジェスト専用（両帯が共有） |
-| `DISCORD_WEBHOOK_MANSION_23KU` / `_MANSION_DIGEST` | — | マンション売買（Phase 6）。**新築・中古で分けずファミリ単位で共有**する → 課題#4 |
-| `DISCORD_WEBHOOK_KODATE_23KU` / `_KODATE_DIGEST` | — | 戸建て売買（Phase 6）。同上 |
+| `DISCORD_WEBHOOK_CHINTAI_DIGEST` | ✅ | 上位15件ダイジェスト専用（両帯が共有） |
+| `DISCORD_WEBHOOK_MANSION` / `_MANSION_DIGEST` | — | マンション売買（Phase 6）。**新築・中古で分けずファミリ単位で共有**する → 課題#4 |
+| `DISCORD_WEBHOOK_KODATE` / `_KODATE_DIGEST` | — | 戸建て売買（Phase 6）。同上 |
 | `CONFIGS_DIR` | — | 検索パターンYAMLのディレクトリ |
 | `DATA_DIR` | — | 設備抽出辞書などGit管理データのディレクトリ |
 | `DEFAULT_MIN_INTERVAL_SEC` | — | サイト個別設定が無い場合のリクエスト間隔（秒） |
