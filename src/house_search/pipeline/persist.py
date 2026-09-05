@@ -712,7 +712,7 @@ _PROPERTY_COLUMNS = """
     p.mgmt_fee_monthly, p.rent_total, p.repair_reserve_monthly,
     p.area_sqm, p.land_area_sqm, p.building_area_sqm, p.layout,
     p.floor_num, p.total_floors, p.age_years, p.walk_minutes,
-    p.prefecture, p.address, p.image_url,
+    p.prefecture, p.address, p.image_url, pt.family AS property_family,
     (
         p.detail_fetched_at IS NOT NULL
         OR EXISTS (
@@ -845,6 +845,7 @@ def _to_view(row: Any, feature_codes: frozenset[str]) -> ListingView:
         flood_area_ratio=_opt_float(row.flood_area_ratio),
         landslide_area_ratio=_opt_float(row.landslide_area_ratio),
         landslide_special_ratio=_opt_float(row.landslide_special_ratio),
+        property_family=row.property_family,
         prefecture=row.prefecture,
         address=row.address,
         detail_fetched=row.detail_fetched,

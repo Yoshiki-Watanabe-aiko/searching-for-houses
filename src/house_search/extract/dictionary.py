@@ -18,8 +18,17 @@ from sqlalchemy import Engine, text
 
 from house_search.extract.normalize import normalize_text
 
-# YAML のトップレベルキー → m_condition_synonyms.property_family
-FAMILY_SECTIONS: dict[str, str] = {"chintai": "CHINTAI", "buy": "MANSION_BUY"}
+# YAML のトップレベルキー → m_condition_synonyms.property_family（複数可）
+#
+# ⚠ **`buy` は MANSION_BUY と KODATE_BUY の両方へ展開する。** 片方しか作らないと
+# そのファミリの掲載は照合先の辞書が空集合になり、詳細から原文を保存しても
+# **抽出0件のまま正常終了する**（例外にも件数の減少にもならない → 課題#4）。
+# 証明書・性能評価系の語彙はマンションと戸建てで概ね共通なので、
+# 実測で語彙が分かれたときにセクションを分割する。
+FAMILY_SECTIONS: dict[str, tuple[str, ...]] = {
+    "chintai": ("CHINTAI",),
+    "buy": ("MANSION_BUY", "KODATE_BUY"),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +81,7 @@ def load_dictionary(path: Path) -> FeatureDictionary:
         raw = yaml.safe_load(fh) or {}
 
     entries: list[DictionaryEntry] = []
-    for section, family in FAMILY_SECTIONS.items():
+    for section, families in FAMILY_SECTIONS.items():
         for code, spec in (raw.get(section) or {}).items():
             if not isinstance(spec, dict):
                 raise ValueError(f"辞書エントリ '{code}' の内容がマッピングではありません")
@@ -84,15 +93,18 @@ def load_dictionary(path: Path) -> FeatureDictionary:
                 for site_code, values in sorted((spec.get("site_overrides") or {}).items())
                 for pattern in _as_patterns(values)
             )
-            entries.append(
-                DictionaryEntry(
-                    code=code,
-                    family=family,
-                    patterns=_as_patterns(spec.get("patterns")),
-                    negative_patterns=_as_patterns(spec.get("negative_patterns")),
-                    site_patterns=site_patterns,
+            patterns = _as_patterns(spec.get("patterns"))
+            negative = _as_patterns(spec.get("negative_patterns"))
+            for family in families:
+                entries.append(
+                    DictionaryEntry(
+                        code=code,
+                        family=family,
+                        patterns=patterns,
+                        negative_patterns=negative,
+                        site_patterns=site_patterns,
+                    )
                 )
-            )
     return FeatureDictionary(entries=tuple(entries))
 
 

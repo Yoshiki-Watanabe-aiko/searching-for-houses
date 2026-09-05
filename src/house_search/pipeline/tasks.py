@@ -8,6 +8,7 @@ digest / rescore / check-sold / re-extract / report-unknown / coverage。
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Any
 
 from sqlalchemy import text
 
@@ -190,32 +191,53 @@ def digest(runtime: Runtime, pattern, *, dry_run: bool = False) -> DigestResult:
     return DigestResult(pattern_name=pattern.name, entries=len(entries), sent=sent)
 
 
+def re_extract_rows(conn: Any, *, limit: int | None = None, family: str | None = None) -> list[Any]:
+    """再抽出の対象行。⚠ **掲載ごとの種別（`property_family`）を必ず持たせる。**
+
+    ここを固定値にすると、売買掲載が**賃貸の辞書で再抽出される**。
+    設備数もエラーも異常を示さないので、実データを1件ずつ見るまで気づけない
+    （→ 課題#4）。
+
+    ``family`` を渡したときはそのファミリの掲載だけに絞る（辞書の育成中に
+    片方のファミリだけを回したいときに使う）。
+    """
+    sql = (
+        "SELECT p.id, p.url, p.site_id, s.code AS site_code, p.raw_features_text, "
+        "       p.floor_num, p.total_floors, pt.family AS property_family "
+        "FROM t_listings p JOIN m_sites s ON s.id = p.site_id "
+        "JOIN m_property_types pt ON pt.id = p.property_type_id "
+        "WHERE p.raw_features_text IS NOT NULL"
+    )
+    params: dict[str, Any] = {}
+    if family:
+        sql += " AND pt.family = :family"
+        params["family"] = family
+    if limit:
+        sql += f" LIMIT {int(limit)}"
+    return list(conn.execute(text(sql), params).all())
+
+
 def re_extract(
-    runtime: Runtime, *, family: str = "CHINTAI", limit: int | None = None
+    runtime: Runtime, *, family: str | None = None, limit: int | None = None
 ) -> ReExtractResult:
     """``raw_features_text`` から設備を全件抽出し直す（ネットワーク不要）。
 
     辞書を育てたあとはこれを回すだけで既存物件へ反映される。
     原文を保存してあることの効き目がここに出る。
+
+    ⚠ **辞書のファミリは掲載ごとに決める**（``family`` は絞り込みであって
+    上書きではない）。固定にすると売買掲載が賃貸辞書で抽出される。
     """
     result = ReExtractResult(listings=0, features=0, unknown_tokens=0)
-    sql = (
-        "SELECT p.id, p.url, p.site_id, s.code AS site_code, p.raw_features_text, "
-        "       p.floor_num, p.total_floors "
-        "FROM t_listings p JOIN m_sites s ON s.id = p.site_id "
-        "WHERE p.raw_features_text IS NOT NULL"
-    )
-    if limit:
-        sql += f" LIMIT {int(limit)}"
 
     with runtime.engine.connect() as conn:
-        rows = conn.execute(text(sql)).all()
+        rows = re_extract_rows(conn, limit=limit, family=family)
 
     for row in rows:
         extraction = extract_from_text(
             row.raw_features_text,
             runtime.dictionary,
-            family=family,
+            family=row.property_family,
             site_code=row.site_code,
             source=SOURCE_DETAIL,
         )
@@ -235,7 +257,7 @@ def re_extract(
                 conn,
                 unknown,
                 site_id=row.site_id,
-                property_family=family,
+                property_family=row.property_family,
                 sample_url=row.url,
             )
         result.listings += 1
