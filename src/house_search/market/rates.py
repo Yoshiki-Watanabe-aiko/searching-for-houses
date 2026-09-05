@@ -16,12 +16,17 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from house_search.market.soba import STAT_BASIS_APART, STAT_BASIS_MANSION
 from house_search.scoring.listing_view import normalize_layout
 
 # ⚠ 相場としてありえない値を弾く。桁を1つ間違えた（万円→円の換算漏れ）ときに
 # 気づけるのはここだけ。実測では 4.4万〜30万円の範囲に収まっていた
 MIN_RATE_YEN = 10_000
 MAX_RATE_YEN = 2_000_000
+
+# ⚠ 相場の母集団（どの建物種別か）を自由文字列にしない。綴りが揺れると
+# 「どちらの相場と比べたのか」を後から集計できず、検証そのものができなくなる
+ALLOWED_STAT_BASIS = frozenset({STAT_BASIS_MANSION, STAT_BASIS_APART})
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +68,12 @@ def load_rate_rows(path: Path) -> list[MarketRateRow]:
                     f"{path.name}:{lineno} 相場が想定外の値です: {value}"
                     f"（{MIN_RATE_YEN:,}〜{MAX_RATE_YEN:,} 円の範囲を想定）"
                 )
+            stat_basis = raw["stat_basis"]
+            if stat_basis not in ALLOWED_STAT_BASIS:
+                raise MarketRateError(
+                    f"{path.name}:{lineno} 想定外の stat_basis です: {stat_basis!r}"
+                    f"（{sorted(ALLOWED_STAT_BASIS)} のいずれかを想定）"
+                )
             segment = raw["segment"]
             # ⚠ 集計側と採点側で同じ正規化を通す。ここで正規化済みでない値を
             # 受け入れると、突き合わせが0件になったとき原因を切り分けられない
@@ -78,7 +89,7 @@ def load_rate_rows(path: Path) -> list[MarketRateRow]:
                     segment=segment,
                     rate_value=value,
                     source=raw["source"],
-                    stat_basis=raw["stat_basis"],
+                    stat_basis=stat_basis,
                     period=raw["period"],
                     acquired_on=dt.date.fromisoformat(raw["acquired_on"]),
                 )

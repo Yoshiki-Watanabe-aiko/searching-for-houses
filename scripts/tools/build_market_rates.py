@@ -38,9 +38,10 @@ INDEX_DIR = RAW / "_index"
 PREF_SLUG = {"13": "tokyo", "11": "saitama", "12": "chiba", "14": "kanagawa"}
 INTERVAL = 3.0
 SOURCE = "suumo_soba"
-# ⚠ 何の相場かを行に持たせる。SUUMO のページには管理費の扱いも
-# 平均/中央値の別も書かれていないので「掲載賃料」としか言えない
-STAT_BASIS = "rent_listed"
+# 建物種別（ts）。既定の 1=マンションだけでは 2DK の相場が 82市区中26市区で
+# 出ないため、2=アパートで補完する（→ soba.py の docstring・課題#49）
+TS_APART = "2"
+APART_SUFFIX = "_ts2"
 
 # 索引の JSON: "121":{"name":"足立区","url":"/chintai/tokyo/sc_adachi/..."}
 _INDEX_ENTRY = re.compile(
@@ -62,6 +63,19 @@ def _target_cities() -> set[str]:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         cities |= set(data["search"]["cities"])
     return cities
+
+
+def _must_layouts() -> set[str]:
+    """検索パターンが MUST で使う間取り（帯の和集合）。
+
+    ⚠ **補完の対象をここから決める。** 「相場が1つでも欠けている市区」にすると
+    4LDK・5K以上まで拾って全市区が対象になり、取得が無駄に増える。
+    """
+    layouts: set[str] = set()
+    for path in sorted((REPO / "configs").glob("*.yaml")):
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        layouts |= set(data["must"].get("layouts") or [])
+    return layouts
 
 
 def fetch_index(ua: str) -> dict[str, dict[str, str]]:
@@ -110,23 +124,69 @@ def fetch_cities(slugs: dict[str, dict[str, str]], ua: str) -> None:
         time.sleep(INTERVAL)
 
 
-def build(period: str, acquired_on: str) -> int:
+def fetch_apartments(slugs: dict[str, dict[str, str]], ua: str) -> None:
+    """マンション相場に MUST の間取りが欠けている市区だけ ``ts=2`` を取る。
+
+    ⚠ **取得は既存ファイルがあれば飛ばす。** 解析の試行錯誤で取得を繰り返さない。
+    """
     sys.path.insert(0, str(REPO / "src"))
     from house_search.market.soba import parse_soba
+
+    want = _must_layouts()
+    by_jis = {v["jis"]: (name, v["slug"]) for name, v in slugs.items()}
+    targets: list[str] = []
+    for path in sorted(RAW.glob("*.html")):
+        if path.stem.endswith(APART_SUFFIX):
+            continue
+        have = {r.layout for r in parse_soba(path.read_text(encoding="utf-8", errors="replace"))}
+        if want - have:
+            targets.append(path.stem)
+
+    print(f"アパート相場を取得: {len(targets)}件（MUST の間取りが欠けている市区）")
+    for jis in targets:
+        out = RAW / f"{jis}{APART_SUFFIX}.html"
+        if out.exists() or jis not in by_jis:
+            continue
+        name, slug = by_jis[jis]
+        url = f"https://suumo.jp/chintai/soba/{PREF_SLUG[jis[:2]]}/{slug}/?ts={TS_APART}"
+        resp = httpx.get(url, headers={"User-Agent": ua}, timeout=30.0, follow_redirects=True)
+        title = re.search(r"<title>(.*?)</title>", resp.text, re.S)
+        title_text = re.sub(r"\s+", "", title.group(1)) if title else ""
+        # ⚠ 取り違えを黙って通さない。ts が効かなくなればマンション相場が
+        # アパート相場として保存され、例外にならないまま値だけがずれる
+        if resp.status_code != 200 or "アパート" not in title_text:
+            print(f"  NG {name}: HTTP {resp.status_code} title={title_text!r}")
+        else:
+            out.write_text(resp.text, encoding="utf-8")
+        time.sleep(INTERVAL)
+
+
+def build(period: str, acquired_on: str) -> int:
+    sys.path.insert(0, str(REPO / "src"))
+    from house_search.market.soba import STAT_BASIS_APART, merge_rates, parse_soba
 
     slugs = json.loads(SLUGS.read_text(encoding="utf-8"))
     by_jis = {v["jis"]: name for name, v in slugs.items()}
 
+    def _rates(path: Path) -> list:
+        return parse_soba(path.read_text(encoding="utf-8", errors="replace"))
+
     rows: list[dict[str, object]] = []
     missing: list[str] = []
+    filled = 0
     for path in sorted(RAW.glob("*.html")):
+        if path.stem.endswith(APART_SUFFIX):
+            continue  # ⚠ 補完側は主ループで回さない（city_jis が壊れる）
         jis = path.stem
         name = by_jis.get(jis, "?")
-        rates = parse_soba(path.read_text(encoding="utf-8", errors="replace"))
-        if not rates:
+        mansion = _rates(path)
+        if not mansion:
             missing.append(name)
             continue
-        for rate in rates:
+        apart_path = RAW / f"{jis}{APART_SUFFIX}.html"
+        apart = _rates(apart_path) if apart_path.exists() else []
+        for rate in merge_rates(mansion, apart):
+            filled += rate.stat_basis == STAT_BASIS_APART
             rows.append(
                 {
                     "city_jis": jis,
@@ -134,7 +194,7 @@ def build(period: str, acquired_on: str) -> int:
                     "segment": rate.layout,
                     "rate_value": rate.rent_yen,
                     "source": SOURCE,
-                    "stat_basis": STAT_BASIS,
+                    "stat_basis": rate.stat_basis,
                     "period": period,
                     "acquired_on": acquired_on,
                 }
@@ -143,7 +203,7 @@ def build(period: str, acquired_on: str) -> int:
     # ⚠ 生成できた市区が想定より少なければ止める。0件のCSVを黙って書くと
     # 「相場が無いまま採点が続く」状態になり、例外にならない
     cities = {r["city_jis"] for r in rows}
-    expected = len(list(RAW.glob("*.html")))
+    expected = len([p for p in RAW.glob("*.html") if not p.stem.endswith(APART_SUFFIX)])
     if expected and len(cities) < expected:
         print(f"⚠ 相場を取れなかった市区: {sorted(missing)}")
     if not rows:
@@ -155,6 +215,8 @@ def build(period: str, acquired_on: str) -> int:
         writer.writeheader()
         writer.writerows(rows)
     print(f"生成: {OUT.relative_to(REPO)} / {len(rows):,}行 / {len(cities)}市区")
+    # ⚠ 補完を黙って行わない。件数が急に増減したら建物種別の扱いを疑う材料になる
+    print(f"  うちアパート相場で補完: {filled}行")
     return len(rows)
 
 
@@ -168,6 +230,7 @@ def main() -> None:
         ua = _user_agent()
         slugs = fetch_index(ua)
         fetch_cities(slugs, ua)
+        fetch_apartments(slugs, ua)
     build(args.period, dt.date.today().isoformat())
 
 
