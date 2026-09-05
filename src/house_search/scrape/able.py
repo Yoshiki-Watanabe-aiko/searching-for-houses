@@ -97,6 +97,9 @@ class AbleScraper:
     site_code = SITE_CODE
     requires_city = True
     city_value_source = CITY_VALUE_JIS
+    # 設備欄に注記が同居するので unknown_token_text で分離する。
+    # ⚠ 再抽出は raw_features_text しか持たず分離できないので収集を止める（→ 課題#15）
+    mine_unknown_tokens = False
     user_agent = None
     ignore_robots = False
 
@@ -196,7 +199,7 @@ class AbleScraper:
     def parse_detail(self, html_text: str) -> ScrapedDetail:
         """詳細ページから設備原文と補足項目を取り出す。"""
         doc = lxml_html.fromstring(html_text)
-        fields, features = _detail_tables(doc)
+        fields, features, tagged = _detail_tables(doc)
 
         blocks = list(features)
         derived: list[str] = []
@@ -214,11 +217,13 @@ class AbleScraper:
             derived.append("即入居可")
         if derived:
             blocks.append("、".join(derived))
+            tagged.append("、".join(derived))
 
         floors_text = fields.get("floors")
         rent, mgmt_fee = _split_rent_mgmt(fields.get("rent_mgmt"))
         return ScrapedDetail(
             raw_features_text="\n".join(blocks) or None,
+            unknown_token_text="\n".join(tagged) or None,
             built_on=parse_built_on(fields.get("built")),
             floor_num=parse_floor(floors_text),
             total_floors=parse_total_floors(floors_text),
@@ -359,10 +364,22 @@ def _split_rent_mgmt(value: str | None) -> tuple[int | None, int | None]:
     return rent, mgmt
 
 
-def _detail_tables(doc) -> tuple[dict[str, str], list[str]]:
-    """詳細ページの ``th/td`` を構造化項目と設備原文へ振り分ける。"""
+def _detail_tables(doc) -> tuple[dict[str, str], list[str], list[str]]:
+    """詳細ページの ``th/td`` を構造化項目と設備原文へ振り分ける。
+
+    3つ目は未知表記の収集元で、``span.attention`` の注記を除いたタグ列だけ。
+
+    ⚠ 設備欄には「※インターネット接続環境…について利用料金は、共益費に含まれる
+    タイプや個別に契約するタイプなど物件により異なります」という注記が同居しており、
+    そのまま収集すると ``t_unknown_tokens`` が説明文の断片で埋まる
+    （実測807種で全サイト最多 → 課題#15）。
+
+    ⚠ **照合には注記込みの原文を使う。** 部分一致なので注記があっても害はなく、
+    外すと設備数が減る恐れがある（安全側に倒す → 課題#19 と同じ判断）。
+    """
     fields: dict[str, str] = {}
     features: list[str] = []
+    tagged: list[str] = []
     for th in doc.cssselect("th"):
         label = "".join(th.text_content().split())
         sibling = th.getnext()
@@ -373,8 +390,13 @@ def _detail_tables(doc) -> tuple[dict[str, str], list[str]]:
             continue
         if label in _FEATURE_LABELS:
             features.append(value)
+            trimmed = value
+            for note in sibling.cssselect("span.attention"):
+                trimmed = trimmed.replace(" ".join(note.text_content().split()), "")
+            if trimmed := " ".join(trimmed.split()):
+                tagged.append(trimmed)
             continue
         key = _DETAIL_LABELS.get(label)
         if key and key not in fields:
             fields[key] = value
-    return fields, features
+    return fields, features, tagged

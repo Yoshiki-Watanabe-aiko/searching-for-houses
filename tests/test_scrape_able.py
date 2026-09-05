@@ -145,3 +145,30 @@ def test_詳細から階数と金額が取れる(detail) -> None:
 
 def test_詳細から住所が取れる(detail) -> None:
     assert detail.address == "東京都千代田区二番町"
+
+
+def test_未知表記の収集元から注記を外す(scraper: AbleScraper) -> None:
+    """⚠ 設備欄に注記が同居している（→ 課題#15）。
+
+    「※インターネット接続環境…について利用料金は、共益費に含まれるタイプや
+    個別に契約するタイプなど物件により異なります」が ``span.attention`` に入っており、
+    そのまま収集すると ``t_unknown_tokens`` が説明文の断片で埋まる
+    （実測807種で全サイト最多）。
+
+    ⚠ **照合には注記込みの原文を使うので ``raw_features_text`` は変えない。**
+    部分一致なので注記があっても害はなく、外すと設備数が減る恐れがある
+    （安全側に倒す → 課題#19 と同じ判断）。
+    """
+    html_text = (FIXTURES / "detail_sample.html").read_text(encoding="utf-8", errors="replace")
+    detail = scraper.parse_detail(html_text)
+
+    assert detail.raw_features_text is not None
+    assert detail.unknown_token_text is not None
+    # 原文には残る（照合に使う）
+    assert "共益費に含まれる" in detail.raw_features_text
+    # 収集元からは外れる
+    assert "共益費に含まれる" not in detail.unknown_token_text
+    assert "物件お取り扱い不動産会社" not in detail.unknown_token_text
+    # タグ列そのものは残っている
+    assert "クローゼット" in detail.unknown_token_text
+    assert len(detail.unknown_token_text) < len(detail.raw_features_text)
