@@ -180,6 +180,7 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 | `HouseSearch-CheckSold` | **毎日 08:40** | `-Task check-sold` | PT1H |
 | `HouseSearch-Digest` | 毎日 20:00 | `-Task digest` | PT30M |
 | `HouseSearch-Backup` | 毎日 03:30 | `-Task backup` → `backup_db.ps1` | PT30M |
+| `HouseSearch-MarketRates` | **毎月1日 04:30** | `-Task market-rates` → `update_market_rates.ps1` | PT30M |
 
 ⚠ **HOME'S の取得間隔を広げる対策は無効だった**（2026-09-03 実測 → 課題#17・#36）。
 スロットリングで本番でもほとんど取れていなかったため 2.5 → 10秒へ広げたが、
@@ -256,6 +257,14 @@ last_seen_at の古い順だけで選ぶと**順位がまったく考慮され�
 全国取得（→ ADR 0018）の最中でも定期スキャンは走る。NAVITIME と物件サイトは別ホストで
 レート制御が干渉しないため意図どおりだが、⚠ **同じ NAVITIME を叩く `fetch-commutes`
 どうしの並走は禁止**（実効間隔が 15秒 → 7.5秒になり `Crawl-delay: 10` を破る）。
+
+⚠ **家賃相場の更新は毎月1日 04:30**（→ 課題#49）。03:30 の backup が終わったあと、
+05:15 の scan の前に置いてある。⚠ **SUUMO を叩く**ので定期スキャンと並走させない
+（取得は3秒間隔で約5分なのでこの窓に収まる）。⚠ **取得タスク扱い**なので
+`-EnableScraping` の対象に含まれる。
+⚠ **CSV（`data/market_rates/rent_rates.csv`）は Git 管理下の生成物**だが、
+タスクは**コミットしない**（自動コミットは差分をレビューできなくする）。
+更新されたらログに「コミットしてください」と出るので、内容を見てから手で入れる。
 
 登録に `Register-ScheduledTask`（PowerShell の CIM 経由）は使わない。自分自身のタスクを
 登録するだけでも 0x80070005 で拒否されることがあるため、**XMLを UTF-16 で書き出して

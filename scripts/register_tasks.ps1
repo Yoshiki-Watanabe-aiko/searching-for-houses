@@ -32,6 +32,7 @@
 #   HouseSearch-CheckSold  毎日 08:40           成約・掲載終了の確認
 #   HouseSearch-Digest     毎日 20:00           日次ランキングダイジェスト
 #   HouseSearch-Backup     毎日 03:30           pg_dump（課題#8）
+#   HouseSearch-MarketRates 毎月1日 04:30       家賃相場の更新（課題#49）
 #
 # なぜ2時間ごとなのか:
 #   増分スキャンは実測ベースで約72分かかる（一覧1116リクエスト＋詳細320リクエスト・
@@ -197,6 +198,19 @@ $Tasks = @(
         StartAt     = "2026-09-02T03:30:00"
         Repeat      = $null
         TimeLimit   = "PT30M"
+    },
+    @{
+        Name        = "HouseSearch-MarketRates"
+        Description = "物件検索通知システム: 家賃相場の月次更新（SUUMO の相場ページ→CSV→m_market_rates・課題#49）。"
+        TaskArg     = "market-rates"
+        # SUUMO を叩くので取得タスク扱い（-EnableScraping で有効化する）
+        Scraping    = $true
+        # 毎月1日 04:30。03:30 の backup が終わったあと、05:15 の scan の前に置く
+        # （取得は3秒間隔で約5分なので、この窓に収まる）
+        StartAt     = "2026-10-01T04:30:00"
+        Repeat      = $null
+        Monthly     = $true
+        TimeLimit   = "PT30M"
     }
 )
 
@@ -247,8 +261,19 @@ function New-TaskXml {
     # 初回スキャンの完了後に -EnableScraping で有効化する
     $enabled = if ($Task.Scraping -and -not $EnableScraping) { "false" } else { "true" }
 
-    # 在庫棚卸しだけ週次。ScheduleByDay と ScheduleByWeek は排他なので切り替える
-    $schedule = if ($Task.Weekly) {
+    # 在庫棚卸しだけ週次、相場の更新だけ月次。ScheduleByDay / ByWeek / ByMonth は
+    # 排他なので切り替える
+    $schedule = if ($Task.Monthly) {
+        @"
+      <ScheduleByMonth>
+        <DaysOfMonth><Day>1</Day></DaysOfMonth>
+        <Months>
+          <January /><February /><March /><April /><May /><June />
+          <July /><August /><September /><October /><November /><December />
+        </Months>
+      </ScheduleByMonth>
+"@
+    } elseif ($Task.Weekly) {
         @"
       <ScheduleByWeek>
         <DaysOfWeek><Sunday /></DaysOfWeek>
