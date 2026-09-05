@@ -19,6 +19,7 @@ pytestmark = pytest.mark.db
 
 EXPECTED_MASTER_TABLES = {
     "m_address_points",
+    "m_hazard_levels",
     "m_cities",
     "m_city_site_values",
     "m_condition_categories",

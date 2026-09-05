@@ -23,6 +23,13 @@ dev = [
     "pytest>=8.3.4",
     "pytest-cov>=6.0.0",
     "ruff>=0.8.4",
+    # ⚠ 幾何演算は scripts/tools/ の生成スクリプト専用。
+    # 実行時（src/house_search/）から import してはいけない。
+    # scan / rescore がこれらに依存すると、Windows 環境が壊れたとき
+    # ネットワーク不要のはずの再採点まで巻き込まれる。
+    # tests/test_no_geo_runtime_deps.py が仕組みで固定している。
+    "shapely>=2.0",
+    "pyshp>=2.3",
 ]
 
 [build-system]
