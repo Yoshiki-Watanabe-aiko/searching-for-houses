@@ -733,7 +733,64 @@ _PROPERTY_COLUMNS = """
             OR (p.group_id IS NOT NULL AND member.group_id = p.group_id)
         )
           AND sc.status = 'ok'
-    ) AS commute_minutes
+    ) AS commute_minutes,
+    hz.flood_rank_avg, hz.flood_rank_max, hz.flood_area_ratio,
+    hz.landslide_area_ratio, hz.landslide_special_ratio
+"""
+
+
+# ハザード評価は住所（address_normalized）から m_hazard_levels を引く（→ 課題#46）。
+# ⚠ **2段の LATERAL にしてある。** 値ごとにスカラーサブクエリを5本並べると、
+# 同じ「どのキーで引くか」の解決を5回繰り返すことになる。
+#
+# 1段目 hzk: グループ内で**最も細かい住所**を持つ掲載のキーを1つ選ぶ。
+#   設備の和集合・通勤時間の最短と同じく、名寄せしたグループ全体から
+#   情報が最大になるものを採る（サイトによって住所の粒度が違うため）。
+#   ⚠ 丁目で引けなければ m_address_points.town_key 経由で町の評価へ落とす。
+#   SUUMO・ハウスコムは住所が町名までしか無いので、これが無いと
+#   そのサイトの掲載が丸ごと未解決になる。
+#   ⚠ **町へ落とすのに SQL の文字列操作で丁目を削らない。** 住所マスタが持つ
+#   物理列 town_key を引く（「N丁目」を正規表現で剥がす推測は、丁目の無い町で
+#   番地を削るなどして黙って別の町を指す → ADR 0020 と同じ失敗）。
+#   ⚠ ORDER BY で chome を優先し、同着は member.id で決める（順位の決定性）。
+#
+# 2段目 hz: 決まった (key, level) の9行（3種別×3方式）を横に畳む。
+#   ⚠ 集約なので該当行が無くても1行（全 NULL）を返す。NULL は「未解決」の意味で、
+#   「区域外」は value=0 の明示行として入っている（両者を混ぜない）。
+_HAZARD_LATERAL = """
+    LEFT JOIN LATERAL (
+        SELECT h.normalized_key AS key, h.level AS level
+        FROM t_listings member
+        LEFT JOIN m_address_points ap ON ap.normalized_key = member.address_normalized
+        JOIN m_hazard_levels h
+          ON h.normalized_key IN (member.address_normalized, ap.town_key)
+        WHERE (
+            (p.group_id IS NULL AND member.id = p.id)
+            OR (p.group_id IS NOT NULL AND member.group_id = p.group_id)
+        )
+        ORDER BY (h.level = 'chome') DESC, member.id
+        LIMIT 1
+    ) hzk ON TRUE
+    LEFT JOIN LATERAL (
+        SELECT
+            max(h.value) FILTER (
+                WHERE h.hazard_type = 'flood' AND h.aggregation = 'rank_avg'
+            ) AS flood_rank_avg,
+            max(h.value) FILTER (
+                WHERE h.hazard_type = 'flood' AND h.aggregation = 'rank_max'
+            ) AS flood_rank_max,
+            max(h.value) FILTER (
+                WHERE h.hazard_type = 'flood' AND h.aggregation = 'area_ratio'
+            ) AS flood_area_ratio,
+            max(h.value) FILTER (
+                WHERE h.hazard_type = 'landslide' AND h.aggregation = 'area_ratio'
+            ) AS landslide_area_ratio,
+            max(h.value) FILTER (
+                WHERE h.hazard_type = 'landslide_special' AND h.aggregation = 'area_ratio'
+            ) AS landslide_special_ratio
+        FROM m_hazard_levels h
+        WHERE h.normalized_key = hzk.key AND h.level = hzk.level
+    ) hz ON TRUE
 """
 
 
@@ -755,6 +812,15 @@ _GROUP_FEATURES = text(
 )
 
 
+def _opt_float(value: Any) -> float | None:
+    """NUMERIC 列（Decimal）を float へ。⚠ None はそのまま None を返す。
+
+    ハザード評価では **0.0（区域外だと確認した）と None（未解決）の区別**が
+    そのまま採点の意味になるので、``float(value or 0)`` のような書き方をしない。
+    """
+    return None if value is None else float(value)
+
+
 def _to_view(row: Any, feature_codes: frozenset[str]) -> ListingView:
     return ListingView(
         listing_id=row.id,
@@ -765,17 +831,20 @@ def _to_view(row: Any, feature_codes: frozenset[str]) -> ListingView:
         mgmt_fee_monthly=row.mgmt_fee_monthly,
         rent_total=row.rent_total,
         repair_reserve_monthly=row.repair_reserve_monthly,
-        area_sqm=float(row.area_sqm) if row.area_sqm is not None else None,
-        land_area_sqm=float(row.land_area_sqm) if row.land_area_sqm is not None else None,
-        building_area_sqm=(
-            float(row.building_area_sqm) if row.building_area_sqm is not None else None
-        ),
+        area_sqm=_opt_float(row.area_sqm),
+        land_area_sqm=_opt_float(row.land_area_sqm),
+        building_area_sqm=_opt_float(row.building_area_sqm),
         layout=row.layout,
         floor_num=row.floor_num,
         total_floors=row.total_floors,
         age_years=row.age_years,
         walk_minutes=row.walk_minutes,
         commute_minutes=row.commute_minutes,
+        flood_rank_avg=_opt_float(row.flood_rank_avg),
+        flood_rank_max=_opt_float(row.flood_rank_max),
+        flood_area_ratio=_opt_float(row.flood_area_ratio),
+        landslide_area_ratio=_opt_float(row.landslide_area_ratio),
+        landslide_special_ratio=_opt_float(row.landslide_special_ratio),
         prefecture=row.prefecture,
         address=row.address,
         detail_fetched=row.detail_fetched,
@@ -842,6 +911,7 @@ def load_listing_views(
             f"SELECT {_PROPERTY_COLUMNS} FROM t_listings p "
             "JOIN m_sites s ON s.id = p.site_id "
             "JOIN m_property_types pt ON pt.id = p.property_type_id "
+            f"{_HAZARD_LATERAL} "
             f"WHERE {' AND '.join(where)}"
         ),
         params,

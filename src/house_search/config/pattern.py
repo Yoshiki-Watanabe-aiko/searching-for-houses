@@ -140,6 +140,26 @@ class MustBase(Strict):
         ),
     )
 
+    flood_rank_max: float | None = Field(
+        default=None,
+        ge=0,
+        le=6,
+        description=(
+            "洪水浸水深ランクの上限（丁目内の最大・0〜6）。"
+            "1=0.5m未満 2=0.5〜3m 3=3〜5m 4=5〜10m 5=10〜20m 6=20m以上。"
+            "住所の照合に依存するので unknown になりうる"
+        ),
+    )
+    landslide_special_ratio_max: float | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description=(
+            "土砂災害特別警戒区域（レッドゾーン）が丁目に占める面積比の上限（0〜1）。"
+            "住所の照合に依存するので unknown になりうる"
+        ),
+    )
+
     layouts: list[str] = Field(default_factory=list, description="許容する間取り")
     walk_minutes_max: int | None = Field(default=None, description="駅徒歩の上限（分）")
     features: list[str] = Field(

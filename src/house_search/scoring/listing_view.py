@@ -59,6 +59,27 @@ class ListingView:
     からの導出値で、``t_listings`` の列ではない。駅を同定できないか目的地が
     未設定なら None（= MUST は unknown）。"""
 
+    # --- ハザード評価（→ 課題#46） -------------------------------------
+    # ⚠⚠ **None と 0.0 の意味がまったく違う。**
+    #   None = 住所を照合できなかった（情報が無い）→ WANT は欠損で分母から外し、
+    #          MUST は unknown になる
+    #   0.0  = 照合できたうえで区域外だと確認した（安全の証拠）→ WANT は満点
+    # 混ぜると「危険なのに情報が無いから減点されない」掲載が「安全」と同じ扱いになり、
+    # 例外にならないまま順位が狂う。
+    # ⚠ t_listings の列ではなく、address_normalized から m_hazard_levels を
+    # 引いた導出値（丁目で引けなければ町の値）。
+    flood_rank_avg: float | None = None
+    """洪水の浸水深ランク（0〜6）を丁目の全面積で加重平均した値。"""
+    flood_rank_max: float | None = None
+    """丁目内の最大浸水深ランク（0〜6）。MUST の足切りに使う。
+    ⚠ 外れ値に引っ張られるので WANT の主力にはしない（→ 課題#46 の実測）。"""
+    flood_area_ratio: float | None = None
+    """丁目の面積のうち浸水域が占める割合（0〜1）。"""
+    landslide_area_ratio: float | None = None
+    """丁目の面積のうち土砂災害警戒区域（警戒＋特別警戒）が占める割合（0〜1）。"""
+    landslide_special_ratio: float | None = None
+    """同 特別警戒区域（レッドゾーン）だけの割合（0〜1）。MUST の足切りに使う。"""
+
     prefecture: str | None = None
     address: str | None = None
     detail_fetched: bool = False

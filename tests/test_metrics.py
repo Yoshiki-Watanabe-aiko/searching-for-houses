@@ -53,6 +53,9 @@ def test_metrics_forの並びは決定的() -> None:
         "age_years",
         "walk_minutes",
         "commute_minutes",
+        "flood_rank_avg",
+        "flood_area_ratio",
+        "landslide_area_ratio",
     ]
 
 
@@ -87,11 +90,15 @@ def test_一覧だけで判定できないMUST項目が明示されている() -
     """2段判定の要。ここが誤っていると詳細取得を不当にスキップする。"""
     list_only = {i.name for i in m.MUST_ITEMS if not i.available_on_list}
     # commute_minutes_max は駅の同定と所要時間キャッシュの解決が要るため一覧では判定できない。
+    # ハザードの2項目は住所の照合（address_normalized → m_hazard_levels）に依存し、
+    # 住所は詳細ページで初めて埋まるサイトがあるため同じく一覧では判定できない。
     assert list_only == {
         "monthly_cost_max",
         "floor_min",
         "features",
         "commute_minutes_max",
+        "flood_rank_max",
+        "landslide_special_ratio_max",
     }
 
 

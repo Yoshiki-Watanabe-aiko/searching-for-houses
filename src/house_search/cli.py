@@ -192,6 +192,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="通勤時間の分布を実測する（best/worst と MUST を決める材料・ネットワーク不要）",
     )
     p_cstats.add_argument("--pattern", help="対象を1つの検索パターンに絞る")
+
+    p_hstats = sub.add_parser(
+        "hazard-stats",
+        help="ハザード評価の解決率と分布を実測する（weight と best/worst を決める材料）",
+    )
+    p_hstats.add_argument("--pattern", help="対象を1つの検索パターンに絞る")
     return parser
 
 
@@ -1235,10 +1241,8 @@ def _navitime_destination_query(station_name: str, prefecture: str | None) -> st
     return station_query_name(station_name, prefecture)
 
 
-def _percentile(values: list[int], ratio: float) -> int:
+def _percentile[T: (int, float)](values: list[T], ratio: float) -> T:
     """整列済みの列から百分位を取る（線形補間はしない）。"""
-    if not values:
-        return 0
     index = min(int(len(values) * ratio), len(values) - 1)
     return values[index]
 
@@ -1295,6 +1299,117 @@ def _cmd_commute_stats(args: argparse.Namespace) -> int:
         for worst in (45, 60, 75, 90, 120):
             zero = sum(1 for m in known if m >= worst)
             print(f"    worst={worst:>3}分: {zero / len(known) * 100:>5.1f}%")
+        print()
+    return 0
+
+
+# WANT の numeric に載せる候補と、MUST の足切りに使う値。
+# ⚠ 主力は flood_rank_avg。rank_max は外れ値に引っ張られる（水路際のランク6が
+# ごく一部でも丁目全体が最悪扱いになる → 課題#46 の実測）ので MUST 専用にする。
+_HAZARD_WANT_METRICS = ("flood_rank_avg", "flood_area_ratio", "landslide_area_ratio")
+_HAZARD_WORST_CANDIDATES: dict[str, tuple[float, ...]] = {
+    "flood_rank_avg": (1.0, 2.0, 3.0, 4.0),
+    "flood_area_ratio": (0.25, 0.5, 0.75, 1.0),
+    "landslide_area_ratio": (0.05, 0.1, 0.25, 0.5),
+}
+_HAZARD_MUST_CANDIDATES: tuple[tuple[str, str, tuple[float, ...]], ...] = (
+    ("flood_rank_max", "flood_rank_max", (1.0, 2.0, 3.0, 4.0, 5.0)),
+    ("landslide_special_ratio_max", "landslide_special_ratio", (0.0, 0.05, 0.1, 0.25)),
+)
+
+
+def _cmd_hazard_stats(args: argparse.Namespace) -> int:
+    from house_search.commute.resolve import resolve_destination_group
+    from house_search.config.metrics import METRICS_BY_NAME
+    from house_search.db.session import get_engine
+    from house_search.pipeline import persist
+    from house_search.scoring.must import evaluate_must
+
+    engine = get_engine()
+    for pattern in _load_patterns(args.pattern):
+        print(f"=== {pattern.name} ===")
+        with engine.connect() as conn:
+            destination = (
+                resolve_destination_group(conn, pattern.commute) if pattern.commute else None
+            )
+            views = persist.load_listing_views(
+                conn,
+                property_type_code=pattern.property_type,
+                site_codes=list(pattern.sites),
+                city_names=list(pattern.search.cities) or None,
+                commute_destination_g_cd=destination,
+            )
+        if not views:
+            print("  対象の掲載がありません")
+            continue
+
+        # ⚠ **解決率は掲載全体を分母に測る**（→ 課題#41）。「ハザードが取れた掲載」を
+        # 分母にすると、住所が市区までしか無いサイトが分母からも消えて健全に見える。
+        resolved = [v for v in views.values() if v.flood_rank_avg is not None]
+        share = len(resolved) / len(views) * 100
+        print(f"  掲載 {len(views)}件 / ハザード解決 {len(resolved)}件（{share:.1f}%）")
+
+        per_site: dict[str, list[int]] = {}
+        for view in views.values():
+            hit, total = per_site.setdefault(view.site_code or "?", [0, 0])
+            per_site[view.site_code or "?"] = [
+                hit + (1 if view.flood_rank_avg is not None else 0),
+                total + 1,
+            ]
+        unresolved_sites = sorted(
+            ((code, hit, total) for code, (hit, total) in per_site.items() if hit < total),
+            key=lambda row: (row[1] / row[2], -row[2]),
+        )
+        if unresolved_sites:
+            print("  未解決を含むサイト（解決 / 掲載）:")
+            for code, hit, total in unresolved_sites:
+                print(f"    {code:<14} {hit:>5} / {total:<5}（{hit / total * 100:>5.1f}%）")
+
+        # best/worst は MUST を通る掲載の分布に合わせる。落ちる掲載を混ぜると
+        # 実際の候補群からずれる（→ 課題#31・#34 と同じ失敗になる）。
+        passing = [
+            view
+            for view in views.values()
+            if evaluate_must(view, pattern.must).passes(pattern.must.unknown_policy)
+        ]
+        print(f"  母集団: MUST通過 {len(passing)}件")
+
+        for metric in _HAZARD_WANT_METRICS:
+            known = sorted(
+                value for v in passing if (value := v.metric_value(metric)) is not None
+            )
+            print(f"  [{metric}] {METRICS_BY_NAME[metric].label}")
+            if not known:
+                print("    値のある掲載がありません")
+                continue
+            zero = sum(1 for value in known if value == 0.0)
+            print(
+                f"    値あり {len(known)}件 / 区域外(0.0) {zero}件"
+                f"（{zero / len(known) * 100:.1f}%）"
+            )
+            marks = [("25%", 0.25), ("中央", 0.5), ("75%", 0.75), ("90%", 0.9)]
+            cells = "  ".join(f"{label} {_percentile(known, r):.3g}" for label, r in marks)
+            print(f"    分布: {cells}  最大 {known[-1]:.3g}")
+            # ⚠ 0点が母集団の大半に張り付くと weight がまるごと死ぬ（→ 課題#31）。
+            print("    worst 候補ごとの0点張り付き率（best=0 固定）:")
+            for worst in _HAZARD_WORST_CANDIDATES[metric]:
+                stuck = sum(1 for value in known if value >= worst)
+                print(f"      worst={worst:<5g}: {stuck / len(known) * 100:>5.1f}%")
+
+        print("  MUST 上限候補ごとの通過件数（値のある掲載が分母）:")
+        for must_name, field, limits in _HAZARD_MUST_CANDIDATES:
+            known = [
+                value for v in passing if (value := getattr(v, field, None)) is not None
+            ]
+            if not known:
+                print(f"    {must_name}: 値のある掲載がありません")
+                continue
+            for limit in limits:
+                passed = sum(1 for value in known if value <= limit)
+                print(
+                    f"    {must_name} <= {limit:<5g}: {passed:>5}件"
+                    f"（{passed / len(known) * 100:>5.1f}%・分母 {len(known)}）"
+                )
         print()
     return 0
 
@@ -1402,6 +1517,7 @@ _COMMANDS = {
     "fetch-commutes": _cmd_fetch_commutes,
     "re-segment": _cmd_re_segment,
     "commute-stats": _cmd_commute_stats,
+    "hazard-stats": _cmd_hazard_stats,
 }
 
 
