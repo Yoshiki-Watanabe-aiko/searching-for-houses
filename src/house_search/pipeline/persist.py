@@ -735,7 +735,22 @@ _PROPERTY_COLUMNS = """
           AND sc.status = 'ok'
     ) AS commute_minutes,
     hz.flood_rank_avg, hz.flood_rank_max, hz.flood_area_ratio,
-    hz.landslide_area_ratio, hz.landslide_special_ratio
+    hz.landslide_area_ratio, hz.landslide_special_ratio,
+    (
+        -- 相場との比較（→ 課題#49）。同じ市区・同じ間取りの相場と比べる。
+        -- ⚠ **最新の period を1つだけ採る。** m_market_rates は履歴を残す設計
+        -- （period が違えば別の行）なので、絞らないと古い相場と混ざる。
+        -- ⚠ 相場が無いセルは NULL＝未解決。metric は欠損として再正規化される
+        -- （0 にすると「相場ちょうど」と区別がつかなくなる）。
+        SELECT p.rent_total::numeric / mr.rate_value
+        FROM m_market_rates mr
+        WHERE mr.family = pt.family
+          AND mr.level = 'city'
+          AND mr.city_id = p.city_id
+          AND mr.segment = p.layout
+        ORDER BY mr.period DESC
+        LIMIT 1
+    ) AS market_rate_ratio
 """
 
 
@@ -840,6 +855,7 @@ def _to_view(row: Any, feature_codes: frozenset[str]) -> ListingView:
         age_years=row.age_years,
         walk_minutes=row.walk_minutes,
         commute_minutes=row.commute_minutes,
+        market_rate_ratio=_opt_float(row.market_rate_ratio),
         flood_rank_avg=_opt_float(row.flood_rank_avg),
         flood_rank_max=_opt_float(row.flood_rank_max),
         flood_area_ratio=_opt_float(row.flood_area_ratio),
