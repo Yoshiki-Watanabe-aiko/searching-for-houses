@@ -22,6 +22,7 @@ from house_search.scrape.base import (
     parse_yen,
     prefecture_targets,
 )
+from house_search.scrape.fetch import RobotsRules
 from house_search.scrape.suumo import PAGE_SIZE, SuumoScraper
 
 FIXTURES = Path(__file__).parent / "fixtures" / "suumo"
@@ -114,6 +115,26 @@ def test_一覧URLは都道府県ごとに1本作られる(scraper: SuumoScraper
     assert len(urls) == 2
     assert "ta=13" in urls[0] and "ar=030" in urls[0]
     assert "ta=12" in urls[1]
+
+
+def test_一覧URLがrobotsで許可される(scraper: SuumoScraper) -> None:
+    """⚠⚠ **組み立てたURLを実 robots.txt に当てて確かめる**（→ 課題#52）。
+
+    SUUMO の robots.txt は ``Disallow: /*?*sort=`` を持つ。標準の
+    ``RobotFileParser`` がワイルドカードを展開しないため許可と誤判定され、
+    **新着順（sort=2）で禁止パスを2時間ごとに叩いていた**。
+    ⚠ **取得は成功するので例外にもログにも出ない。** 並び順を足したくなったら
+    このテストが落ちる。
+    """
+    robots = (Path(__file__).parent / "fixtures" / "robots" / "suumo.txt").read_text(
+        encoding="utf-8"
+    )
+    rules = RobotsRules.parse(robots)
+    urls = scraper.list_urls(p := _pattern(price_max_hint=90000), _areas(p))
+    for url in urls:
+        assert "sort=" not in url
+        assert rules.can_fetch("house-search/2.0", url) is True
+        assert rules.can_fetch("house-search/2.0", scraper.page_url(url, 2)) is True
 
 
 def test_一覧URLに設備条件のパラメータを含めない(scraper: SuumoScraper) -> None:
