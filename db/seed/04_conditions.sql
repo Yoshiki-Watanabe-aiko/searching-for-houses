@@ -1,7 +1,8 @@
 -- ============================================================
 -- m_conditions: 条件マスタ
 --
--- v1 の128条件をそのまま引き継ぎ、売買固有の20条件（CERT / LAND ほか）を追加した148条件。
+-- v1 の128条件をそのまま引き継ぎ、売買固有の20条件（CERT / LAND ほか）を追加した148条件に、
+-- 課題#15 で 2面採光・クローゼットを足した150条件。
 -- is_extractable は「詳細ページ本文からのローカル抽出対象か」。
 -- data_type='boolean' を原則 true とし、検索軸そのものである
 -- AREA_BUS_OK / PRICE_INCL_MGMT / PRICE_INCL_PARKING だけ false にしている。
@@ -54,6 +55,7 @@ FROM (VALUES
     ('LOCATION', 'LOC_SOUTH_FACING', '南向き', NULL, 'boolean', TRUE, 5),
     ('LOCATION', 'LOC_CORNER_LOT', '角地（戸建て）', NULL, 'boolean', TRUE, 6),
     ('LOCATION', 'LOC_SOUTH_ROAD', '南道路（戸建て）', NULL, 'boolean', TRUE, 7),
+    ('LOCATION', 'LOC_TWO_SIDE_LIGHT', '2面採光', NULL, 'boolean', TRUE, 8),
     ('INTERIOR', 'INT_LAUNDRY', '室内洗濯機置場', NULL, 'boolean', TRUE, 1),
     ('INTERIOR', 'INT_WASHROOM', '洗面所独立', NULL, 'boolean', TRUE, 2),
     ('INTERIOR', 'INT_FLOORING', 'フローリング', NULL, 'boolean', TRUE, 3),
@@ -108,6 +110,7 @@ FROM (VALUES
     ('STORAGE', 'STORAGE_SHOE', 'シューズボックス', NULL, 'boolean', TRUE, 2),
     ('STORAGE', 'STORAGE_UNDER_FLOOR', '床下収納', NULL, 'boolean', TRUE, 3),
     ('STORAGE', 'STORAGE_TRUNK', 'トランクルーム（専用）', NULL, 'boolean', TRUE, 4),
+    ('STORAGE', 'STORAGE_CLOSET', 'クローゼット', NULL, 'boolean', TRUE, 5),
     ('MOVE_IN', 'MOVEIN_IMMEDIATE', '即入居可', NULL, 'boolean', TRUE, 1),
     ('MOVE_IN', 'MOVEIN_FEMALE_ONLY', '女性限定', NULL, 'boolean', TRUE, 2),
     ('MOVE_IN', 'MOVEIN_PET', 'ペット相談可', NULL, 'boolean', TRUE, 3),

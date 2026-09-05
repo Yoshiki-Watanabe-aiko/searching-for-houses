@@ -888,8 +888,8 @@ DDLは Alembic（`migrations/`）、マスタデータは `db/seed/*.sql`（冪�
 | `m_property_types` | 物件種別（5種別・ファミリ付き） |
 | `m_sites` | サイト（18行。取得方式・レート制御・代表選定優先順） |
 | `m_condition_categories` | 条件カテゴリ（19。売買用に CERT・LAND を追加） |
-| `m_conditions` | 条件（148。`is_extractable` でローカル抽出対象かを持つ） |
-| `m_condition_property_types` | 条件×物件種別（487行） |
+| `m_conditions` | 条件（150。`is_extractable` でローカル抽出対象かを持つ） |
+| `m_condition_property_types` | 条件×物件種別（497行） |
 | `m_condition_synonyms` | **設備抽出辞書**（条件コード → 表記パターン） |
 | `m_cities` | 市区町村（**1,918行・47都道府県**。総務省の全国地方公共団体コードが正典 → ADR 0014。`canonical_name` がYAML指定値の正典） |
 | `m_site_search_params` | **サイト側の絞り込みパラメータ定義**（MUST限定・サイト×物件種別×軸 → ADR 0015） |

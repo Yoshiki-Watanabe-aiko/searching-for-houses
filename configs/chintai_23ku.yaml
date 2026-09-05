@@ -148,6 +148,8 @@ want:
     - { code: EQUIP_CITY_GAS,       weight: 4 }    # 都市ガス（プロパンとの月額差）
     - { code: COMM_FIBER,           weight: 3 }    # 光ファイバー
     - { code: STORAGE_SHOE,         weight: 3 }    # シューズボックス
+    - { code: STORAGE_CLOSET,       weight: 3 }    # クローゼット
+    - { code: LOC_TWO_SIDE_LIGHT,   weight: 3 }    # 2面採光
     - { code: EQUIP_BICYCLE,        weight: 3 }    # 駐輪場あり
     - { code: PRICE_NO_GUARANTOR,   weight: 3 }    # 保証人不要
     # 誤差程度
