@@ -945,13 +945,37 @@ def load_listing_views(
 
 
 def detail_queue(
-    conn: Connection, *, site_id: int, limit: int, listing_ids: list[int] | None = None
+    conn: Connection,
+    *,
+    site_id: int,
+    limit: int,
+    oldest_limit: int = 0,
+    listing_ids: list[int] | None = None,
 ) -> list[tuple[int, str]]:
     """詳細ページ未取得の物件を取得キューとして引く。
 
-    部分インデックス ``ix_t_listings_detail_pending`` がそのまま効く。
+    2つの母集団の**和集合**を ``limit`` 件まで返す（→ 課題#54）。
+
+    1. ``first_seen_at`` が**古い順**に ``oldest_limit`` 件（滞留を必ず削る）
+    2. 残りの枠を**新しい順**で埋める（新着の詳細を遅らせない）
+
+    ⚠ **1が無いと古い掲載に枠が永久に回らない。** 新規流入が上限（既定40件）に
+    近いと、新しい順だけでは古い掲載まで届かない。実測（2026-09-06）で SUUMO の
+    詳細未取得 1,342件が 09-03・09-04 のまま滞留し、**設備0件**（取得済みは
+    平均18.9件）のまま採点されていた。設備の weight は263点中118点なので、
+    これらは構造的に45%ぶん沈む。
+    ⚠ **例外にならず件数も減らない**（順位が付いてしまうので気づけない）。
+    近郊60分圏帯では詳細未取得の掲載が**4位**＝ダイジェストに載っていた。
+
+    ⚠ ``oldest_limit=0`` で1を無効にできる（従来の挙動へ戻す逃げ道）。
+
+    部分インデックス ``ix_t_listings_detail_pending`` は ``pending`` にそのまま効く。
     """
-    params: dict[str, Any] = {"site_id": site_id, "limit": limit}
+    params: dict[str, Any] = {
+        "site_id": site_id,
+        "limit": limit,
+        "oldest_limit": oldest_limit,
+    }
     extra = ""
     if listing_ids is not None:
         if not listing_ids:
@@ -960,9 +984,19 @@ def detail_queue(
         params["listing_ids"] = listing_ids
     rows = conn.execute(
         text(
-            "SELECT id, url FROM t_listings "
-            f"WHERE site_id = :site_id AND detail_fetched_at IS NULL AND status = 'active' {extra} "
-            "ORDER BY first_seen_at DESC LIMIT :limit"
+            "WITH pending AS ("
+            "  SELECT id, url, first_seen_at FROM t_listings "
+            "   WHERE site_id = :site_id AND detail_fetched_at IS NULL"
+            f"     AND status = 'active' {extra}"
+            "), oldest AS ("
+            # LIMIT 0 なら空集合になるので、無効化のための WHERE は要らない
+            "  SELECT id FROM pending ORDER BY first_seen_at ASC, id ASC LIMIT :oldest_limit"
+            ") "
+            "SELECT p.id, p.url FROM pending p "
+            # 古い枠を先頭へ寄せてから limit で切る。順に並べてから切らないと
+            # 「和集合を作ったのに古い側が落ちる」ことになる
+            " ORDER BY (p.id IN (SELECT id FROM oldest)) DESC, p.first_seen_at DESC, p.id DESC"
+            " LIMIT :limit"
         ),
         params,
     ).all()
