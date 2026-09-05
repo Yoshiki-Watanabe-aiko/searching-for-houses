@@ -123,6 +123,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser(
+        "sync-market-rates",
+        help=(
+            "data/market_rates/rent_rates.csv を m_market_rates へ同期する"
+            "（ネットワーク不要）"
+        ),
+    )
+
+    sub.add_parser(
         "sync-stations",
         help="data/train_master/*.csv を m_stations へ同期する（ネットワーク不要）",
     )
@@ -678,6 +686,35 @@ def _cmd_sync_hazards(args: argparse.Namespace) -> int:
         print(
             f"  ⚠ 件数が入れ替え前の {applied / deleted:.0%} まで減っています。"
             "生成スクリプトが全データセットを読んだか確認してください"
+        )
+    print()
+    print("採点へ反映するには `house-search rescore` を実行してください。")
+    return 0
+
+
+def _cmd_sync_market_rates(args: argparse.Namespace) -> int:
+    from house_search.config.settings import load_settings
+    from house_search.db.session import get_engine
+    from house_search.market.rates import load_rate_rows, sync_market_rates
+
+    settings = load_settings()
+    path = settings.data_dir / "market_rates" / "rent_rates.csv"
+    rows = load_rate_rows(path)
+    engine = get_engine()
+    with engine.begin() as conn:
+        result = sync_market_rates(conn, rows)
+    cities = len({r.city_jis for r in rows})
+    periods = sorted({r.period for r in rows})
+    print(
+        f"同期しました: 新規 {result.inserted:,}件 / 更新 {result.updated:,}件"
+        f"（{cities}市区・期間 {'/'.join(periods)}）"
+    )
+    # ⚠ 解決できない市区を黙って捨てない。相場が歯抜けのままだと、
+    #    その市区の掲載だけ採点軸が1本減った状態で順位が出る（例外にならない）
+    if result.unresolved_cities:
+        print(
+            f"  ⚠ m_cities に無い市区 {len(result.unresolved_cities)}件: "
+            f"{', '.join(result.unresolved_cities[:10])}"
         )
     print()
     print("採点へ反映するには `house-search rescore` を実行してください。")
@@ -1511,6 +1548,7 @@ _COMMANDS = {
     "sync-site-params": _cmd_sync_site_params,
     "sync-addresses": _cmd_sync_addresses,
     "sync-hazards": _cmd_sync_hazards,
+    "sync-market-rates": _cmd_sync_market_rates,
     "sync-stations": _cmd_sync_stations,
     "resolve-stations": _cmd_resolve_stations,
     "resolve-commutes": _cmd_resolve_commutes,
