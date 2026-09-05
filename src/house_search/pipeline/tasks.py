@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.engine import Connection
 
 from house_search import dedup
 from house_search.commute.resolve import resolve_destination_group
@@ -64,6 +65,8 @@ class CheckSoldResult:
     checked: int = 0
     sold: int = 0
     notified: int = 0
+    #: 確認した掲載のうち「上位N位だから選ばれた」件数（→ 課題#26）
+    from_top_rank: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -284,33 +287,95 @@ def report_unknown(runtime: Runtime, *, limit: int = 50) -> list[tuple[str, str,
     return [(row.token, row.site_code, row.occurrence_count, row.sample_url) for row in rows]
 
 
-def check_sold(runtime: Runtime, pattern, *, limit: int = 100) -> CheckSoldResult:
-    """掲載中の物件が成約・掲載終了になっていないかを確認する。"""
-    result = CheckSoldResult()
-    with runtime.engine.connect() as conn:
-        rows = conn.execute(
-            text(
-                "SELECT p.id, p.url, s.code AS site_code FROM t_listings p "
-                "JOIN m_sites s ON s.id = p.site_id "
-                "JOIN m_property_types pt ON pt.id = p.property_type_id "
-                "WHERE p.status = 'active' AND pt.code = :ptype AND s.code = ANY(:sites) "
-                # そのパターンで採点されている掲載だけを追う。エリア帯を絞ると
-                # 帯外の掲載は last_seen_at が更新されなくなり「最も古い」に
-                # なるため、これが無いと確認枠が帯外で埋まってしまう
-                "  AND EXISTS ("
-                "    SELECT 1 FROM t_listing_scores sc"
-                "    WHERE sc.listing_id = p.id AND sc.pattern_name = :pattern_name"
-                "      AND sc.must_result <> 'fail'"
-                "  ) "
-                "ORDER BY p.last_seen_at ASC LIMIT :limit"
-            ),
+_CHECK_TARGETS_SQL = text(
+    """
+    WITH candidates AS (
+        SELECT p.id, p.url, s.code AS site_code, p.last_seen_at, sc.rank_in_pattern
+          FROM t_listings p
+          JOIN m_sites s ON s.id = p.site_id
+          JOIN m_property_types pt ON pt.id = p.property_type_id
+          -- そのパターンで採点されている掲載だけを追う。エリア帯を絞ると
+          -- 帯外の掲載は last_seen_at が更新されなくなり「最も古い」に
+          -- なるため、これが無いと確認枠が帯外で埋まってしまう
+          JOIN t_listing_scores sc
+            ON sc.listing_id = p.id
+           AND sc.pattern_name = :pattern_name
+           AND sc.must_result <> 'fail'
+         WHERE p.status = 'active' AND pt.code = :ptype AND s.code = ANY(:sites)
+    ),
+    top_ranked AS (
+        SELECT id, url, site_code, last_seen_at, rank_in_pattern
+          FROM candidates
+         WHERE :top_rank_limit > 0
+           AND rank_in_pattern IS NOT NULL
+           AND rank_in_pattern <= :top_rank_limit
+    ),
+    stale AS (
+        SELECT id, url, site_code, last_seen_at, rank_in_pattern
+          FROM candidates
+         ORDER BY last_seen_at ASC
+         LIMIT :limit
+    )
+    -- ⚠ UNION の ORDER BY には式を書けない（出力列名か番号のみ）ので
+    -- 外側の SELECT で包む
+    SELECT * FROM (
+        SELECT * FROM top_ranked
+        UNION
+        SELECT * FROM stale
+    ) AS merged
+    -- 順位のある掲載を先に確認する。途中で打ち切られても
+    -- ダイジェストに出る範囲が守られるようにするため
+    ORDER BY (rank_in_pattern IS NULL), rank_in_pattern, last_seen_at
+    """
+)
+
+
+def select_check_targets(
+    conn: Connection, pattern, *, limit: int, top_rank_limit: int
+) -> list[Any]:
+    """成約確認の対象を選ぶ。
+
+    2つの母集団の**和集合**を返す。
+
+    1. **上位 ``top_rank_limit`` 位の掲載**（毎回確認する）
+    2. ``last_seen_at`` が古い順に ``limit`` 件（一覧から消えた掲載が自然に集まる）
+
+    ⚠ **1が無いと、ランキング最上位に成約済みが居座る**（→ 課題#26）。
+    2だけでは順位がまったく考慮されず、実測で東京23区帯の1位・2位が
+    どちらも掲載終了（HTTP 404）のままダイジェストの先頭を占めていた。
+    ⚠ **「一巡に何日かかるか」という指標ではこの実害が見えない。**
+    平均滞留が3日でも、滞留した掲載がたまたま上位だと影響は桁違いに大きい。
+
+    ⚠ ``top_rank_limit=0`` で1を無効にできる（従来の挙動へ戻す逃げ道）。
+    """
+    return list(
+        conn.execute(
+            _CHECK_TARGETS_SQL,
             {
                 "ptype": pattern.property_type,
                 "sites": list(pattern.sites),
                 "pattern_name": pattern.name,
                 "limit": limit,
+                "top_rank_limit": top_rank_limit,
             },
         ).all()
+    )
+
+
+def check_sold(
+    runtime: Runtime, pattern, *, limit: int = 100, top_rank_limit: int = 50
+) -> CheckSoldResult:
+    """掲載中の物件が成約・掲載終了になっていないかを確認する。"""
+    result = CheckSoldResult()
+    with runtime.engine.connect() as conn:
+        rows = select_check_targets(
+            conn, pattern, limit=limit, top_rank_limit=top_rank_limit
+        )
+    result.from_top_rank = sum(
+        1
+        for row in rows
+        if row.rank_in_pattern is not None and row.rank_in_pattern <= top_rank_limit
+    )
 
     by_site: dict[str, list[tuple[int, str]]] = {}
     for row in rows:
