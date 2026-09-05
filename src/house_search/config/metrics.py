@@ -186,6 +186,19 @@ METRICS: tuple[MetricSpec, ...] = (
         # 洪水（該当72.9%）とは分布が正反対なので、同じ best/worst を流用しない。
         source_columns=("landslide_area_ratio",),
     ),
+    # --- 相場との比較（→ 課題#49） ---------------------------------------
+    # ⚠ t_listings の物理列ではない。city_id × layout で m_market_rates を
+    # 引き、`rent_total ÷ 相場` を出す（同じ市区・同じ間取りの相場と比べる）。
+    MetricSpec(
+        name="market_rate_ratio",
+        label="相場に対する賃料の比",
+        direction=Direction.LOWER_IS_BETTER,
+        unit="倍",
+        # ⚠ 賃貸のみ。売買の相場（国交省API）はまだ入っていないので、
+        # 広げると売買パターンで全件 missing になるだけ（測っていないものは書かない）
+        property_types=frozenset({CHINTAI}),
+        source_columns=("market_rate_ratio",),
+    ),
 )
 
 METRICS_BY_NAME: dict[str, MetricSpec] = {m.name: m for m in METRICS}

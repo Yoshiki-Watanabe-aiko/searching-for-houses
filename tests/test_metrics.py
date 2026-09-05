@@ -56,6 +56,7 @@ def test_metrics_forの並びは決定的() -> None:
         "flood_rank_avg",
         "flood_area_ratio",
         "landslide_area_ratio",
+        "market_rate_ratio",
     ]
 
 
@@ -105,3 +106,13 @@ def test_一覧だけで判定できないMUST項目が明示されている() -
 def test_全種別にファミリが割り当てられている() -> None:
     assert set(m.FAMILY_OF) == m.ALL_PROPERTY_TYPES
     assert set(m.FAMILY_OF.values()) == set(m.Family)
+
+
+def test_相場比は賃貸のみ() -> None:
+    """⚠ 売買の相場（国交省API）はまだ入っていない。
+
+    広げると売買パターンで全件 missing になるだけなので、
+    データが入るまで CHINTAI に閉じる（測っていないものは書かない）。
+    """
+    assert m.METRICS_BY_NAME["market_rate_ratio"].property_types == frozenset({m.CHINTAI})
+    assert m.METRICS_BY_NAME["market_rate_ratio"].direction is m.Direction.LOWER_IS_BETTER

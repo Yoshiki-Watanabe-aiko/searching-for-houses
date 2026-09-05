@@ -83,6 +83,18 @@ class ListingView:
     landslide_special_ratio: float | None = None
     """同 特別警戒区域（レッドゾーン）だけの割合（0〜1）。MUST の足切りに使う。"""
 
+    # 相場との比較（→ 課題#49）。⚠ t_listings の列ではなく、
+    # city_id × layout で m_market_rates を引いた導出値。
+    market_rate_ratio: float | None = None
+    """``rent_total ÷ 同じ市区・同じ間取りの相場``。1.0 未満が相場より安い。
+
+    ⚠ **1.0 を基準に best/worst を置いてはいけない。** MUST が安い掲載だけを
+    集めているため実測の中央値は 0.54（p10 0.43 / p90 0.74）で、
+    母集団の分布に合わせないと配点が死ぬ（→ 課題#31）。
+    ⚠ 相場は市区・間取りによって**マンションの相場とアパートの相場が混ざる**
+    （マンションに無いセルはアパートで補完している → 課題#49）。
+    """
+
     prefecture: str | None = None
     address: str | None = None
     detail_fetched: bool = False
