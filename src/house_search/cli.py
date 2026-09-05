@@ -452,6 +452,17 @@ def _run_scan(args: argparse.Namespace) -> int:
                 # notify_max_rank によるものだと実行サマリから分かるようにする
                 line += f" / 順位圏外で送らず {summary.notify_out_of_rank}件"
             print(line)
+        if summary.price_anomalies:
+            # ⚠ エラーではなく「疑い」。相場の5分の1未満は、実測では
+            # サイト側が賃料の単位を取り違えて登録している掲載だった（→ 課題#50）。
+            # ⚠ 配点では覆わない（実在する激安物件を捨てるため → ADR 0022）ので、
+            # 順位はそのまま。見て判断できるように出すだけにする
+            print(
+                f"  [相場比が極端に低い掲載 {len(summary.price_anomalies)}件"
+                "（サイト側のデータ異常の疑い）]"
+            )
+            for message in summary.price_anomalies:
+                print(f"    - {message}")
         for message in summary.errors:
             print(f"  [エラー] {message}", file=sys.stderr)
             run_errors.append(f"[{summary.pattern_name}] {message}")
@@ -537,6 +548,13 @@ def _cmd_rescore(args: argparse.Namespace) -> int:
             f"{result.pattern_name}: 採点 {result.scored}件 / MUST通過 {result.must_pass}件 "
             f"(config_hash={result.config_hash[:12]})"
         )
+        if result.price_anomalies:
+            print(
+                f"  [相場比が極端に低い掲載 {len(result.price_anomalies)}件"
+                "（サイト側のデータ異常の疑い）]"
+            )
+            for message in result.price_anomalies:
+                print(f"    - {message}")
     return 0
 
 

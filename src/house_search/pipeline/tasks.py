@@ -24,6 +24,8 @@ from house_search.extract.extractor import (
 from house_search.notify.format import DigestEntry, build_digest_message, notifiable_from
 from house_search.pipeline import persist
 from house_search.pipeline.runtime import Runtime
+from house_search.scoring.anomaly import collect_price_anomalies
+from house_search.scoring.listing_view import ListingView
 from house_search.scoring.must import evaluate_must
 from house_search.scoring.score import calculate_score
 from house_search.scrape import get_scraper
@@ -47,6 +49,8 @@ class RescoreResult:
     scored: int
     must_pass: int
     config_hash: str
+    # 相場に対して極端に安い掲載（サイト側のデータ異常の疑い → 課題#50）
+    price_anomalies: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -98,6 +102,7 @@ def rescore(runtime: Runtime, pattern) -> RescoreResult:
             commute_destination_g_cd=destination,
         )
 
+    passed: list[ListingView] = []
     with runtime.engine.begin() as conn:
         for view in views.values():
             must = evaluate_must(view, pattern.must)
@@ -114,9 +119,12 @@ def rescore(runtime: Runtime, pattern) -> RescoreResult:
             result.scored += 1
             if must.passes(pattern.must.unknown_policy):
                 result.must_pass += 1
+                passed.append(view)
         # エリア帯から外れた掲載の古いスコア行を消す（残すと二重採点になる）
         persist.prune_scores(conn, pattern.name, list(views))
         persist.update_ranks(conn, pattern.name)
+    # ⚠ MUST を通った掲載だけを見る（scan と同じ）
+    result.price_anomalies = collect_price_anomalies(passed)
     return result
 
 
