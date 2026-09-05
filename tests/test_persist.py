@@ -131,3 +131,34 @@ def test_サイトの既存掲載数を数えられる(test_engine) -> None:
     assert isinstance(known, int)
     assert known >= 0
     assert missing == 0
+
+
+# 町名が他県の自治体名と同じ住所。都道府県が前置されているのに第3パス
+# （範囲内で一意な市区名の部分一致）へ落ちると、別の県の自治体として解決される。
+NAMESAKE_ROWS = [
+    ("東京都", "立川市", 25),
+    ("東京都", "小平市", 176),
+    ("長野県", "富士見町", 900),
+    ("埼玉県", "小川町", 901),
+    ("埼玉県", "加須市", 138),
+]
+NAMESAKE_INDEX = CityIndex.build(NAMESAKE_ROWS)
+
+
+@pytest.mark.parametrize(
+    ("address", "expected"),
+    [
+        ("東京都立川市富士見町4丁目", ("東京都", 25)),
+        ("東京都小平市小川町1丁目", ("東京都", 176)),
+        ("埼玉県加須市富士見町", ("埼玉県", 138)),
+    ],
+)
+def test_町名が他県の自治体名と同じでも前置の都道府県を優先する(
+    address: str, expected: tuple[str, int]
+) -> None:
+    """⚠ 実データで `長野県東京都立川市…` という住所ができていた（→ 課題#48）。
+
+    住所に都道府県が書いてあるなら、それより弱い手がかり（一意な市区名の部分一致）
+    に頼ってはいけない。
+    """
+    assert resolve_city(address, NAMESAKE_INDEX) == expected

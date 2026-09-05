@@ -494,29 +494,46 @@ def resolve_cities(runtime: Runtime, patterns: list) -> ResolveCitiesResult:
 
     ⚠ **解決済みの city_id を NULL では上書きしない。** 範囲が狭まったせいで
     引けなくなった掲載の情報を捨てる理由がない。
+
+    ⚠⚠ **`prefecture` も一緒に引き直す。** 初版は ``resolve_city`` が返す都道府県を
+    捨てて city_id だけ更新していたため、**住所と prefecture 列が食い違う掲載**が
+    残った（実測3件。`東京都立川市…` なのに `prefecture='長野県'`）。
+    ``normalize_base`` はこの列を住所へ前置するので、食い違うと
+    `長野県東京都立川市…` という**実在しない住所**が `dedup_key` になり、
+    名寄せが静かに失敗する（→ 課題#48）。両方を同じタプルから同時に書くこと。
     """
     prefectures = sorted({pref for p in patterns for pref in p.search.prefectures})
     with runtime.engine.begin() as conn:
         index = persist.load_city_index(conn, search_prefectures=prefectures)
         rows = conn.execute(
-            text("SELECT id, address, city_id FROM t_listings WHERE address IS NOT NULL")
+            text(
+                "SELECT id, address, city_id, prefecture FROM t_listings"
+                " WHERE address IS NOT NULL"
+            )
         ).all()
         updates: list[dict[str, object]] = []
         resolved_before = resolved_after = 0
-        for listing_id, address, city_id in rows:
+        for listing_id, address, city_id, prefecture in rows:
             if city_id is not None:
                 resolved_before += 1
-            _prefecture, resolved = persist.resolve_city(address, index)
+            resolved_prefecture, resolved = persist.resolve_city(address, index)
             new_city_id = resolved if resolved is not None else city_id
+            new_prefecture = resolved_prefecture if resolved_prefecture else prefecture
             if new_city_id is not None:
                 resolved_after += 1
-            if new_city_id != city_id:
-                updates.append({"listing_id": listing_id, "city_id": new_city_id})
+            if new_city_id != city_id or new_prefecture != prefecture:
+                updates.append(
+                    {
+                        "listing_id": listing_id,
+                        "city_id": new_city_id,
+                        "prefecture": new_prefecture,
+                    }
+                )
         if updates:
             conn.execute(
                 text(
-                    "UPDATE t_listings SET city_id = :city_id, updated_at = now()"
-                    " WHERE id = :listing_id"
+                    "UPDATE t_listings SET city_id = :city_id, prefecture = :prefecture,"
+                    " updated_at = now() WHERE id = :listing_id"
                 ),
                 updates,
             )

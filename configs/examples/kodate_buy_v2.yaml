@@ -15,7 +15,7 @@ name: "中古戸建て（雛形）"
 property_type: "CHUKO_KODATE"      # 新築は SHINCHIKU_KODATE（age_years が使えない）
 
 # マンションとは別チャンネル（ファミリ単位で共有 → 課題#4）
-webhook_ref: "KODATE_23KU"
+webhook_ref: "KODATE"
 digest_webhook_ref: "KODATE_DIGEST"
 
 sites:

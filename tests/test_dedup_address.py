@@ -172,3 +172,25 @@ def test_町名の一部に字を含む地名は壊さない(address_index: Addr
     assert normalize_address("神奈川県小田原市十字四丁目1-2", index=address_index) == (
         "神奈川県小田原市十字4丁目"
     )
+
+
+def test_住所が別の都道府県で始まるときは前置しない() -> None:
+    """⚠ `t_listings.prefecture` が誤っていても実在しない住所を作らない（→ 課題#48）。
+
+    `resolve-cities` が city_id だけ引き直して prefecture を放置するため、
+    住所と prefecture 列が食い違う掲載が実在した（実測3件）。前置の判定を
+    「渡された prefecture で始まるか」にしていると、誤った値をそのまま信じて
+    `長野県東京都立川市…` という住所を作り、**名寄せが静かに失敗する**。
+    """
+    assert (
+        normalize_address("東京都立川市富士見町4丁目", "長野県")
+        == "東京都立川市富士見町4丁目"
+    )
+    assert (
+        normalize_address("東京都小平市小川町1丁目", "埼玉県") == "東京都小平市小川町1丁目"
+    )
+
+
+def test_都道府県が無い住所には従来どおり前置する() -> None:
+    """賃貸EX は「足立区竹の塚６」と書くので、粒度を揃えるために前置が要る。"""
+    assert normalize_address("足立区竹の塚6-1-1", "東京都") == "東京都足立区竹の塚6丁目"

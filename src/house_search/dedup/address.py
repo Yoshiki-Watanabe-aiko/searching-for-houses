@@ -38,6 +38,11 @@ import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+from house_search.scrape.prefectures import PREFECTURE_ROMAJI
+
+# 住所が都道府県から始まっているかの判定に使う（定数だけのモジュールなので循環しない）。
+_PREFECTURE_NAMES: tuple[str, ...] = tuple(PREFECTURE_ROMAJI)
+
 # 一覧・詳細から住所欄を拾うときに紛れ込むサイト固有の付随文字列。
 # ABLE の「周辺地図」は実データで確認済み。
 _TRAILING_NOISE = re.compile(r"(周辺地図|地図を見る|地図|以下未定|その他)+$")
@@ -139,7 +144,12 @@ def normalize_base(address: str | None, prefecture: str | None = None) -> str | 
         return None
 
     # 都道府県が無い掲載（賃貸EX）は解決済みの都道府県を前置して粒度を揃える。
-    if prefecture and not value.startswith(prefecture):
+    # ⚠ **すでにどこかの都道府県で始まっているなら前置しない。**
+    # 判定を「渡された prefecture で始まるか」だけにすると、`t_listings.prefecture`
+    # が誤っているとき `長野県東京都立川市富士見町4丁目` という**実在しない住所**が
+    # できあがり、名寄せが黙って失敗する（実測3件 → 課題#48）。
+    # 住所側に都道府県があるなら、そちらのほうが引数より信用できる。
+    if prefecture and not value.startswith(_PREFECTURE_NAMES):
         value = f"{prefecture}{value}"
 
     # 「大字」「字」はサイトによって書いたり書かなかったりする。
