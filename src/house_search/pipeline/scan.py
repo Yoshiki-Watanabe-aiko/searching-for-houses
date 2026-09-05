@@ -867,7 +867,13 @@ def scan_pattern(
                 site_params=runtime.site_params,
             )
             outcome.listings_seen = len(listings)
-            if not listings:
+            # ⚠ 市区ローテーションのサイト（HOMES 5・ATHOME 4 リクエストで頭打ち）は
+            # **予算切れで全市区が0件になるのが正常**なので、0件を異常と呼べない
+            # （→ 課題#36）。申告すると2時間ごとに偽陽性が飛び、本物のエラーが
+            # 読まれなくなる（→ 課題#45 と同じ理由）。ローテーションサイトで
+            # 対照取得を行わないのと同じ判断。
+            rotates_cities = bool(getattr(scraper, "city_rotation_limit", None))
+            if not listings and not rotates_cities:
                 # ⚠ 一覧0件は「取れているつもり」で気づけない失敗の終着点になる
                 # （無効なフィルタ値・ボット検知・DOM変更のどれでも0件になり、
                 # どれも例外にならない）。過去の実績と突き合わせて異常を申告する
