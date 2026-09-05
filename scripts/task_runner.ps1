@@ -6,6 +6,7 @@
 #   .\scripts\task_runner.ps1 -Task check-sold
 #   .\scripts\task_runner.ps1 -Task digest
 #   .\scripts\task_runner.ps1 -Task backup
+#   .\scripts\task_runner.ps1 -Task market-rates
 #
 # ⚠ run_initial_scan.ps1 を流用してはいけない。
 #   あちらは Start-Process で処理を「切り離す」ため、タスクから呼ぶと
@@ -25,7 +26,7 @@
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("scan", "sweep", "check-sold", "digest", "backup")]
+    [ValidateSet("scan", "sweep", "check-sold", "digest", "backup", "market-rates")]
     [string]$Task,
 
     # ログの保持日数。超過した task_*.log を起動時に掃除する
@@ -74,6 +75,14 @@ switch ($Task) {
         $exe  = "powershell.exe"
         $argv = @("-NoProfile", "-ExecutionPolicy", "Bypass",
                   "-File", "`"$(Join-Path $PSScriptRoot 'backup_db.ps1')`"")
+    }
+    # 家賃相場の月次更新（取得 → CSV生成 → DB投入 → 課題#49）。
+    # ⚠ SUUMO を叩くので定期スキャンと並走させない。毎月1日 04:30 に置いてある
+    # （03:30 の backup の後・05:15 の scan の前）
+    "market-rates" {
+        $exe  = "powershell.exe"
+        $argv = @("-NoProfile", "-ExecutionPolicy", "Bypass",
+                  "-File", "`"$(Join-Path $PSScriptRoot 'update_market_rates.ps1')`"")
     }
 }
 
