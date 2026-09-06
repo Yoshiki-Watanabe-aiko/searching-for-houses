@@ -201,6 +201,8 @@ def test_同梱の雛形YAMLが読める() -> None:
     ("filename", "expected_cls", "expected_type"),
     [
         ("mansion_buy_v2.yaml", MansionBuyPattern, "CHUKO_MANSION"),
+        # ⚠ 新築は ``age_years`` が適用外。中古からコピーして残すとここで落ちる
+        ("shinchiku_mansion_v2.yaml", MansionBuyPattern, "SHINCHIKU_MANSION"),
         ("kodate_buy_v2.yaml", KodateBuyPattern, "CHUKO_KODATE"),
     ],
 )
