@@ -106,6 +106,39 @@ def _walk_minutes(value: str | None) -> int | None:
     return parse_walk_minutes(value)
 
 
+def _features_text(doc) -> str | None:
+    """設備の原文を作る。**「特徴ピックアップ」と「設備仕様」の2ブロック**から採る。
+
+    ⚠⚠ **設備仕様の説明文（``div.p10``）は入れない。** 1つのセルに
+    「設備名 ＋ その設備の説明」が同居しており、説明文には
+    ``雨の日でも洗濯が干せる浴室乾燥機付き`` のように**その住戸に無い設備名**が
+    出てくる。辞書照合は本文全体への部分一致なので、入れると**設備数が黙って
+    水増しされる**（CHINTAI.net の用語集展開・HOMES の ``sr-only`` と同型 → 課題#37）。
+
+    ⚠ **「物件の特徴」の見出し（``◆現在空室◆…``）も入れない。** 広告の
+    キャッチコピーで、未知表記が文断片で埋まる（賃貸EX → 課題#19 と同型）。
+    """
+    parts: list[str] = []
+    for heading in doc.cssselect("h3.secTitleInnerR"):
+        name = " ".join(heading.text_content().split())
+        if name not in ("特徴ピックアップ", "設備仕様"):
+            continue
+        body = next(iter(heading.getparent().itersiblings()), None)
+        if body is None:
+            continue
+        if name == "特徴ピックアップ":
+            # ``即引渡可 / ２沿線以上利用可 / システムキッチン / …`` のタグ列
+            parts.append(" ".join(body.text_content().split()))
+        else:
+            # 設備名だけを拾う。説明文は同じセルの ``div.p10`` にある
+            parts.extend(
+                " ".join(cell.text_content().split())
+                for cell in body.cssselect("div.b.pv15h10")
+            )
+    text = " / ".join(p for p in parts if p)
+    return text or None
+
+
 class SuumoBuyMansionScraper:
     """SUUMO 中古マンションの取得と解析。"""
 
@@ -118,10 +151,13 @@ class SuumoBuyMansionScraper:
     user_agent = None
     ignore_robots = False
     city_rotation_limit = None
-    # ⚠ キーと選択肢は実測済みだが、丸めの向きを ``AXIS_BOUND`` へ載せてから
-    # 有効にする。推測で書くと「0件になる／黙って無視される／向きが逆」の
-    # いずれかになり、**どれも例外にならない**（→ ADR 0015・課題#29）
-    supports_site_filters = False
+    # サイト側MUST は正典 ``data/site_search_params.yaml`` の
+    # ``SUUMO.CHUKO_MANSION`` に定義してある。⚠ **効きを実測した軸だけ
+    # ``enabled: true``**（面積下限 mb・駅徒歩 et）。面積上限 mt・築年数 cn は
+    # 選択肢をフォームから採っただけ、間取り md は単体しか測っていないので無効。
+    # 推測で書くと「0件になる／黙って無視される／向きが逆」のいずれかになり、
+    # **どれも例外にならない**（→ ADR 0015・課題#29）
+    supports_site_filters = True
 
     def list_urls(self, pattern: object, areas: Sequence[AreaTarget]) -> list[str]:
         """対象エリアから一覧ページ（1ページ目）のURLを組み立てる。"""
@@ -198,8 +234,11 @@ class SuumoBuyMansionScraper:
 
         ⚠ **``tr`` の中に ``th``/``td`` が複数対並ぶ**ので ``th.getnext()`` で読む。
         ``tr`` から ``td`` を拾うと**値が1つずれる**（実測で管理費に販売価格が入った）。
-        ⚠ **設備の一覧に相当するブロックは見つかっていない**ので
-        ``raw_features_text`` は埋めない（売買辞書 ``buy:`` も空 → 手順5以降）。
+
+        設備の原文は ``_features_text`` が「特徴ピックアップ」と「設備仕様」から作る。
+        ⚠ **売買辞書 ``buy:`` はまだ空なので抽出は0件になる**が、原文さえ貯まれば
+        ``report-unknown`` → 辞書追記 → ``re-extract`` で**再取得なしに反映できる**
+        （→ 要件定義書 §7.3）。原文を保存しないとこのループが回らない。
         """
         doc = lxml_html.fromstring(html_text)
         values: dict[str, str] = {}
@@ -213,6 +252,7 @@ class SuumoBuyMansionScraper:
 
         access = values.get("交通")
         return ScrapedDetail(
+            raw_features_text=_features_text(doc),
             # ⚠ **括弧が全角と半角の2種類ある**（同じページに両方が出る）
             built_on=parse_built_on(
                 values.get("完成時期（築年月）") or values.get("完成時期(築年月)")

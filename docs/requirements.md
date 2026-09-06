@@ -1168,7 +1168,18 @@ uv run house-search db-seed --test-db
   間取りは全項目を表現できるときだけ）、サイト定義には書けないようにしてある。
   正典は `data/site_search_params.yaml` で、`sync-site-params` で
   `m_site_search_params` へ同期し実行時はDBから読む。
-  **配線済みは SUUMO・HOMES・GOO・APAMAN・ATHOME・DROOM・HOUSECOM・HOMEMATE・CHINTAI_NET**。
+  **配線済みは SUUMO・HOMES・GOO・APAMAN・ATHOME・DROOM・HOUSECOM・HOMEMATE・CHINTAI_NET**
+  （賃貸）と **SUUMO 中古マンション**（売買・Phase 6）。
+  ⚠⚠ **同じサイト・同じキー名でも種別が違えば選択肢は別物。** SUUMO の面積下限 `mb` は
+  賃貸が 20〜100 の5刻み、売買は **0 の次が 20**（10 が無い）。売買を `stepped(step:10)` で
+  書くと**存在しない `mb=10` を送りうる**ので `enum` で列挙する（→ 課題#4）。
+  ⚠ 築年数 `cn` も賃貸には 1 があるが売買には無い。**種別間でも流用しない。**
+  ⚠ 売買で有効にしたのは**効きを実測した2軸だけ**（`mb`・駅徒歩 `et`）。
+  面積上限 `mt`・築年数 `cn` は選択肢をフォームから採っただけ、間取り `md` は
+  単体しか測っておらず**複数指定の直列化が未測定**なので `enabled: false`。
+  ⚠ 売買の `md` は**部屋数でしか切れない**（`2` が 2K・2DK・2LDK をまとめて指す）。
+  上位集合なので不変条件は満たすが、**賃貸の対応表を流用すると `04` のような
+  売買には存在しない値を送る**ことになる。
   SUUMO は母集団 62,030 → 27,150件（57%削減）。
   ATHOME は `MENSEKI=kt004`（30㎡以上）で30㎡未満が0件・`EKITOHO=ke006` で
   20分超が0件・`MADORI[]` の5種指定でMUSTの間取りだけになった（→ 課題#39）。

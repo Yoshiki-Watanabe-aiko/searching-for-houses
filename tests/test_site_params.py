@@ -10,6 +10,7 @@ DBは要らない（YAMLと純関数だけ）。
 
 from __future__ import annotations
 
+import dataclasses
 from dataclasses import replace
 from decimal import Decimal
 
@@ -618,3 +619,85 @@ def test_コード対応表はキーが文字列でも数値でも引ける() ->
         **common, value_spec={"choices": [20, 30], "format": "{:.0f}", "codes": {"30": "kt004"}}
     )
     assert from_yaml.render(30.0) == from_db.render(30.0) == {"MENSEKI": ["kt004"]}
+
+
+# ---- SUUMO 中古マンション（Phase 6・課題#4） ----
+
+
+class _BuyMust:
+    """売買パターンの MUST（雛形 ``configs/examples/mansion_buy_v2.yaml`` 相当）。"""
+
+    area_min = 45.0
+    area_max = 120.0
+    walk_minutes_max = 12
+    age_max = 35
+    layouts = ["2LDK", "3LDK"]
+
+
+def test_正典YAMLが読めてSUUMO売買の5軸がそろっている() -> None:
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    axes = set(table.for_site("SUUMO", "CHUKO_MANSION"))
+    assert axes == {"area_min", "area_max", "walk_minutes_max", "age_max", "layouts"}
+
+
+def test_SUUMO売買で送るのは実測した2軸だけ() -> None:
+    """⚠ **効きを実測していない軸は ``enabled: false``**（→ ADR 0015）。
+
+    面積上限 ``mt`` と築年数 ``cn`` は選択肢をフォームから採っただけ、
+    間取り ``md`` は単体（``md=1``）しか測っておらず**複数指定の直列化が未測定**。
+    測っていない形へ寄せると「0件になる／黙って無視される」のいずれかになり、
+    **どちらも例外にならない**（→ 課題#29）。
+    """
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    query = table.build_query(
+        site_code="SUUMO",
+        property_type="CHUKO_MANSION",
+        must=_BuyMust(),
+        axes=["area_min", "area_max", "walk_minutes_max", "age_max", "layouts"],
+    )
+    # ⚠ 徒歩12分は**緩い側**の15へ切り上げる（10へ丸めると MUST より厳しくなる）
+    assert query == {"mb": ["40"], "et": ["15"]}
+
+
+def test_SUUMOの面積下限は賃貸と売買で選択肢が違う() -> None:
+    """⚠⚠ **同じサイト・同じキー名 ``mb`` でも選択肢が別物。**
+
+    賃貸は 20〜100 の5刻み、売買は **0 の次が 20** で 10 が無い。
+    売買を ``stepped(step:10)`` で書くと**存在しない 10 を送りうる**。
+    SUUMO は選択肢外の値に対し title が「エラー｜SUUMO(スーモ)」のページを
+    HTTP 200 で返す（掲載0件になるだけ → 課題#29）。
+    """
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+
+    class _Small:
+        area_min = 15.0
+
+    chintai = table.build_query(
+        site_code="SUUMO", property_type="CHINTAI", must=_Small(), axes=["area_min"]
+    )
+    buy = table.build_query(
+        site_code="SUUMO", property_type="CHUKO_MANSION", must=_Small(), axes=["area_min"]
+    )
+    # 15㎡は賃貸の下限20を下回るので送らない／売買は 0 へ切り下げる
+    assert chintai == {}
+    assert buy == {"mb": ["0"]}
+
+
+def test_SUUMO売買の間取りは部屋数でしか切れない() -> None:
+    """⚠ **賃貸の対応表を流用してはいけない。**
+
+    賃貸の ``04``（1LDK）は売買には**存在しない値**。売買は部屋数のみで、
+    ``2`` が 2K・2DK・2LDK をまとめて指す（＝上位集合なので ADR 0015 の
+    不変条件は満たす）。複数の MUST 間取りが同じコードへ写るが重複は除かれる。
+    """
+    table = load_site_params(load_settings().data_dir / SITE_PARAMS_FILENAME)
+    spec = table.for_site("SUUMO", "CHUKO_MANSION")["layouts"]
+    mapping = spec.value_spec["mapping"]
+    assert mapping["2K"] == mapping["2DK"] == mapping["2LDK"] == "2"
+    assert mapping["1LDK"] == "1"
+    assert "04" not in set(mapping.values()), "賃貸の間取りコードが混ざっている"
+
+    # ⚠ ``enabled: false`` の spec は render が None を返すので、
+    # 対応表そのものの妥当性は有効化した複製で確かめる
+    enabled = dataclasses.replace(spec, is_enabled=True)
+    assert enabled.render(["2K", "2DK", "2LDK", "3LDK"]) == {"md": ["2", "3"]}
