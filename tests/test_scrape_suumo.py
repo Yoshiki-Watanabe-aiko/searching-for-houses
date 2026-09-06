@@ -22,7 +22,7 @@ from house_search.scrape.base import (
     parse_yen,
     prefecture_targets,
 )
-from house_search.scrape.fetch import RobotsRules
+from house_search.scrape.fetch import PlaintextRedirect, RobotsRules
 from house_search.scrape.suumo import PAGE_SIZE, SuumoScraper
 
 FIXTURES = Path(__file__).parent / "fixtures" / "suumo"
@@ -284,3 +284,47 @@ def test_エラーページを掴んだら例外にする() -> None:
     )
     with pytest.raises(ValueError, match="エラーページ"):
         SuumoScraper().parse_list(html_text)
+
+
+# ---------------------------------------------------------------------------
+# 掲載終了の判定（→ 課題#55）
+# ---------------------------------------------------------------------------
+
+
+class _StubFetcher:
+    """``is_sold`` に渡す最小のフェッチャ。指定した例外か応答を返す。"""
+
+    def __init__(self, result):
+        self._result = result
+
+    def get(self, url: str):
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
+
+
+def test_ライブラリへの平文リダイレクトは掲載終了とみなす() -> None:
+    """SUUMO は掲載が終わると建物ライブラリへ 301 する（2026-09-06 実測）。
+
+    ⚠ 平文なので追わないが、これは「取得できなかった」のではなく
+    **終了したことの証拠**。追ってしまうと suumo.jp のポート80 が応答せず
+    1本112〜120秒を空費する（→ 課題#55）。
+    """
+    exc = PlaintextRedirect(
+        "平文", target="http://suumo.jp/library/tf_14/sc_14111/to_1002701304/?bs=040"
+    )
+    assert SuumoScraper().is_sold(_StubFetcher(exc), "https://suumo.jp/chintai/jnc_1/") is True
+
+
+def test_ライブラリ以外への平文リダイレクトでは掲載終了と決めつけない() -> None:
+    """⚠ 平文へのリダイレクト一般を掲載終了と読むと、サイトの構成変更で
+    **募集中の掲載を黙って消す**（ハウスコムで「号室の伏字＝掲載終了」と
+    誤って一般化した → 課題#37）。
+    """
+    exc = PlaintextRedirect("平文", target="http://suumo.jp/chintai/tokyo/")
+    assert SuumoScraper().is_sold(_StubFetcher(exc), "https://suumo.jp/chintai/jnc_1/") is False
+
+
+def test_取得できないときは判定を保留する() -> None:
+    fetcher = _StubFetcher(RuntimeError("タイムアウト"))
+    assert SuumoScraper().is_sold(fetcher, "https://suumo.jp/chintai/jnc_1/") is False

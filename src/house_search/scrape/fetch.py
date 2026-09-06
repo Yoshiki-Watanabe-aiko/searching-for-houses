@@ -239,6 +239,47 @@ class RobotsDisallowed(RuntimeError):
     """robots.txt が当該URLの取得を禁じていることを表す。"""
 
 
+class PlaintextRedirect(RuntimeError):
+    """https から平文 http へのリダイレクトを追わなかったことを表す。
+
+    ⚠ **これは失敗ではなく、こちらが追わないと決めた結果である**（→ 課題#55）。
+    再試行もせず ``consecutive_failures`` にも数えない。相手が拒否している
+    403・405（数えて打ち切る → 課題#25）とは性質が違い、1リクエストで終わって
+    相手に負荷もかけないため。
+
+    ⚠ **SUUMO は掲載が終わると平文の建物ライブラリへ 301 する**
+    （``https://suumo.jp/chintai/jnc_*/`` → ``http://suumo.jp/library/tf_*/...``）。
+    ところが suumo.jp は**ポート80 が応答しない**ので、追うと30秒でタイムアウトし、
+    リトライ4回で1本あたり112〜120秒を空費して5回連続でサイトごと打ち切られていた
+    （2026-09-06 実測。同ホストの正常な詳細ページは 0.49秒で返る）。
+
+    ``target`` は追わなかったURL。呼び出し側が中身で判断できるように持たせる
+    （SUUMO は ``/library/`` を含むかで掲載終了と判定する）。
+    ⚠ 最初のURL自体が http でも同じ例外になるが、``m_sites.base_url`` は
+    全18サイトが https なので実運用ではリダイレクト由来しか起きない。
+    """
+
+    def __init__(self, message: str, *, target: str) -> None:
+        super().__init__(message)
+        self.target = target
+
+
+class RefusePlaintextTransport(httpx.BaseTransport):
+    """平文 http へのリクエストを送らずに ``PlaintextRedirect`` にするトランスポート。
+
+    ``build_client`` が ``mounts={"http://": ...}`` で差す。
+    ⚠ **``httpx.HTTPError`` を継承しない例外**にしてあるので、
+    ``SiteFetcher.request`` のリトライ節（``except httpx.HTTPError``）に
+    捕まらず、そのまま呼び出し側へ抜ける。
+    """
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        raise PlaintextRedirect(
+            f"平文 http へのリダイレクトは追いません: {request.url}",
+            target=str(request.url),
+        )
+
+
 @dataclass(slots=True)
 class RateLimit:
     """1サイトぶんのレート制御設定。"""
@@ -437,7 +478,12 @@ BROWSER_USER_AGENT = (
 
 
 def build_client(*, user_agent: str, timeout_sec: float) -> httpx.Client:
-    """スクレイピング用のHTTPクライアント。"""
+    """スクレイピング用のHTTPクライアント。
+
+    ⚠ **平文 http へのリダイレクトは追わない**（→ 課題#55・``PlaintextRedirect``）。
+    ``m_sites.base_url`` は全18サイトが https なので取りこぼしは無く、
+    平文へのダウングレードを追わないのはセキュリティ上も正しい。
+    """
     return httpx.Client(
         headers={
             "User-Agent": user_agent,
@@ -445,4 +491,5 @@ def build_client(*, user_agent: str, timeout_sec: float) -> httpx.Client:
         },
         timeout=timeout_sec,
         follow_redirects=True,
+        mounts={"http://": RefusePlaintextTransport()},
     )

@@ -11,11 +11,14 @@ import pytest
 from house_search.scrape.fetch import (
     CONSECUTIVE_FAILURE_LIMIT,
     MAX_RETRIES,
+    PlaintextRedirect,
     RateLimit,
+    RefusePlaintextTransport,
     RobotsDisallowed,
     RobotsRules,
     SiteAborted,
     SiteFetcher,
+    build_client,
     merge_robots_groups,
 )
 
@@ -443,3 +446,86 @@ Disallow:
 def test_規則が無ければ全許可() -> None:
     """robots.txt を取得できなかったときの経路（→ ADR 0019）。"""
     assert RobotsRules([]).can_fetch(UA, "https://example.com/x") is True
+
+
+# ---------------------------------------------------------------------------
+# 平文 http へのリダイレクトを追わない（→ 課題#55）
+# ---------------------------------------------------------------------------
+
+
+def build_fetcher_following_redirects(handler) -> SiteFetcher:
+    """本番と同じ ``mounts`` を持つフェッチャ。https だけモックへ流す。"""
+    client = httpx.Client(
+        transport=httpx.MockTransport(handler),
+        mounts={"http://": RefusePlaintextTransport()},
+        headers={"User-Agent": "house-search-test"},
+        follow_redirects=True,
+    )
+    return SiteFetcher(
+        site_code="TEST",
+        client=client,
+        rate_limit=RateLimit(min_interval_sec=0.0),
+        sleep=lambda _: None,
+    )
+
+
+def test_平文へリダイレクトされたら追わずに例外にする() -> None:
+    """SUUMO は掲載が終わると平文の建物ライブラリへ 301 する（→ 課題#55）。
+
+    ⚠ 追うと suumo.jp のポート80 が応答せず30秒でタイムアウトし、
+    リトライ4回で1本112〜120秒を空費して5回連続でサイトごと打ち切られる。
+    """
+    fetcher = build_fetcher_following_redirects(
+        robots_then(
+            lambda r: httpx.Response(
+                301, headers={"Location": "http://suumo.jp/library/tf_14/sc_14111/to_1/?bs=040"}
+            )
+        )
+    )
+    with pytest.raises(PlaintextRedirect) as caught:
+        fetcher.get("https://suumo.jp/chintai/jnc_000107258597/")
+    assert caught.value.target == "http://suumo.jp/library/tf_14/sc_14111/to_1/?bs=040"
+
+
+def test_平文へのリダイレクトは再試行も打ち切りの数え上げもしない() -> None:
+    """⚠ 相手の拒否ではなく**こちらが追わないと決めた結果**なので数えない。
+
+    403・405 は数えて打ち切る（→ 課題#25）が、こちらは1リクエストで終わり
+    相手に負荷もかけない。数えると4件の掲載終了でサイトごと止まってしまう。
+    """
+    sent: list[int] = []
+
+    def factory(request: httpx.Request) -> httpx.Response:
+        sent.append(1)
+        return httpx.Response(301, headers={"Location": "http://suumo.jp/library/to_1/"})
+
+    fetcher = build_fetcher_following_redirects(robots_then(factory))
+    for _ in range(CONSECUTIVE_FAILURE_LIMIT + 1):
+        with pytest.raises(PlaintextRedirect):
+            fetcher.get("https://suumo.jp/chintai/jnc_1/")
+    # 打ち切られていない＝上限を超えて呼んでも SiteAborted にならない
+    assert len(sent) == CONSECUTIVE_FAILURE_LIMIT + 1  # 再試行していない
+    assert fetcher.stats.failures == 0
+    assert fetcher.stats.consecutive_failures == 0
+
+
+def test_https同士のリダイレクトは従来どおり追う() -> None:
+    """⚠ 止めるのは平文へのダウングレードだけ。既存の挙動は変えない。"""
+
+    def factory(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/moved":
+            return httpx.Response(301, headers={"Location": "https://example.com/final"})
+        return httpx.Response(200, text="ok")
+
+    fetcher = build_fetcher_following_redirects(robots_then(factory))
+    assert fetcher.get("https://example.com/moved").text == "ok"
+
+
+def test_build_clientは平文をそもそも送らない() -> None:
+    """``mounts`` はネットワークに出る前に弾くので、実サイトを叩かない。"""
+    client = build_client(user_agent="house-search-test", timeout_sec=1.0)
+    try:
+        with pytest.raises(PlaintextRedirect):
+            client.get("http://suumo.jp/library/to_1/")
+    finally:
+        client.close()
