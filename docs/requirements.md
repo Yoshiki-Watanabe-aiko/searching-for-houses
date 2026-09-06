@@ -81,6 +81,18 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 - ⚠ **自社物件系は「在庫が重ならない」だけでは採用できない。** レオパレス21は既存11サイトと重複しない在庫を持つが、**1K / 1R しか無い**ので検索条件を1件も満たさなかった（→ 詳細設計書 §11.8）。D-room 等に着手するときは robots.txt の次に**間取りと面積の分布を測る**のが最も安い判定になる。⚠ **D-room で実際にこの手順が効いた**（足立区334室で間取り91.3%・面積93.4%が条件を満たし、レオパレスの 0%・1.5% と正反対だった → 詳細設計書 §12.5）。
 - アダプタ実装済みは **MINIMINI を除く16サイト**（既存10 ＋ Phase 5F の UR ＋ Phase 5G のレオパレス21 ＋ Phase 5H の D-room・ハウスコム・ホームメイト・CHINTAI.net）。
   未実装サイトは `scan` が「スキップ（アダプタ未実装）」と明示的に報告する。
+- ⚠ **アダプタは「サイト × 物件種別」で引く**（`SCRAPERS` のキーは
+  `(site_code, property_type)`）。⚠ **同じサイトでも種別ごとにアダプタが違う**——
+  SUUMO は賃貸が `sc=13121` の JIS5桁クエリ、売買は robots が
+  `/jj/bukken/ichiran/` を禁じるので SEOパス `/ms/chuko/tokyo/sc_chiyoda/` ＋スラグと、
+  **市区の検索値の引き方まで逆になる**（→ 課題#4）。サイトコードだけで引くと
+  **賃貸のアダプタが売買パターンで動き、0件になるだけで例外にならない**。
+  ⚠ 種別はクラス属性 `property_type` で宣言し、宣言の無いアダプタは賃貸とみなす
+  （**`SiteScraper` Protocol には足さない**。足すと既存16アダプタに宣言義務が生じる）。
+  ⚠ **`check_sold` にも種別を渡す**——賃貸 SUUMO の `is_sold` は
+  「平文の `/library/` へリダイレクト＝掲載終了」という賃貸固有の判定（→ 課題#55）で、
+  売買（404）とは判定材料が違う。渡し忘れると**掲載終了を検知できないまま
+  `active` が残る**（例外にならない）。
 - ⚠ **UR だけ取得の形が違う。** GET＋HTML一覧という前提が成り立たないため、
   `SiteScraper` の `list_urls` → `parse_list` ではなく**任意フック**
   `collect_listings` / `fetch_detail` で `pipeline.scan` から委譲を受ける
@@ -1359,6 +1371,7 @@ f:\searching-for-houses\
 │   │   ├── suumo.py / homes.py / goo.py / able.py / chintai_ex.py
 │   │   ├── athome.py / eheya.py / nifty.py / apaman.py / smocca.py
 │   │   ├── ur.py           # UR賃貸。3段のJSON API(POST)・任意フック方式（ADR 0019）
+│   │   ├── suumo_buy.py    # SUUMO中古マンション。SEOパス＋スラグ（Phase 6・課題#4）
 │   ├── extract/
 │   │   ├── normalize.py        # NFKC正規化・トークン化
 │   │   ├── dictionary.py       # 辞書のロードとDB同期

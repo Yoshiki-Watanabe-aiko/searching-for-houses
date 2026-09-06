@@ -1,4 +1,4 @@
-"""保存まわり（住所からの市区解決）のテスト。
+"""保存まわり（住所からの市区解決・詳細の書き戻し）のテスト。
 
 索引はテーブルから作るのではなく手で組む。市区名の重複という
 「どう解決すべきか」の判断だけを固定したいので、実データに依存させない。
@@ -6,9 +6,14 @@
 
 from __future__ import annotations
 
+import dataclasses
+import inspect
+
 import pytest
 
+from house_search.pipeline import persist
 from house_search.pipeline.persist import CityIndex, resolve_city
+from house_search.scrape.base import ScrapedDetail
 
 # ``load_city_index`` と同じ形（都道府県, 正規名, city_id）。
 # 実物と同じく正規名の長い順に並べる
@@ -162,3 +167,34 @@ def test_町名が他県の自治体名と同じでも前置の都道府県を�
     に頼ってはいけない。
     """
     assert resolve_city(address, NAMESAKE_INDEX) == expected
+
+
+# ``ScrapedDetail`` にあるが ``t_listings`` の列ではない項目。
+# ⚠ **ここへ足すのは「列が無い」ことを確かめてから**。安易に足すと、
+# 保存漏れを検出するというこのテストの目的そのものが空洞になる。
+_NOT_COLUMNS = frozenset(
+    {
+        # 未知表記の収集元を差し替えるためだけの値（→ 課題#19）。列は無い
+        "unknown_token_text",
+    }
+)
+
+
+def test_詳細の全項目が保存対象になっている() -> None:
+    """⚠⚠ **``ScrapedDetail`` に足しただけでは保存されない。**
+
+    実際に ``repair_reserve_monthly`` が「型には足したが ``save_detail`` の
+    UPDATE 文に無い」状態で入っていた（→ 課題#4 手順4）。⚠ この漏れは
+    **例外にならず件数も減らない**——列が NULL のまま残るだけなので、
+    ``monthly_cost`` metric が永久に欠損して静かに採点から外れる。
+
+    ⚠ ``detail_url`` の実装漏れ（→ 課題#37）と同じで、**フィクスチャテストは
+    パーサしか呼ばないので緑のまま通る**。ここで機械的に突き合わせる。
+    """
+    source = inspect.getsource(persist.save_detail)
+    missing = [
+        f.name
+        for f in dataclasses.fields(ScrapedDetail)
+        if f.name not in _NOT_COLUMNS and f":{f.name}" not in source
+    ]
+    assert not missing, f"save_detail が保存していない項目: {missing}"

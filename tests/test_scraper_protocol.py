@@ -59,34 +59,38 @@ def test_必須メソッドの一覧がProtocolと一致する() -> None:
     assert declared == set(REQUIRED_METHODS)
 
 
-@pytest.mark.parametrize("site_code", sorted(SCRAPERS))
-def test_アダプタが必須メソッドを実装している(site_code: str) -> None:
-    scraper = SCRAPERS[site_code]()
+@pytest.mark.parametrize("key", sorted(SCRAPERS))
+def test_アダプタが必須メソッドを実装している(key: tuple[str, str]) -> None:
+    site_code, _property_type = key
+    scraper = SCRAPERS[key]()
     missing = [name for name in REQUIRED_METHODS if not callable(getattr(scraper, name, None))]
     assert not missing, f"{site_code}: {missing} が未実装"
 
 
-@pytest.mark.parametrize("site_code", sorted(SCRAPERS))
-def test_アダプタが必須属性を宣言している(site_code: str) -> None:
-    scraper = SCRAPERS[site_code]()
+@pytest.mark.parametrize("key", sorted(SCRAPERS))
+def test_アダプタが必須属性を宣言している(key: tuple[str, str]) -> None:
+    site_code, _property_type = key
+    scraper = SCRAPERS[key]()
     missing = [name for name in REQUIRED_ATTRIBUTES if not hasattr(scraper, name)]
     assert not missing, f"{site_code}: {missing} が未宣言"
 
 
-@pytest.mark.parametrize("site_code", sorted(SCRAPERS))
-def test_robotsを無視するのはAPAMANだけ(site_code: str) -> None:
+@pytest.mark.parametrize("key", sorted(SCRAPERS))
+def test_robotsを無視するのはAPAMANだけ(key: tuple[str, str]) -> None:
     """⚠ ``ignore_robots`` はユーザーが明示的に決めたサイトだけ（→ ADR 0011）。
 
     ⚠ **宣言していないアダプタもある**ので、``scan`` と同じく既定値つきで読む。
     """
-    scraper = SCRAPERS[site_code]()
+    site_code, _property_type = key
+    scraper = SCRAPERS[key]()
     ignore = getattr(scraper, "ignore_robots", OPTIONAL_ATTRIBUTES["ignore_robots"])
     assert ignore is (site_code == "APAMAN")
 
 
-@pytest.mark.parametrize("site_code", sorted(SCRAPERS))
-def test_市区ローテーションを宣言するのは上限を実測したサイトだけ(site_code: str) -> None:
+@pytest.mark.parametrize("key", sorted(SCRAPERS))
+def test_市区ローテーションを宣言するのは上限を実測したサイトだけ(key: tuple[str, str]) -> None:
     """HOMES 5 / ATHOME 4。⚠ 運用値ではなくサイトの実測特性（→ 課題#36）。"""
-    scraper = SCRAPERS[site_code]()
+    site_code, _property_type = key
+    scraper = SCRAPERS[key]()
     limit = getattr(scraper, "city_rotation_limit", OPTIONAL_ATTRIBUTES["city_rotation_limit"])
     assert limit == {"HOMES": 5, "ATHOME": 4}.get(site_code)
