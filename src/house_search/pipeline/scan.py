@@ -75,6 +75,10 @@ class SiteOutcome:
     listings_new: int = 0
     details_fetched: int = 0
     features_extracted: int = 0
+    # 詳細取得の途中で掲載終了と分かった件数（→ 課題#55）。
+    # ⚠ **エラーではない**ので errors には入れない。混ぜると本物の失敗と
+    # 区別できず、読まれない通知が本物のエラーを隠す（→ 課題#45）
+    details_sold: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -398,6 +402,11 @@ def _fetch_details(
     # 任意フック ``fetch_detail`` を宣言したアダプタには「取得＋解析」を委譲する。
     # キュー・``--detail-limit``・保存・設備抽出は既存のまま共有する（→ ADR 0019）
     fetch_detail = getattr(scraper, "fetch_detail", None)
+    # 平文へのリダイレクトが掲載終了を意味するかはサイトごとに違う。
+    # ⚠ **アダプタが宣言したときだけ**委ねる（``SiteScraper`` Protocol には
+    # 足さない。既存17アダプタに実装義務が生じる → ADR 0019）
+    is_sold_redirect = getattr(scraper, "is_sold_redirect", None)
+    sold_ids: list[int] = []
 
     for listing_id, url in queue:
         try:
@@ -408,13 +417,21 @@ def _fetch_details(
                 detail = scraper.parse_detail(response.text)
         except (SiteAborted, RobotsDisallowed):
             raise
-        except PlaintextRedirect:
+        except PlaintextRedirect as exc:
             # 掲載が終わった詳細URLが平文へリダイレクトしている（→ 課題#55）。
-            # ⚠ **取得の失敗ではない**ので、そう分かる文言で残す。
-            # ``status`` の更新は ``check_sold`` の役割なのでここでは触らない
-            # （一覧から消えた掲載は ``last_seen_at`` が古くなり、
-            # 「古い順」の確認枠で自然に拾われる）
-            outcome.errors.append(f"掲載終了とみられる（平文へリダイレクト）: {url}")
+            # ⚠⚠ **ここで ``sold`` にしないとキューに残り続け、次回また
+            # 引かれて詳細取得の枠を恒久的に食う。** 実測（2026-09-06）で
+            # SUUMO の詳細取得が 38件 → 29件 へ単調減少した。
+            # ⚠ 「``check_sold`` の役割」として触らずにいたが、あちらは
+            # 1日1回・297件しか見ないので追いつかない。しかも
+            # **古い掲載ほど掲載終了している**ので、課題#54 の「古い順」枠が
+            # これを増幅する
+            if is_sold_redirect is not None and is_sold_redirect(exc):
+                sold_ids.append(listing_id)
+                outcome.details_sold += 1
+                continue
+            # 掲載終了と判断できないサイトは、従来どおり失敗として残す
+            outcome.errors.append(f"詳細取得に失敗（平文へリダイレクト）: {url}")
             continue
         except Exception as exc:  # noqa: BLE001 - 1件の失敗で実行を止めない
             outcome.errors.append(f"詳細取得に失敗: {url} ({exc})")
@@ -457,6 +474,15 @@ def _fetch_details(
             dedup.refresh_dedup_keys(conn, [listing_id], runtime.address_index)
         outcome.details_fetched += 1
         outcome.features_extracted += saved
+
+    if sold_ids:
+        # ⚠ **ループを抜けてからまとめて更新する。** 途中で書くと、
+        # 打ち切り（``SiteAborted``）で抜けたときに一部だけ反映される
+        with runtime.engine.begin() as conn:
+            persist.mark_status(conn, sold_ids, "sold")
+            # 代表が掲載終了したグループは代表を選び直す。集合演算なので
+            # 「誰が代表だったか」を覚えておく必要がない（``check_sold`` と同じ）
+            dedup.sync_groups(conn)
 
 
 def _refresh_commute(

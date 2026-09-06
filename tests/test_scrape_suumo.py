@@ -303,6 +303,19 @@ class _StubFetcher:
         return self._result
 
 
+def test_is_sold_redirectがライブラリへの平文リダイレクトを掲載終了と判定する() -> None:
+    """⚠ ``scan`` が任意フックとして ``getattr`` で見る（→ 課題#55）。
+
+    ここが False を返すと掲載がキューに残り続け、次回また引かれて
+    **詳細取得の枠を恒久的に食う**（実測で 38件 → 29件 へ単調減少した）。
+    """
+    scraper = SuumoScraper()
+    sold = PlaintextRedirect("平文", target="http://suumo.jp/library/tf_14/sc_1/to_1/?bs=040")
+    other = PlaintextRedirect("平文", target="http://suumo.jp/chintai/tokyo/")
+    assert scraper.is_sold_redirect(sold) is True
+    assert scraper.is_sold_redirect(other) is False
+
+
 def test_ライブラリへの平文リダイレクトは掲載終了とみなす() -> None:
     """SUUMO は掲載が終わると建物ライブラリへ 301 する（2026-09-06 実測）。
 

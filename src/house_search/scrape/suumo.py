@@ -282,19 +282,29 @@ class SuumoScraper:
             },
         )
 
+    def is_sold_redirect(self, exc: PlaintextRedirect) -> bool:
+        """平文へのリダイレクトが「掲載終了」を意味するかを判定する。
+
+        ⚠ **掲載が終わると建物ライブラリへ 301 する**（→ 課題#55）。
+        平文なので追わないが、これは「取得できなかった」のではなく
+        **終了したことの証拠**である。
+
+        ⚠ 追わなかった先が ``/library/`` のときに限る。平文へのリダイレクト
+        一般を掲載終了と読むと、サイトの構成変更で**募集中の掲載を黙って消す**
+        （ハウスコムで「号室の伏字＝掲載終了」と誤って一般化した → 課題#37）。
+
+        ⚠ **``pipeline.scan`` が任意フックとして ``getattr`` で見る**ので、
+        ``SiteScraper`` Protocol には足さない（既存17アダプタに実装義務が
+        生じる。``collect_listings`` / ``fetch_detail`` と同じ扱い → ADR 0019）。
+        """
+        return _LIBRARY_PATH in exc.target
+
     def is_sold(self, fetcher: SiteFetcher, url: str) -> bool:
         """詳細URLが成約/掲載終了ページに変わっていないかを見る。"""
         try:
             response = fetcher.get(url)
         except PlaintextRedirect as exc:
-            # ⚠ **掲載が終わると建物ライブラリへ 301 する**（→ 課題#55）。
-            # 平文なので追わないが、これは「取得できなかった」のではなく
-            # **終了したことの証拠**なので掲載終了と判定する。
-            # ⚠ 追わなかった先が ``/library/`` のときに限る。平文への
-            # リダイレクト一般を掲載終了と読むと、サイトの構成変更で
-            # **募集中の掲載を黙って消す**ことになる（ハウスコムで実際に
-            # 「号室の伏字＝掲載終了」と誤って一般化した → 課題#37）
-            return _LIBRARY_PATH in exc.target
+            return self.is_sold_redirect(exc)
         except Exception:
             # 取得できない＝掲載終了とは限らないため、判定を保留する
             return False
