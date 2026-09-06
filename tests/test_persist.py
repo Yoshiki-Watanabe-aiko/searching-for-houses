@@ -13,7 +13,7 @@ import pytest
 
 from house_search.pipeline import persist
 from house_search.pipeline.persist import CityIndex, resolve_city
-from house_search.scrape.base import ScrapedDetail
+from house_search.scrape.base import ScrapedDetail, ScrapedListing
 
 # ``load_city_index`` と同じ形（都道府県, 正規名, city_id）。
 # 実物と同じく正規名の長い順に並べる
@@ -198,3 +198,35 @@ def test_詳細の全項目が保存対象になっている() -> None:
         if f.name not in _NOT_COLUMNS and f":{f.name}" not in source
     ]
     assert not missing, f"save_detail が保存していない項目: {missing}"
+
+
+# ``ScrapedListing`` にあるが upsert のパラメータ名にはならない項目。
+# ⚠ **ここへ足すのは「SQL に現れない理由」を確かめてから**。安易に足すと、
+# 保存漏れを検出するというこのテストの目的そのものが空洞になる。
+_NOT_UPSERT_PARAMS = frozenset(
+    {
+        # サイトコードは ``site_id`` へ解決してから渡す
+        "site_code",
+    }
+)
+
+
+def test_一覧の全項目が保存対象になっている() -> None:
+    """⚠⚠ **``ScrapedListing`` に足しただけでは保存されない。**
+
+    ``ScrapedDetail`` 側でまったく同じ漏れが実際に起きている
+    （``repair_reserve_monthly`` を型に足したのに UPDATE 文へ入れ忘れた →
+    課題#4 手順4後半）。⚠ **例外にならず件数も減らない**——列が NULL のまま
+    残るだけなので、その metric が永久に欠損して静かに採点から外れる。
+
+    ⚠ **フィクスチャテストはパーサしか呼ばない**ので、アダプタが値を返して
+    いても保存漏れは緑のまま通る（→ 課題#37 の ``detail_url`` 実装漏れと同型）。
+    ここで機械的に突き合わせる。
+    """
+    sql = str(persist._UPSERT)
+    missing = [
+        f.name
+        for f in dataclasses.fields(ScrapedListing)
+        if f.name not in _NOT_UPSERT_PARAMS and f":{f.name}" not in sql
+    ]
+    assert not missing, f"_UPSERT が保存していない項目: {missing}"

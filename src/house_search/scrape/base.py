@@ -76,6 +76,20 @@ class ScrapedListing:
     station_info: str | None = None
     walk_minutes: int | None = None
     image_url: str | None = None
+    # 新築（棟／プロジェクト単位）の価格レンジ。``price`` にはレンジ下限を入れる
+    # （→ 要件定義書 §11.4）。⚠ **中古・賃貸は None のまま**で、レンジを持つのは
+    # 新築だけ。
+    price_min: int | None = None
+    price_max: int | None = None
+    # ⚠⚠ **価格未定は ``price`` を NULL にしたうえで
+    # ``type_specific_attrs["price_undecided"]`` を立てる**（→ 要件定義書 §11.4）。
+    # 0 やハイフンにすると「安い」と誤読され、順位だけが静かに狂う。
+    # ⚠ **「価格が取れなかった」と「価格未定と明記されている」を混ぜない。**
+    # ハザードの「区域外(0)」と「未解決(None)」を混ぜてはいけないのと同じ形
+    # （→ ADR 0021 決定4・課題#49）。
+    # ⚠ 保存は JSONB の ``||`` マージなので、**価格が付いたときは false を明示的に
+    # 書く**こと。書かないと未定フラグが残り続ける。
+    type_specific_attrs: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
