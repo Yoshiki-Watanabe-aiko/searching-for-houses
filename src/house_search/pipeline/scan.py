@@ -32,7 +32,13 @@ from house_search.scoring.score import calculate_score
 from house_search.scrape import get_scraper, resolve_areas
 from house_search.scrape.area import AreaTarget
 from house_search.scrape.base import ScrapedListing
-from house_search.scrape.fetch import RateLimit, RobotsDisallowed, SiteAborted, SiteFetcher
+from house_search.scrape.fetch import (
+    PlaintextRedirect,
+    RateLimit,
+    RobotsDisallowed,
+    SiteAborted,
+    SiteFetcher,
+)
 from house_search.scrape.rotation import next_cursor, rotate_areas
 
 # 1回の実行で取りに行く詳細ページの上限（サイトあたり）。
@@ -402,6 +408,14 @@ def _fetch_details(
                 detail = scraper.parse_detail(response.text)
         except (SiteAborted, RobotsDisallowed):
             raise
+        except PlaintextRedirect:
+            # 掲載が終わった詳細URLが平文へリダイレクトしている（→ 課題#55）。
+            # ⚠ **取得の失敗ではない**ので、そう分かる文言で残す。
+            # ``status`` の更新は ``check_sold`` の役割なのでここでは触らない
+            # （一覧から消えた掲載は ``last_seen_at`` が古くなり、
+            # 「古い順」の確認枠で自然に拾われる）
+            outcome.errors.append(f"掲載終了とみられる（平文へリダイレクト）: {url}")
+            continue
         except Exception as exc:  # noqa: BLE001 - 1件の失敗で実行を止めない
             outcome.errors.append(f"詳細取得に失敗: {url} ({exc})")
             continue

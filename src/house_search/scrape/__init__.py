@@ -45,6 +45,7 @@ from house_search.scrape.chintai_net import ChintaiNetScraper
 from house_search.scrape.droom import DroomScraper
 from house_search.scrape.eheya import EheyaScraper
 from house_search.scrape.fetch import (
+    PlaintextRedirect,
     RateLimit,
     RobotsDisallowed,
     SiteAborted,
@@ -111,6 +112,7 @@ __all__ = [
     "HomesScraper",
     "LeopalaceScraper",
     "NiftyScraper",
+    "PlaintextRedirect",
     "RateLimit",
     "RobotsDisallowed",
     "ScrapedDetail",

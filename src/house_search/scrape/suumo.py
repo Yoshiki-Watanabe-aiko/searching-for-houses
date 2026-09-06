@@ -30,7 +30,7 @@ from house_search.scrape.base import (
     parse_walk_minutes,
     parse_yen,
 )
-from house_search.scrape.fetch import SiteFetcher
+from house_search.scrape.fetch import PlaintextRedirect, SiteFetcher
 
 SITE_CODE = "SUUMO"
 BASE_URL = "https://suumo.jp"
@@ -75,6 +75,10 @@ PREFECTURE_JIS: dict[str, str] = {
 _BC_PARAM = re.compile(r"[?&]bc=(\d+)")
 # 成約・掲載終了ページに出る文言
 _SOLD_MARKERS = ("この物件は掲載が終了", "掲載を終了", "ご覧いただけません", "お探しの物件は")
+
+# 掲載が終わった詳細URLのリダイレクト先（建物ライブラリ）。実測した4本すべてが
+# ``http://suumo.jp/library/tf_*/sc_*/to_*/?bs=040`` だった（2026-09-06 → 課題#55）
+_LIBRARY_PATH = "/library/"
 
 # 詳細ページの th ラベル → 取り出したい項目
 _DETAIL_LABELS = {
@@ -282,6 +286,15 @@ class SuumoScraper:
         """詳細URLが成約/掲載終了ページに変わっていないかを見る。"""
         try:
             response = fetcher.get(url)
+        except PlaintextRedirect as exc:
+            # ⚠ **掲載が終わると建物ライブラリへ 301 する**（→ 課題#55）。
+            # 平文なので追わないが、これは「取得できなかった」のではなく
+            # **終了したことの証拠**なので掲載終了と判定する。
+            # ⚠ 追わなかった先が ``/library/`` のときに限る。平文への
+            # リダイレクト一般を掲載終了と読むと、サイトの構成変更で
+            # **募集中の掲載を黙って消す**ことになる（ハウスコムで実際に
+            # 「号室の伏字＝掲載終了」と誤って一般化した → 課題#37）
+            return _LIBRARY_PATH in exc.target
         except Exception:
             # 取得できない＝掲載終了とは限らないため、判定を保留する
             return False
