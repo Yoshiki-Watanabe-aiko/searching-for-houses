@@ -407,6 +407,9 @@ def save_detail(conn: Connection, listing_id: int, detail: ScrapedDetail) -> Non
                 floor_num = COALESCE(:floor_num, floor_num),
                 total_floors = COALESCE(:total_floors, total_floors),
                 mgmt_fee_monthly = COALESCE(:mgmt_fee_monthly, mgmt_fee_monthly),
+                repair_reserve_monthly = COALESCE(
+                    :repair_reserve_monthly, repair_reserve_monthly
+                ),
                 deposit_amount = COALESCE(:deposit_amount, deposit_amount),
                 key_money_amount = COALESCE(:key_money_amount, key_money_amount),
                 address = COALESCE(:address, address),
@@ -427,6 +430,7 @@ def save_detail(conn: Connection, listing_id: int, detail: ScrapedDetail) -> Non
             "floor_num": detail.floor_num,
             "total_floors": detail.total_floors,
             "mgmt_fee_monthly": detail.mgmt_fee_monthly,
+            "repair_reserve_monthly": detail.repair_reserve_monthly,
             "deposit_amount": detail.deposit_amount,
             "key_money_amount": detail.key_money_amount,
             "address": detail.address,

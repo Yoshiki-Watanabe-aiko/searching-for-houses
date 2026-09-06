@@ -8,6 +8,8 @@
 2. 再抽出が**掲載ごとの種別**で辞書を選ぶこと（固定だと売買が賃貸辞書で抽出される）
 3. 売買辞書がマンション・戸建ての**両ファミリ**へ展開されること（戸建てが抽出0件になる）
 4. 通知の金額欄が**ファミリで意味を変える**こと（売買で物件価格が賃料として出る）
+5. アダプタのレジストリが**サイト×種別**で引けること（賃貸のアダプタが
+   売買パターンで動くと、URL体系が違うので0件になるだけで例外にならない）
 """
 
 from __future__ import annotations
@@ -21,6 +23,7 @@ from house_search.config.settings import load_settings
 from house_search.extract.dictionary import load_dictionary
 from house_search.notify.format import NotifiableListing, price_field, price_summary
 from house_search.pipeline import tasks
+from house_search.scrape import SCRAPERS, get_scraper
 
 # 2026-09-05 に実測した現在値。⚠ **売買の追加でこれが変わってはいけない。**
 # 変わったら「賃貸パターンの採点が変わった」ということなので、
@@ -228,3 +231,52 @@ def test_価格未定の売買は価格未定と出す() -> None:
     )
     assert "価格未定" in price_field(prop)[1]
     assert "価格未定" in price_summary(prop)
+
+
+def test_アダプタはサイトと種別の組で引ける() -> None:
+    """⚠ **SUUMO は賃貸と売買で別のアダプタ**（→ 課題#4）。
+
+    賃貸の一覧URLは ``sc=13121`` の JIS5桁クエリ、売買は robots が
+    ``/jj/bukken/ichiran/`` を禁じるので SEOパス ``/ms/chuko/tokyo/sc_chiyoda/``
+    ＋スラグと、**体系そのものが違う**。サイトコードだけで引くと売買パターンで
+    賃貸のアダプタが動き、**0件になるだけで例外にならない**。
+    """
+    chintai = get_scraper("SUUMO", "CHINTAI")
+    buy = get_scraper("SUUMO", "CHUKO_MANSION")
+    assert type(chintai).__name__ == "SuumoScraper"
+    assert type(buy).__name__ == "SuumoBuyMansionScraper"
+    assert type(chintai) is not type(buy)
+
+
+def test_種別を省くと賃貸を引く() -> None:
+    """⚠ 既定を売買側に倒すと、渡し忘れた稼働中の経路が黙って売買アダプタを掴む。"""
+    assert type(get_scraper("SUUMO")).__name__ == "SuumoScraper"
+
+
+def test_未対応の組はNoneを返す() -> None:
+    """⚠ scan は None を「アダプタ未実装」として**明示的に報告する**。
+
+    黙って無視すると「実装済みだが未配線」を見逃す。
+    """
+    assert get_scraper("SUUMO", "SHINCHIKU_MANSION") is None
+    assert get_scraper("HOMES", "CHUKO_MANSION") is None
+
+
+def test_レジストリのキーはサイトコードと種別の組になっている() -> None:
+    """⚠ キーを文字列へ戻すと、同じサイトの2種別が**片方だけ残って**上書きされる。"""
+    assert all(
+        isinstance(key, tuple) and len(key) == 2 for key in SCRAPERS
+    ), "SCRAPERS のキーは (site_code, property_type) の組"
+    assert ("SUUMO", "CHINTAI") in SCRAPERS
+    assert ("SUUMO", "CHUKO_MANSION") in SCRAPERS
+
+
+def test_賃貸アダプタは種別を宣言しないので賃貸として登録される() -> None:
+    """⚠ 既存16アダプタに宣言義務を生まないことを固定する（→ ADR 0019 と同じ考え方）。
+
+    ``SiteScraper`` Protocol に ``property_type`` を足すとここが壊れる。
+    """
+    from house_search.scrape.suumo import SuumoScraper
+
+    assert not hasattr(SuumoScraper, "property_type")
+    assert {ptype for _code, ptype in SCRAPERS} == {"CHINTAI", "CHUKO_MANSION"}

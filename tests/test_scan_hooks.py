@@ -150,5 +150,5 @@ def test_既存アダプタはフックを持たない(hook: str) -> None:
     """
     from house_search.scrape import SCRAPERS
 
-    declared = {code for code, cls in SCRAPERS.items() if hasattr(cls, hook)}
+    declared = {code for (code, _ptype), cls in SCRAPERS.items() if hasattr(cls, hook)}
     assert declared == {"UR"}

@@ -214,7 +214,8 @@ def re_extract_rows(conn: Any, *, limit: int | None = None, family: str | None =
     """
     sql = (
         "SELECT p.id, p.url, p.site_id, s.code AS site_code, p.raw_features_text, "
-        "       p.floor_num, p.total_floors, pt.family AS property_family "
+        "       p.floor_num, p.total_floors, pt.family AS property_family, "
+        "       pt.code AS property_type "
         "FROM t_listings p JOIN m_sites s ON s.id = p.site_id "
         "JOIN m_property_types pt ON pt.id = p.property_type_id "
         "WHERE p.raw_features_text IS NOT NULL"
@@ -259,7 +260,7 @@ def re_extract(
         # 保存済み原文に宣伝の生成文が混ざるサイトは未知表記を数え直さない。
         # scan では設備タグの部分だけを収集元にできるが、再抽出では
         # 分割し直せないため文断片で一覧が埋まる（→ 課題#19）
-        scraper = get_scraper(row.site_code)
+        scraper = get_scraper(row.site_code, row.property_type)
         mine_unknown = getattr(scraper, "mine_unknown_tokens", True) if scraper else True
         unknown = extraction.unknown_tokens if mine_unknown else ()
         with runtime.engine.begin() as conn:
@@ -391,7 +392,7 @@ def check_sold(
 
     sold_ids: list[int] = []
     for site_code, items in by_site.items():
-        scraper = get_scraper(site_code)
+        scraper = get_scraper(site_code, pattern.property_type)
         if scraper is None:
             continue
         client = runtime.http_client(user_agent=scraper.user_agent)

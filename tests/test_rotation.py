@@ -135,7 +135,7 @@ def test_取得数に上限があるサイトだけが回転量を宣言して�
 
     declared = {
         code: getattr(scraper, "city_rotation_limit", None)
-        for code, scraper in SCRAPERS.items()
+        for (code, _property_type), scraper in SCRAPERS.items()
         if getattr(scraper, "city_rotation_limit", None)
     }
     assert declared == {"HOMES": 5, "ATHOME": 4}

@@ -60,13 +60,25 @@ from house_search.scrape.leopalace import LeopalaceScraper
 from house_search.scrape.nifty import NiftyScraper
 from house_search.scrape.smocca import SmoccaScraper
 from house_search.scrape.suumo import SuumoScraper
+from house_search.scrape.suumo_buy import SuumoBuyMansionScraper
 from house_search.scrape.ur import UrScraper
 
-# サイトコード → アダプタ。既存11サイトのうち MINIMINI 以外の10サイト
-# ＋ UR賃貸（Phase 5F）＋ レオパレス21（Phase 5G）
-# ＋ D-room・ハウスコム・ホームメイト・CHINTAI.net（Phase 5H）。
-SCRAPERS: dict[str, type] = {
-    scraper.site_code: scraper
+# **(サイトコード, 物件種別) → アダプタ。**
+# 賃貸11サイトのうち MINIMINI 以外の10サイト ＋ UR賃貸（Phase 5F）
+# ＋ レオパレス21（Phase 5G）＋ D-room・ハウスコム・ホームメイト・
+# CHINTAI.net（Phase 5H）＋ SUUMO 中古マンション（Phase 6）。
+#
+# ⚠ **同じサイトでも種別ごとにアダプタが違う。** SUUMO は賃貸と売買で
+# 一覧URLの体系そのものが違い（賃貸は ``sc=13121`` の JIS5桁クエリ、売買は
+# robots が ``/jj/bukken/ichiran/`` を禁じるので SEOパス ``/ms/chuko/tokyo/
+# sc_chiyoda/`` ＋スラグ）、市区の検索値の引き方まで逆になる（→ 課題#4）。
+# サイトコードだけで引くと**賃貸のアダプタが売買パターンで動き、
+# 0件になるだけで例外にならない**。
+#
+# ⚠ **種別はクラス属性から読む**（``SiteScraper`` Protocol には足さない）。
+# 足すと既存16アダプタ全部に宣言義務が生じる。宣言の無いアダプタは賃貸とみなす。
+SCRAPERS: dict[tuple[str, str], type] = {
+    (scraper.site_code, getattr(scraper, "property_type", "CHINTAI")): scraper
     for scraper in (
         SuumoScraper,
         HomesScraper,
@@ -84,13 +96,18 @@ SCRAPERS: dict[str, type] = {
         HousecomScraper,
         HomemateScraper,
         ChintaiNetScraper,
+        SuumoBuyMansionScraper,
     )
 }
 
 
-def get_scraper(site_code: str) -> SiteScraper | None:
-    """サイトコードからアダプタを作る。未実装なら None。"""
-    factory = SCRAPERS.get(site_code)
+def get_scraper(site_code: str, property_type: str = "CHINTAI") -> SiteScraper | None:
+    """サイトコードと物件種別からアダプタを作る。未実装なら None。
+
+    ⚠ **既定は賃貸。** 種別を渡し忘れた経路が黙って売買アダプタを掴むより、
+    稼働中の賃貸を掴むほうが安全側（渡し忘れは0件ではなく従来どおり動く）。
+    """
+    factory = SCRAPERS.get((site_code, property_type))
     return factory() if factory else None
 
 
@@ -121,6 +138,7 @@ __all__ = [
     "SiteFetcher",
     "SiteScraper",
     "SmoccaScraper",
+    "SuumoBuyMansionScraper",
     "SuumoScraper",
     "UrScraper",
     "age_years_from_built",

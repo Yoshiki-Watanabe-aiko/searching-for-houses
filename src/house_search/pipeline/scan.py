@@ -856,7 +856,10 @@ def scan_pattern(
         if site_code in inactive:
             summary.skipped_sites.append(f"{site_code}（is_active=false）")
             continue
-        scraper = get_scraper(site_code)
+        # ⚠ **種別まで指定して引く。** サイトコードだけで引くと
+        # 売買パターンで賃貸のアダプタが動き、URL体系が違うので
+        # **0件になるだけで例外にならない**（→ 課題#4）
+        scraper = get_scraper(site_code, pattern.property_type)
         if scraper is None:
             summary.skipped_sites.append(f"{site_code}（アダプタ未実装）")
             continue
