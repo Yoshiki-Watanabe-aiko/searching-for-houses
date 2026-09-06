@@ -731,6 +731,9 @@ def _notify_cheaper_listings(
                 other_site_codes=membership.other_site_codes,
                 previous_total=change.previous_cost,
                 previous_site_code=previous.site_code if previous else None,
+                commute_destination=(
+                    pattern.commute.destination_station if pattern.commute else None
+                ),
             ),
             score,
             notification_type=persist.CHEAPER_LISTING,
@@ -816,6 +819,9 @@ def _notify(
                 member_count=membership.member_count,
                 other_site_codes=membership.other_site_codes,
                 price_prev=outcome.price_prev,
+                commute_destination=(
+                    pattern.commute.destination_station if pattern.commute else None
+                ),
             ),
             score,
             notification_type=notification_type,

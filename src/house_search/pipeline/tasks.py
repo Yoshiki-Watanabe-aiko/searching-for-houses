@@ -181,6 +181,9 @@ def digest(runtime: Runtime, pattern, *, dry_run: bool = False) -> DigestResult:
                 views[row.listing_id],
                 member_count=memberships[row.listing_id].member_count,
                 other_site_codes=memberships[row.listing_id].other_site_codes,
+                commute_destination=(
+                    pattern.commute.destination_station if pattern.commute else None
+                ),
             ),
             score=calculate_score(
                 views[row.listing_id], pattern.want, condition_names=runtime.condition_names

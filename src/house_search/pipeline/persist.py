@@ -17,7 +17,7 @@ from typing import Any
 
 from sqlalchemy import Connection, text
 
-from house_search.scoring.listing_view import ListingView
+from house_search.scoring.listing_view import ListingView, StationAccess
 from house_search.scrape.base import ScrapedDetail, ScrapedListing
 
 # 通知種別。
@@ -875,6 +875,36 @@ _GROUP_FEATURES = text(
     """
 )
 
+# 通知に「どの駅から徒歩何分・通勤何分か」を出すための一覧（→ 課題#58）。
+# ⚠ **表示専用**で採点には使わない（採点の walk_minutes / commute_minutes は
+# _PROPERTY_COLUMNS 側が最小値を採る）。
+# ⚠ 設備・通勤時間と同じく**グループ内の全掲載**から集める。サイトによって
+# 挙げる駅が違うので、代表1件だけを見ると駅が減る。
+# ⚠ 同じ駅が複数の掲載に出るので駅グループコードで畳み、徒歩は最小を採る。
+# ⚠ match_status='matched' に限る（unmatched はバス停・施設名なので駅ではない）。
+_GROUP_STATIONS = text(
+    """
+    SELECT target.id AS listing_id,
+           ls.station_g_cd,
+           min(ls.raw_station_name) AS name,
+           min(ls.walk_minutes) AS walk_minutes,
+           max(sc.commute_minutes) AS commute_minutes
+    FROM t_listings target
+    JOIN t_listings member
+      ON (target.group_id IS NULL AND member.id = target.id)
+      OR (target.group_id IS NOT NULL AND member.group_id = target.group_id)
+    JOIN t_listing_stations ls ON ls.listing_id = member.id
+    LEFT JOIN t_station_commutes sc
+      ON sc.origin_station_g_cd = ls.station_g_cd
+     AND sc.destination_station_g_cd = :commute_destination
+     AND sc.status = 'ok'
+    WHERE target.id = ANY(:ids)
+      AND ls.match_status = 'matched'
+    GROUP BY target.id, ls.station_g_cd
+    ORDER BY target.id, min(ls.walk_minutes) NULLS LAST, min(ls.raw_station_name)
+    """
+)
+
 
 def _opt_float(value: Any) -> float | None:
     """NUMERIC 列（Decimal）を float へ。⚠ None はそのまま None を返す。
@@ -885,7 +915,11 @@ def _opt_float(value: Any) -> float | None:
     return None if value is None else float(value)
 
 
-def _to_view(row: Any, feature_codes: frozenset[str]) -> ListingView:
+def _to_view(
+    row: Any,
+    feature_codes: frozenset[str],
+    stations: tuple[StationAccess, ...] = (),
+) -> ListingView:
     return ListingView(
         listing_id=row.id,
         site_code=row.site_code,
@@ -915,6 +949,7 @@ def _to_view(row: Any, feature_codes: frozenset[str]) -> ListingView:
         address=row.address,
         detail_fetched=row.detail_fetched,
         feature_codes=feature_codes,
+        stations=stations,
     )
 
 
@@ -990,7 +1025,25 @@ def load_listing_views(
     for listing_id, code in conn.execute(_GROUP_FEATURES, {"ids": ids}):
         features.setdefault(listing_id, set()).add(code)
 
-    return {row.id: _to_view(row, frozenset(features.get(row.id, ()))) for row in rows}
+    stations: dict[int, list[StationAccess]] = {}
+    station_params = {"ids": ids, "commute_destination": commute_destination_g_cd}
+    for row in conn.execute(_GROUP_STATIONS, station_params):
+        stations.setdefault(row.listing_id, []).append(
+            StationAccess(
+                name=row.name,
+                walk_minutes=row.walk_minutes,
+                commute_minutes=row.commute_minutes,
+            )
+        )
+
+    return {
+        row.id: _to_view(
+            row,
+            frozenset(features.get(row.id, ())),
+            tuple(stations.get(row.id, ())),
+        )
+        for row in rows
+    }
 
 
 def detail_queue(

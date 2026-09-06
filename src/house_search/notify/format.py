@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from house_search.scoring.listing_view import ListingView
+from house_search.scoring.listing_view import ListingView, StationAccess
 from house_search.scoring.score import STATUS_UNKNOWN, ScoreResult
 
 # 通知種別 → embed の色（requirements.md §9）。
@@ -68,6 +68,11 @@ class NotifiableListing:
     # 既定値付きなので、グループを持たない呼び出しはこれまでどおり動く。
     member_count: int = 1
     other_site_codes: tuple[str, ...] = ()
+    # 掲載が挙げる駅（グループ全体）。⚠ 「徒歩10分」がどの駅からか分からない、
+    # という報告（2026-09-07）への対応で、駅ごとに徒歩と通勤を並べて出す。
+    stations: tuple[StationAccess, ...] = ()
+    # 通勤時間の目的地（勤務先の最寄り駅）。パターンの commute から渡る。
+    commute_destination: str | None = None
     previous_total: int | None = None
     previous_site_code: str | None = None
 
@@ -100,6 +105,7 @@ def notifiable_from(
     price_prev: int | None = None,
     previous_total: int | None = None,
     previous_site_code: str | None = None,
+    commute_destination: str | None = None,
 ) -> NotifiableListing:
     """採点用ビューを通知用の値に詰め替える。
 
@@ -127,6 +133,8 @@ def notifiable_from(
         other_site_codes=other_site_codes,
         previous_total=previous_total,
         previous_site_code=previous_site_code,
+        stations=view.stations,
+        commute_destination=commute_destination,
     )
 
 
@@ -254,6 +262,39 @@ def _summary_line(prop: NotifiableListing) -> str:
     return " / ".join(parts)
 
 
+MAX_STATIONS_IN_NOTIFY = 4
+
+
+def access_lines(prop: NotifiableListing) -> str | None:
+    """駅ごとの「徒歩何分・どこへ通勤何分」。出せる駅が無ければ ``None``。
+
+    ⚠ **「徒歩10分」だけでは、どの駅からの時間か分からない**（ユーザー報告
+    2026-09-07）。掲載は複数駅を挙げるのが普通で、しかも**徒歩が最小の駅と
+    通勤が最短の駅は別になりうる**（採点はそれぞれの最小を採るため）。
+    駅ごとに並べて初めて条件欄の数字の出どころが読める。
+
+    ⚠ **バス便の駅は徒歩が出ない**（→ 課題#58）。「徒歩不明」と明示して、
+    黙って省かない（省くと駅そのものが無いように見える）。
+    """
+    if not prop.stations:
+        return None
+    destination = prop.commute_destination
+    lines: list[str] = []
+    for station in prop.stations[:MAX_STATIONS_IN_NOTIFY]:
+        walk = f"徒歩{station.walk_minutes}分" if station.walk_minutes is not None else "徒歩不明"
+        parts = [f"・{station.name} {walk}"]
+        if station.commute_minutes is not None:
+            arrow = f" → {destination} {station.commute_minutes}分" if destination else (
+                f" → 通勤{station.commute_minutes}分"
+            )
+            parts.append(arrow)
+        lines.append("".join(parts))
+    rest = len(prop.stations) - MAX_STATIONS_IN_NOTIFY
+    if rest > 0:
+        lines.append(f"（ほか{rest}駅）")
+    return "\n".join(lines)
+
+
 def build_listing_embed(
     prop: NotifiableListing,
     score: ScoreResult,
@@ -275,6 +316,9 @@ def build_listing_embed(
         dict(zip(("name", "value"), price_field(prop), strict=True), inline=True),
         {"name": "条件", "value": _summary_line(prop), "inline": False},
     ]
+
+    if access := access_lines(prop):
+        fields.append({"name": "交通", "value": access, "inline": False})
 
     if notification_type in ("price_down", "price_up") and prop.price_prev is not None:
         diff = (prop.price or 0) - prop.price_prev
