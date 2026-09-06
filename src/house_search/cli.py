@@ -437,6 +437,9 @@ def _run_scan(args: argparse.Namespace) -> int:
                 f"  {site.site_code:10s} 取得 {site.listings_seen:4d} → "
                 f"MUST1段目通過 {site.listings_kept:4d} → 新規 {site.listings_new:4d} / "
                 f"詳細 {site.details_fetched:3d}件 / 設備 {site.features_extracted:4d}件"
+                # ⚠ エラーではなく正常な状態変化なので、エラー欄ではなく
+                # ここに出す（→ 課題#55）。0件のときは何も足さない
+                + (f" / 掲載終了 {site.details_sold:3d}件" if site.details_sold else "")
             )
         if summary.skipped_sites:
             # 理由はサイトごとに違う（アダプタ未実装 / is_active=false /
