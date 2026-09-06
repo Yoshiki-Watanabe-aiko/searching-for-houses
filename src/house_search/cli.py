@@ -533,9 +533,17 @@ def _cmd_digest(args: argparse.Namespace) -> int:
     exit_code = 0
     for pattern in _load_patterns(args.pattern):
         result = digest(runtime, pattern, dry_run=args.dry_run)
-        state = "（送信せず）" if args.dry_run else ("送信成功" if result.sent else "送信失敗")
+        # ⚠ 対象0件（skipped）を「送信失敗」と同じ扱いにしない（→ 課題#28）。
+        #   終了コードはタスクの「前回の結果」＝唯一の異常検知経路なので、
+        #   正常な「送るものが無かった」で非0にすると本物の失敗が埋もれる。
+        if result.skipped:
+            state = "対象0件のため送信せず"
+        elif args.dry_run:
+            state = "（送信せず）"
+        else:
+            state = "送信成功" if result.sent else "送信失敗"
         print(f"{result.pattern_name}: 上位 {result.entries}件 {state}")
-        if not args.dry_run and not result.sent:
+        if not args.dry_run and not result.sent and not result.skipped:
             exit_code = 1
     return exit_code
 

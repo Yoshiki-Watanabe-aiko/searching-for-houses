@@ -39,6 +39,10 @@ class DigestResult:
     pattern_name: str
     entries: int
     sent: bool
+    #: 対象0件のため送らなかった。⚠ **送信失敗と必ず区別する**（→ 課題#28）。
+    #: CLI は ``not sent`` で終了コード1を返すので、ここを混ぜると
+    #: タスクの「前回の結果」で本物の失敗を見分けられなくなる。
+    skipped: bool = False
 
 
 @dataclass(slots=True)
@@ -179,6 +183,13 @@ def digest(runtime: Runtime, pattern, *, dry_run: bool = False) -> DigestResult:
         for index, row in enumerate(rows, start=1)
         if row.listing_id in views
     ]
+
+    # ⚠ 対象0件なら送らない（→ 課題#28）。見出しだけの便が定期的に届くと
+    #   ダイジェストそのものが読まれなくなり、「読まれない通知は本物のエラーを
+    #   見逃すという形で実害になる」（要件定義書 §14.1）。
+    #   ⚠ 送信履歴にも残さない（送っていない便を追記専用テーブルへ入れない）。
+    if not entries:
+        return DigestResult(pattern_name=pattern.name, entries=0, sent=False, skipped=True)
 
     message = build_digest_message(
         entries, pattern_name=pattern.name, digest_group=pattern.ranking.digest_group
