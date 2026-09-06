@@ -952,11 +952,23 @@ def detail_queue(
     conn: Connection,
     *,
     site_id: int,
+    property_type_id: int,
     limit: int,
     oldest_limit: int = 0,
     listing_ids: list[int] | None = None,
 ) -> list[tuple[int, str]]:
     """詳細ページ未取得の物件を取得キューとして引く。
+
+    ⚠⚠ **``property_type_id`` は必須。同じサイトでも種別が違えばキューを混ぜない**
+    （→ 課題#4）。`scan` は ``get_scraper(site_code, pattern.property_type)`` で
+    引いたアダプタで詳細を解析するので、種別で絞らないと**賃貸の詳細ページを
+    売買のパーサで解析する**（逆も同じ）。
+    ⚠ **例外にならない。** 実測（2026-09-06）では売買パターンの `scan` が
+    賃貸18件を掴み、``raw_features_text`` が NULL のまま ``detail_fetched_at``
+    だけ入った。キューは ``detail_fetched_at IS NULL`` しか拾わないので、
+    その18件は**設備0件のまま二度と再取得されない**（設備は weight 118/263 なので
+    構造的に45%沈む＝課題#54 と同型）。
+    ⚠ **既定値を持たせない。** 渡し忘れたときに黙って汚染が戻るため。
 
     2つの母集団の**和集合**を ``limit`` 件まで返す（→ 課題#54）。
 
@@ -977,6 +989,7 @@ def detail_queue(
     """
     params: dict[str, Any] = {
         "site_id": site_id,
+        "property_type_id": property_type_id,
         "limit": limit,
         "oldest_limit": oldest_limit,
     }
@@ -990,7 +1003,8 @@ def detail_queue(
         text(
             "WITH pending AS ("
             "  SELECT id, url, first_seen_at FROM t_listings "
-            "   WHERE site_id = :site_id AND detail_fetched_at IS NULL"
+            "   WHERE site_id = :site_id AND property_type_id = :property_type_id"
+            "     AND detail_fetched_at IS NULL"
             f"     AND status = 'active' {extra}"
             "), oldest AS ("
             # LIMIT 0 なら空集合になるので、無効化のための WHERE は要らない
