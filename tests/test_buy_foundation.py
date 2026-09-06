@@ -258,8 +258,23 @@ def test_未対応の組はNoneを返す() -> None:
 
     黙って無視すると「実装済みだが未配線」を見逃す。
     """
-    assert get_scraper("SUUMO", "SHINCHIKU_MANSION") is None
+    # ⚠ ライフルホームズの売買は**入れないと決めた**（取得枠を賃貸と食い合う → 課題#4）。
+    # 未実装ではなく方針なので、実装したくなったらここも一緒に見直す
     assert get_scraper("HOMES", "CHUKO_MANSION") is None
+    assert get_scraper("SUUMO", "CHUKO_KODATE") is None
+
+
+def test_新築マンションは中古と別のアダプタを引く() -> None:
+    """Phase 6 手順6-2 で配線した（それまでは None を返していた）。
+
+    ⚠ **詳細ページの構造が中古とまったく違う**（棟は設備ブロックが無く
+    ``th``/``td`` が9項目だけ）。同じアダプタで兼ねると**設備原文が空になるだけで
+    例外にならない**ので、種別ごとに別のアダプタを引くことを固定する。
+    """
+    shinchiku = get_scraper("SUUMO", "SHINCHIKU_MANSION")
+    chuko = get_scraper("SUUMO", "CHUKO_MANSION")
+    assert type(shinchiku).__name__ == "SuumoNewMansionScraper"
+    assert type(shinchiku) is not type(chuko)
 
 
 def test_レジストリのキーはサイトコードと種別の組になっている() -> None:
@@ -279,4 +294,11 @@ def test_賃貸アダプタは種別を宣言しないので賃貸として登�
     from house_search.scrape.suumo import SuumoScraper
 
     assert not hasattr(SuumoScraper, "property_type")
-    assert {ptype for _code, ptype in SCRAPERS} == {"CHINTAI", "CHUKO_MANSION"}
+    # ⚠ 種別が増えたら**ここが落ちて気づく**のが狙い。増やすときは
+    # 通知の金額表示（notify/format.py）・辞書のファミリ・詳細キューの絞り込みも
+    # その種別で通ることを確かめてから足す（→ 課題#4 手順1・課題#54）
+    assert {ptype for _code, ptype in SCRAPERS} == {
+        "CHINTAI",
+        "CHUKO_MANSION",
+        "SHINCHIKU_MANSION",
+    }

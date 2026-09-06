@@ -61,6 +61,7 @@ from house_search.scrape.nifty import NiftyScraper
 from house_search.scrape.smocca import SmoccaScraper
 from house_search.scrape.suumo import SuumoScraper
 from house_search.scrape.suumo_buy import SuumoBuyMansionScraper
+from house_search.scrape.suumo_shinchiku import SuumoNewMansionScraper
 from house_search.scrape.ur import UrScraper
 
 # **(サイトコード, 物件種別) → アダプタ。**
@@ -97,6 +98,7 @@ SCRAPERS: dict[tuple[str, str], type] = {
         HomemateScraper,
         ChintaiNetScraper,
         SuumoBuyMansionScraper,
+        SuumoNewMansionScraper,
     )
 }
 
