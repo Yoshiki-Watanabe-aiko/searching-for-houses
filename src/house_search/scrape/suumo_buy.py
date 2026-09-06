@@ -28,6 +28,8 @@ from house_search.scrape.base import (
     clean_address,
     parse_area_sqm,
     parse_built_on,
+    parse_floor,
+    parse_total_floors,
     parse_walk_minutes,
     parse_yen,
     query_separator,
@@ -259,6 +261,14 @@ class SuumoBuyMansionScraper:
             ),
             mgmt_fee_monthly=parse_yen(values.get("管理費")),
             repair_reserve_monthly=parse_yen(values.get("修繕積立金")),
+            # ⚠⚠ **所在階はマンションファミリの ``dedup_key`` の構成要素**で、
+            # 1つでも欠けるとキーそのものを作らない（→ ADR 0012）。読み落とすと
+            # **名寄せが静かに失敗する**だけで例外にも件数の減少にもならない
+            # （実測 2026-09-06: dedup_key が 0/60 だった）。
+            floor_num=parse_floor(values.get("所在階")),
+            # 「RC13階地下1階建」。⚠ 地下の階数を拾わないよう
+            # ``_TOTAL_FLOORS`` を直してある（→ 課題#4）
+            total_floors=parse_total_floors(values.get("構造・階建て")),
             address=clean_address(values.get("所在地")),
             walk_minutes=_walk_minutes(access),
             type_specific_attrs={
