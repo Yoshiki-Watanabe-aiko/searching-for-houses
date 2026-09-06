@@ -175,12 +175,14 @@ _UPSERT = text(
         price, price_prev, mgmt_fee_monthly, deposit_amount, key_money_amount,
         area_sqm, layout, floor_num, total_floors, age_years,
         address, prefecture, city_id, station_info, walk_minutes, image_url,
+        price_min, price_max, type_specific_attrs,
         status, first_seen_at, last_seen_at, created_at, updated_at
     ) VALUES (
         :site_id, :property_type_id, :external_id, :url, :title,
         :price, :price_prev, :mgmt_fee_monthly, :deposit_amount, :key_money_amount,
         :area_sqm, :layout, :floor_num, :total_floors, :age_years,
         :address, :prefecture, :city_id, :station_info, :walk_minutes, :image_url,
+        :price_min, :price_max, CAST(:type_specific_attrs AS jsonb),
         'active', now(), now(), now(), now()
     )
     ON CONFLICT (site_id, external_id) DO UPDATE SET
@@ -202,6 +204,18 @@ _UPSERT = text(
         station_info = COALESCE(EXCLUDED.station_info, t_listings.station_info),
         walk_minutes = COALESCE(EXCLUDED.walk_minutes, t_listings.walk_minutes),
         image_url = COALESCE(EXCLUDED.image_url, t_listings.image_url),
+        -- ⚠ 価格レンジは ``price`` と同じく素直に上書きする（一覧が正典）。
+        -- COALESCE にすると「レンジ表示から単一価格へ変わった」掲載で古い
+        -- レンジが残り続ける。
+        price_min = EXCLUDED.price_min,
+        price_max = EXCLUDED.price_max,
+        -- ⚠ 詳細取得（``save_detail``）が入れた項目を消さないようマージする。
+        -- ⚠⚠ **マージなので、価格が付いたときは ``price_undecided: false`` を
+        -- 明示的に書くこと。** 書かないと未定フラグが残り続け、価格があるのに
+        -- 「価格未定」と表示される（例外にならない）。
+        type_specific_attrs = COALESCE(
+            t_listings.type_specific_attrs, '{}'::jsonb
+        ) || EXCLUDED.type_specific_attrs,
         status = 'active',
         last_seen_at = now(),
         updated_at = now()
@@ -379,6 +393,11 @@ def upsert_listings(
                 "station_info": listing.station_info,
                 "walk_minutes": listing.walk_minutes,
                 "image_url": listing.image_url,
+                "price_min": listing.price_min,
+                "price_max": listing.price_max,
+                "type_specific_attrs": json.dumps(
+                    listing.type_specific_attrs, ensure_ascii=False
+                ),
             },
         ).scalar_one()
 
