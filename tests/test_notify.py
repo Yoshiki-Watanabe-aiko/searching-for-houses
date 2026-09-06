@@ -10,13 +10,15 @@ from house_search.notify.discord import MAX_EMBEDS_PER_MESSAGE, DiscordSender
 from house_search.notify.format import (
     COLORS,
     MAX_DESCRIPTION_CHARS,
+    MAX_STATIONS_IN_NOTIFY,
     DigestEntry,
     NotifiableListing,
+    access_lines,
     build_digest_message,
     build_error_message,
     build_listing_message,
 )
-from house_search.scoring.listing_view import ListingView
+from house_search.scoring.listing_view import ListingView, StationAccess
 from house_search.scoring.score import calculate_score
 
 PATTERN = parse_pattern(
@@ -225,3 +227,71 @@ def test_embed数の上限を超えたら送る前に落とす() -> None:
     payload = {"embeds": [{"title": str(i)} for i in range(MAX_EMBEDS_PER_MESSAGE + 1)]}
     with pytest.raises(ValueError, match="embed"):
         sender.send("https://discord/webhook", payload)
+
+
+# --- 交通欄（駅ごとの徒歩・通勤） ---------------------------------------
+# ⚠ 「徒歩10分」だけではどの駅からか分からない、というユーザー報告（2026-09-07）。
+# ⚠ **徒歩が最小の駅と通勤が最短の駅は別になりうる**（採点はそれぞれの最小を採る）。
+
+
+def _prop_with_stations(stations: tuple[StationAccess, ...], **kwargs: object):
+    from house_search.notify.format import NotifiableListing
+
+    base = dict(
+        listing_id=1,
+        site_code="SUUMO",
+        url="https://example.invalid/1",
+        title="テスト物件",
+        price=70000,
+        mgmt_fee_monthly=3000,
+        rent_total=73000,
+        layout="2DK",
+        area_sqm=40.0,
+        age_years=10,
+        walk_minutes=4,
+        address="東京都大田区北千束１",
+        stations=stations,
+    )
+    base.update(kwargs)
+    return NotifiableListing(**base)  # type: ignore[arg-type]
+
+
+def test_交通欄は駅ごとに徒歩と通勤を並べる() -> None:
+    prop = _prop_with_stations(
+        (
+            StationAccess("大岡山", walk_minutes=4, commute_minutes=18),
+            StationAccess("北千束", walk_minutes=7, commute_minutes=22),
+        ),
+        commute_destination="芝公園",
+    )
+    assert access_lines(prop) == (
+        "・大岡山 徒歩4分 → 芝公園 18分\n・北千束 徒歩7分 → 芝公園 22分"
+    )
+
+
+def test_バス便の駅は徒歩不明と明示する() -> None:
+    """⚠ 黙って省くと駅そのものが無いように見える（→ 課題#58）。"""
+    prop = _prop_with_stations(
+        (StationAccess("流山セントラルパーク", walk_minutes=None, commute_minutes=55),),
+        commute_destination="芝公園",
+    )
+    assert access_lines(prop) == "・流山セントラルパーク 徒歩不明 → 芝公園 55分"
+
+
+def test_通勤の目的地が無ければ駅と徒歩だけ出す() -> None:
+    prop = _prop_with_stations((StationAccess("大岡山", walk_minutes=4),))
+    assert access_lines(prop) == "・大岡山 徒歩4分"
+
+
+def test_駅が多いときは件数を明示して打ち切る() -> None:
+    stations = tuple(
+        StationAccess(f"駅{i}", walk_minutes=i) for i in range(1, MAX_STATIONS_IN_NOTIFY + 3)
+    )
+    lines = access_lines(_prop_with_stations(stations))
+    assert lines is not None
+    assert lines.count("・") == MAX_STATIONS_IN_NOTIFY
+    assert lines.endswith("（ほか2駅）")
+
+
+def test_駅が無ければ交通欄を出さない() -> None:
+    assert access_lines(_prop_with_stations(())) is None

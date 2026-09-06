@@ -37,6 +37,22 @@ def normalize_layout(layout: str | None) -> str | None:
 
 
 @dataclass(frozen=True, slots=True)
+class StationAccess:
+    """掲載が挙げる駅の1件。**表示専用**で採点には使わない。
+
+    ⚠ 通知の「徒歩10分」が**どの駅からなのか分からない**という
+    ユーザー報告（2026-09-07）への対応。掲載は複数駅を挙げるのが普通で、
+    徒歩は最小の駅、通勤は最短の駅と**別の駅になりうる**。
+
+    ``walk_minutes`` は駅徒歩だけ（バス便は None → 課題#58）。
+    """
+
+    name: str
+    walk_minutes: int | None = None
+    commute_minutes: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ListingView:
     """1物件の採点に必要な属性一式。
 
@@ -108,6 +124,9 @@ class ListingView:
     address: str | None = None
     detail_fetched: bool = False
     feature_codes: frozenset[str] = field(default_factory=frozenset)
+    # 掲載（名寄せしたグループ全体）が挙げる駅。**表示専用**で採点には使わない
+    # （徒歩と通勤の数値は walk_minutes / commute_minutes が持つ）。
+    stations: tuple[StationAccess, ...] = ()
 
     @property
     def normalized_layout(self) -> str | None:
