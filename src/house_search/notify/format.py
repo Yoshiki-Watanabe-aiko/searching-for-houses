@@ -313,10 +313,15 @@ def build_listing_embed(
         )
 
     if hits := score.top_hits(3):
+        # ⚠ **満点を併記する。** 「洪水リスクの低さ（15点）」だけだと
+        # 「浸水深が15点」と読めてしまう（実際はリスクが低いことへの加点）。
+        # weight と並べて「満点のうち何点取れたか」と読めるようにする。
         fields.append(
             {
                 "name": "得点上位",
-                "value": "\n".join(f"・{item.name}（{item.points:.0f}点）" for item in hits),
+                "value": "\n".join(
+                    f"・{item.name}（{item.points:.0f}/{item.weight:.0f}点）" for item in hits
+                ),
                 "inline": False,
             }
         )

@@ -108,20 +108,24 @@ def test_区域外は満点で加点され未解決は分母から外れる() ->
         ]
     )
 
-    safe = calculate_score(ListingView(rent_total=50000, flood_rank_avg=0.0), want)
+    safe = calculate_score(
+        ListingView(rent_total=50000, flood_rank_avg=0.0), want, condition_names={}
+    )
     flood_item = next(i for i in safe.items if i.code == "flood_rank_avg")
     assert flood_item.status == STATUS_HIT
     assert flood_item.missing is False
     assert safe.score == pytest.approx(100.0)
 
-    unknown = calculate_score(ListingView(rent_total=50000), want)
+    unknown = calculate_score(ListingView(rent_total=50000), want, condition_names={})
     flood_item = next(i for i in unknown.items if i.code == "flood_rank_avg")
     assert flood_item.status == STATUS_UNKNOWN
     assert flood_item.missing is True
     # 分母から外れるので、賃料だけで満点になる（0点扱いなら50点に沈む）。
     assert unknown.score == pytest.approx(100.0)
 
-    risky = calculate_score(ListingView(rent_total=50000, flood_rank_avg=3.0), want)
+    risky = calculate_score(
+        ListingView(rent_total=50000, flood_rank_avg=3.0), want, condition_names={}
+    )
     assert risky.score == pytest.approx(50.0)
 
 

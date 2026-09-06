@@ -181,7 +181,7 @@ def test_設備が全て揃えば満点() -> None:
         want={"features": [{"code": "SEC_AUTOLOCK", "weight": 10}]},
     )
     view = make_view(feature_codes=frozenset({"SEC_AUTOLOCK"}))
-    assert calculate_score(view, pattern.want).score == 100.0
+    assert calculate_score(view, pattern.want, condition_names={}).score == 100.0
 
 
 def test_数値条件はbest_worstで線形正規化される() -> None:
@@ -189,15 +189,18 @@ def test_数値条件はbest_worstで線形正規化される() -> None:
         want={"numeric": [{"metric": "rent_total", "weight": 10, "best": 50000, "worst": 70000}]}
     )
     # 賃料60000 + 管理費0 → ちょうど中間
-    assert calculate_score(make_view(price=60000, mgmt_fee_monthly=0), pattern.want).score == 50.0
+    mid = make_view(price=60000, mgmt_fee_monthly=0)
+    assert calculate_score(mid, pattern.want, condition_names={}).score == 50.0
 
 
 def test_範囲外の値はクランプされる() -> None:
     pattern = make_pattern(
         want={"numeric": [{"metric": "rent_total", "weight": 10, "best": 50000, "worst": 70000}]}
     )
-    assert calculate_score(make_view(price=30000, mgmt_fee_monthly=0), pattern.want).score == 100.0
-    assert calculate_score(make_view(price=90000, mgmt_fee_monthly=0), pattern.want).score == 0.0
+    cheap = make_view(price=30000, mgmt_fee_monthly=0)
+    assert calculate_score(cheap, pattern.want, condition_names={}).score == 100.0
+    pricey = make_view(price=90000, mgmt_fee_monthly=0)
+    assert calculate_score(pricey, pattern.want, condition_names={}).score == 0.0
 
 
 def test_any_ofはいずれか1つ該当すれば満点() -> None:
@@ -206,9 +209,9 @@ def test_any_ofはいずれか1つ該当すれば満点() -> None:
     )
     for code in ("STRUCT_RC", "STRUCT_SRC"):
         view = make_view(feature_codes=frozenset({code}))
-        assert calculate_score(view, pattern.want).score == 100.0
+        assert calculate_score(view, pattern.want, condition_names={}).score == 100.0
     wood = make_view(feature_codes=frozenset({"STRUCT_WOOD"}))
-    assert calculate_score(wood, pattern.want).score == 0.0
+    assert calculate_score(wood, pattern.want, condition_names={}).score == 0.0
 
 
 def test_any_ofは分母を二重に消費しない() -> None:
@@ -232,8 +235,8 @@ def test_any_ofは分母を二重に消費しない() -> None:
         }
     )
     view = make_view(feature_codes=frozenset({"STRUCT_RC", "SEC_AUTOLOCK"}))
-    assert calculate_score(view, merged.want).score == 100.0
-    assert calculate_score(view, split.want).score < 100.0
+    assert calculate_score(view, merged.want, condition_names={}).score == 100.0
+    assert calculate_score(view, split.want, condition_names={}).score < 100.0
 
 
 def test_欠損metricは分子と分母の双方から除外される() -> None:
@@ -247,7 +250,7 @@ def test_欠損metricは分子と分母の双方から除外される() -> None:
         }
     )
     view = make_view(price=None, mgmt_fee_monthly=None, area_sqm=45.0)
-    result = calculate_score(view, pattern.want)
+    result = calculate_score(view, pattern.want, condition_names={})
     # 面積だけが満点 → 欠損を除外して再正規化すれば100点
     assert result.score == 100.0
     missing = [item for item in result.items if item.missing]
@@ -262,7 +265,7 @@ def test_設備の未確認は0点だが分母には残る() -> None:
         }
     )
     view = make_view(detail_fetched=False, area_sqm=45.0)
-    result = calculate_score(view, pattern.want)
+    result = calculate_score(view, pattern.want, condition_names={})
     # 未確認を満点扱いにするほうが誤りが大きいので、0点として分母に残す
     assert result.score == 50.0
     assert result.unknown_count == 1
@@ -277,9 +280,37 @@ def test_内訳は全項目を保持しJSON化できる() -> None:
             "numeric": [{"metric": "area_sqm", "weight": 10, "best": 45, "worst": 30}],
         }
     )
-    breakdown = calculate_score(make_view(), pattern.want).breakdown()
+    breakdown = calculate_score(make_view(), pattern.want, condition_names={}).breakdown()
     assert len(breakdown) == 2
     assert {"code", "name", "kind", "weight", "s", "points", "status"} <= set(breakdown[0])
+
+
+def test_設備の名前は条件名を引く() -> None:
+    """⚠ コードのままだと通知に ``INT_LAUNDRY`` と出て何の条件か分からない。"""
+    pattern = make_pattern(want={"features": [{"code": "INT_LAUNDRY", "weight": 5}]})
+    view = make_view(feature_codes=frozenset({"INT_LAUNDRY"}))
+    names = {"INT_LAUNDRY": "室内洗濯機置場"}
+    item = calculate_score(view, pattern.want, condition_names=names).items[0]
+    assert item.code == "INT_LAUNDRY"
+    assert item.name == "室内洗濯機置場"
+
+
+def test_any_ofの名前は条件名を連結する() -> None:
+    pattern = make_pattern(
+        want={"features": [{"any_of": ["STRUCT_RC", "STRUCT_SRC"], "weight": 6}]}
+    )
+    view = make_view(feature_codes=frozenset({"STRUCT_RC"}))
+    names = {"STRUCT_RC": "鉄筋コンクリート（RC）", "STRUCT_SRC": "鉄骨鉄筋コンクリート（SRC）"}
+    item = calculate_score(view, pattern.want, condition_names=names).items[0]
+    assert item.name == "鉄筋コンクリート（RC） / 鉄骨鉄筋コンクリート（SRC）"
+
+
+def test_名前を引けない条件はコードのまま出す() -> None:
+    """辞書を先に育ててマスタへ後から条件を足す途中の状態でも例外にしない。"""
+    pattern = make_pattern(want={"features": [{"code": "SEC_AUTOLOCK", "weight": 5}]})
+    view = make_view(feature_codes=frozenset({"SEC_AUTOLOCK"}))
+    item = calculate_score(view, pattern.want, condition_names={}).items[0]
+    assert item.name == "SEC_AUTOLOCK"
 
 
 def test_得点上位は寄与の大きい順で同点はコード順() -> None:
@@ -293,7 +324,7 @@ def test_得点上位は寄与の大きい順で同点はコード順() -> None:
         }
     )
     view = make_view(feature_codes=frozenset({"SEC_AUTOLOCK", "INT_LAUNDRY", "BATH_SEPARATE"}))
-    top = calculate_score(view, pattern.want).top_hits(3)
+    top = calculate_score(view, pattern.want, condition_names={}).top_hits(3)
     assert [item.code for item in top] == ["BATH_SEPARATE", "INT_LAUNDRY", "SEC_AUTOLOCK"]
 
 
@@ -302,7 +333,9 @@ def test_順位は同点なら物件ID昇順で安定する() -> None:
         want={"numeric": [{"metric": "area_sqm", "weight": 1, "best": 45, "worst": 30}]}
     )
     results = {
-        pid: calculate_score(make_view(listing_id=pid, area_sqm=40.0), pattern.want)
+        pid: calculate_score(
+            make_view(listing_id=pid, area_sqm=40.0), pattern.want, condition_names={}
+        )
         for pid in (30, 10, 20)
     }
     assert rank(results) == {10: 1, 20: 2, 30: 3}
@@ -342,7 +375,7 @@ _DETERMINISM_SCRIPT = textwrap.dedent(
         price=58000, mgmt_fee_monthly=2000, area_sqm=38.0, detail_fetched=True,
         feature_codes=frozenset({"SEC_AUTOLOCK", "STRUCT_RC", "INT_LAUNDRY"}),
     )
-    result = calculate_score(view, pattern.want)
+    result = calculate_score(view, pattern.want, condition_names={})
     print(result.score, [i.code for i in result.items], pattern.config_hash())
     """
 )

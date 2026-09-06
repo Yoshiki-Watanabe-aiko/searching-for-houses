@@ -110,7 +110,11 @@ def rescore(runtime: Runtime, pattern) -> RescoreResult:
     with runtime.engine.begin() as conn:
         for view in views.values():
             must = evaluate_must(view, pattern.must)
-            score = calculate_score(view, pattern.want) if not must.is_fail else None
+            score = (
+                calculate_score(view, pattern.want, condition_names=runtime.condition_names)
+                if not must.is_fail
+                else None
+            )
             persist.save_score(
                 conn,
                 listing_id=view.listing_id,
@@ -178,7 +182,9 @@ def digest(runtime: Runtime, pattern, *, dry_run: bool = False) -> DigestResult:
                 member_count=memberships[row.listing_id].member_count,
                 other_site_codes=memberships[row.listing_id].other_site_codes,
             ),
-            score=calculate_score(views[row.listing_id], pattern.want),
+            score=calculate_score(
+                views[row.listing_id], pattern.want, condition_names=runtime.condition_names
+            ),
         )
         for index, row in enumerate(rows, start=1)
         if row.listing_id in views

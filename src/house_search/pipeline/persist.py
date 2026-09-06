@@ -52,6 +52,16 @@ def load_lookup(conn: Connection, table: str) -> dict[str, int]:
     return {code: row_id for code, row_id in conn.execute(text(f"SELECT code, id FROM {table}"))}
 
 
+def load_condition_names(conn: Connection) -> dict[str, str]:
+    """``code -> 日本語名`` の引き当て表を作る（採点内訳の表示用）。
+
+    ⚠ **検索パターンに依存しない静的なマスタ**なので、``scan`` の開始時に1度だけ組んで
+    ``calculate_score`` へ引数で渡す（``AddressIndex``・``StationIndex`` と同じ形で、
+    採点は DB に触れない純関数のまま保つ）。
+    """
+    return {code: name for code, name in conn.execute(text("SELECT code, name FROM m_conditions"))}
+
+
 @dataclass(frozen=True, slots=True)
 class CityIndex:
     """住所から市区町村IDを引くための索引。``scan`` の開始時に1度だけ組む。

@@ -49,7 +49,9 @@ def conn(test_engine: Engine) -> Iterator[Connection]:
 
 def _runtime(engine: Engine, sender: _RecordingSender) -> SimpleNamespace:
     settings = SimpleNamespace(webhook_url=lambda ref: f"https://example.invalid/{ref}")
-    return SimpleNamespace(engine=engine, settings=settings, sender=sender)
+    return SimpleNamespace(
+        engine=engine, settings=settings, sender=sender, condition_names={}
+    )
 
 
 def _pattern(name: str = _PATTERN_NAME) -> SimpleNamespace:
