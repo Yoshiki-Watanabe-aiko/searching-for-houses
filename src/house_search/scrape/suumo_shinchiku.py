@@ -29,14 +29,24 @@ from lxml import html as lxml_html
 
 from house_search.scrape.area import CITY_VALUE_MAPPING, AreaTarget
 from house_search.scrape.base import (
+    ScrapedDetail,
     ScrapedListing,
     clean_address,
     parse_area_sqm,
+    parse_built_on,
+    parse_floor,
+    parse_total_floors,
     parse_walk_minutes,
     parse_yen,
     query_separator,
 )
+from house_search.scrape.fetch import SiteFetcher
 from house_search.scrape.prefectures import PREFECTURE_ROMAJI
+
+# ⚠ 詳細ページの ``th``/``td`` と設備ブロックは**中古マンションと同じ構造**
+# （実測 2026-09-07・個別住戸のみ）。別々に書くと片方を直したとき
+# もう片方が黙って古くなるので共用する
+from house_search.scrape.suumo_buy import features_text, read_spec_table
 
 SITE_CODE = "SUUMO"
 BASE_URL = "https://suumo.jp"
@@ -53,6 +63,20 @@ _PRICE_SEPARATOR = re.compile(r"[～~〜・]")
 # 「``/nc_数字/`` で終わる」ことまで見る
 _DETAIL_PATH = re.compile(r"/nc_\d+/$")
 _UNDECIDED = "価格未定"
+# 詳細ページの見出しクラス。⚠ **中古は ``secTitleInnerR`` で別物**（実測 2026-09-07）。
+# 流用すると設備原文が空になるだけで例外にならない
+_FEATURE_HEADING_CLASS = "secTitleInnerK"
+# 棟の所在地に付く注記（``板橋１-3001、3002（地番）``）。⚠ **地番は住居表示ではない**
+# ので残すと実在しない住所として正規化される（→ ADR 0020 の番地誤認と同型）
+_CHIBAN_NOTE = re.compile(r"[（(]地番[）)].*$")
+
+
+def _detail_address(value: str | None) -> str | None:
+    """詳細ページの所在地から導線リンクと地番の注記を落とす。"""
+    cleaned = clean_address(value)
+    if not cleaned:
+        return None
+    return _CHIBAN_NOTE.sub("", cleaned).strip() or None
 
 
 def parse_price_range(text: str | None) -> tuple[int | None, int | None]:
@@ -296,6 +320,63 @@ class SuumoNewMansionScraper:
     def detail_url(self, listing_url: str) -> str:
         """一覧のリンクをそのまま使う。"""
         return listing_url
+
+    def parse_detail(self, html_text: str) -> ScrapedDetail:
+        """詳細ページHTMLから追加情報を取り出す。
+
+        ⚠⚠ **一覧と違い、詳細ページは棟と個別住戸で構造がまったく別物**
+        （実測 2026-09-07）。一覧が同一だったからといって詳細も同じとは限らない。
+
+        | | 棟 ``nc_67734880`` | 個別住戸 ``nc_21371763`` |
+        |---|---|---|
+        | 見出し | ``section_h2-title`` | ``secTitleInnerK`` |
+        | 設備ブロック | **無い**（``secTitleInner*`` が0件） | 特徴ピックアップ35タグ |
+        | 管理費・修繕積立金・所在階・築年月 | **無い** | ある |
+        | ``th``/``td`` | 9項目だけ | 中古マンションとほぼ同じ |
+
+        ⚠⚠ **棟の h2「建物の特徴」「室内の特徴」を設備原文に入れてはいけない。**
+        中身は ``JR「板橋」駅直結徒歩1分 × 三大副都心直通`` のような広告の
+        キャッチコピーで設備名ではない。辞書照合は本文全体への部分一致なので、
+        入れると**その棟に無い設備が拾われて設備数が黙って水増しされる**
+        （CHINTAI.net の用語集展開・HOMES の ``sr-only`` と同型 → 課題#37）。
+        棟は ``secTitleInnerK`` が0件なので、何もしなくても原文なしになる。
+
+        ⚠ 管理費は ``1万9500円／月`` の形。**「万」の後ろの下位桁を落とすと
+        10,000 になる**（課題#53 で ``parse_yen`` を直してある）。
+        """
+        doc = lxml_html.fromstring(html_text)
+        values = read_spec_table(doc)
+        access = values.get("交通")
+        return ScrapedDetail(
+            raw_features_text=features_text(doc, _FEATURE_HEADING_CLASS),
+            # ⚠ **括弧が全角と半角の2種類ある**（同じページに両方が出る）
+            built_on=parse_built_on(
+                values.get("完成時期（築年月）") or values.get("完成時期(築年月)")
+            ),
+            mgmt_fee_monthly=parse_yen(values.get("管理費")),
+            repair_reserve_monthly=parse_yen(values.get("修繕積立金")),
+            # ⚠ **棟には無い。** マンションファミリの ``dedup_key`` の構成要素なので、
+            # 棟はキーを作れず名寄せされずに単独で残る（クラス docstring のとおり設計どおり）
+            floor_num=parse_floor(values.get("所在階")),
+            total_floors=parse_total_floors(values.get("構造・階建て")),
+            address=_detail_address(values.get("所在地")),
+            walk_minutes=_walk_minutes(access),
+            type_specific_attrs={
+                key: values[key]
+                for key in ("敷地の権利形態", "用途地域", "構造・階建て", "総戸数")
+                if values.get(key)
+            },
+        )
+
+    def is_sold(self, fetcher: SiteFetcher, url: str) -> bool:
+        """掲載終了は **HTTP 404**（実測 2026-09-07・中古マンションと同じ）。
+
+        ⚠ 賃貸の ``_SOLD_MARKERS``（本文の文言）は流用しない。404 のページの
+        ``title`` は「エラー｜SUUMO(スーモ)」で賃貸のエラーページと同じ文字列に
+        なるため、本文で判定すると**正常なページの解析失敗と区別できない**。
+        """
+        response = fetcher.get(url)
+        return response.status_code == 404
 
 
 def _read_prices(unit) -> tuple[int | None, int | None, int | None, str | None, bool]:

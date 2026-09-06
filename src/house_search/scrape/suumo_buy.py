@@ -108,8 +108,33 @@ def _walk_minutes(value: str | None) -> int | None:
     return parse_walk_minutes(value)
 
 
-def _features_text(doc) -> str | None:
+def read_spec_table(doc) -> dict[str, str]:
+    """物件概要の ``th``/``td`` をラベル → 値の辞書にする。
+
+    ⚠ **``tr`` の中に ``th``/``td`` が複数対並ぶ**ので ``th.getnext()`` で読む。
+    ``tr`` から ``td`` を拾うと**値が1つずれる**（実測で管理費に販売価格が入った）。
+
+    ⚠ **新築マンションも同じ構造**なので共用する（→ ``suumo_shinchiku``）。
+    ただし**個別住戸だけ**で、棟（プロジェクト）の詳細ページは
+    ``所在地``・``交通``・``総戸数`` など9項目しか持たない（実測 2026-09-07）。
+    """
+    values: dict[str, str] = {}
+    for th in doc.cssselect("th"):
+        td = th.getnext()
+        if td is None or td.tag != "td":
+            continue
+        label = _label(th.text_content())
+        if label and label not in values:
+            values[label] = " ".join(td.text_content().split())
+    return values
+
+
+def features_text(doc, heading_class: str = "secTitleInnerR") -> str | None:
     """設備の原文を作る。**「特徴ピックアップ」と「設備仕様」の2ブロック**から採る。
+
+    ⚠ **見出しのクラスは種別で違う**（中古 ``secTitleInnerR`` /
+    新築 ``secTitleInnerK``・実測 2026-09-07）。同じ名前だと思って決め打ちすると
+    **設備原文が空になるだけで例外にならない**ので引数で受け取る。
 
     ⚠⚠ **設備仕様の説明文（``div.p10``）は入れない。** 1つのセルに
     「設備名 ＋ その設備の説明」が同居しており、説明文には
@@ -121,7 +146,7 @@ def _features_text(doc) -> str | None:
     キャッチコピーで、未知表記が文断片で埋まる（賃貸EX → 課題#19 と同型）。
     """
     parts: list[str] = []
-    for heading in doc.cssselect("h3.secTitleInnerR"):
+    for heading in doc.cssselect(f"h3.{heading_class}"):
         name = " ".join(heading.text_content().split())
         if name not in ("特徴ピックアップ", "設備仕様"):
             continue
@@ -234,27 +259,20 @@ class SuumoBuyMansionScraper:
     def parse_detail(self, html_text: str) -> ScrapedDetail:
         """詳細ページHTMLから追加情報を取り出す。
 
-        ⚠ **``tr`` の中に ``th``/``td`` が複数対並ぶ**ので ``th.getnext()`` で読む。
+        ⚠ **``tr`` の中に ``th``/``td`` が複数対並ぶ**ので ``read_spec_table`` で読む。
         ``tr`` から ``td`` を拾うと**値が1つずれる**（実測で管理費に販売価格が入った）。
 
-        設備の原文は ``_features_text`` が「特徴ピックアップ」と「設備仕様」から作る。
+        設備の原文は ``features_text`` が「特徴ピックアップ」と「設備仕様」から作る。
         ⚠ **売買辞書 ``buy:`` はまだ空なので抽出は0件になる**が、原文さえ貯まれば
         ``report-unknown`` → 辞書追記 → ``re-extract`` で**再取得なしに反映できる**
         （→ 要件定義書 §7.3）。原文を保存しないとこのループが回らない。
         """
         doc = lxml_html.fromstring(html_text)
-        values: dict[str, str] = {}
-        for th in doc.cssselect("th"):
-            td = th.getnext()
-            if td is None or td.tag != "td":
-                continue
-            label = _label(th.text_content())
-            if label and label not in values:
-                values[label] = " ".join(td.text_content().split())
+        values = read_spec_table(doc)
 
         access = values.get("交通")
         return ScrapedDetail(
-            raw_features_text=_features_text(doc),
+            raw_features_text=features_text(doc),
             # ⚠ **括弧が全角と半角の2種類ある**（同じページに両方が出る）
             built_on=parse_built_on(
                 values.get("完成時期（築年月）") or values.get("完成時期(築年月)")
