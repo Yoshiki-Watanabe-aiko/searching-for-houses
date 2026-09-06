@@ -1,0 +1,98 @@
+# ============================================================
+# 中古マンション（売買・Phase 6 手順5 の縦切り実測）
+#
+# ⚠⚠ **weight と best/worst は暫定値である。** 売買の掲載はまだ1件も無いので、
+# 母集団の分布を見てから確定する（→ 課題#31・#34）。賃貸の値を機械的に流用すると
+# 配点が死ぬ（築年数 worst=30 が母集団の9割に張り付いた前例がある）。
+#
+# ⚠ **MUST は「広めに取ってから締める」**（ユーザー判断 2026-09-06）。
+# MUST 1段目で fail した掲載はDBに残らないので、**緩める方向は取り直しになる**
+# （エリア帯を決めたときと同じ手順 → ADR 0013・課題#24）。締める方向は
+# `rescore` だけで試せる。
+#
+# ⚠ **`name:` は変えない。** 通知履歴・順位・スコアが `pattern_name` に紐づいており、
+# 変えると全掲載が「未通知」扱いになり new が全件再発火する（→ 課題#4）。
+# ============================================================
+
+name: "中古マンション"
+property_type: "CHUKO_MANSION"
+
+# 通知先はファミリ単位で共有する（新築・中古で分けない → 課題#4）。
+# ⚠ `.env` の DISCORD_WEBHOOK_MANSION / _MANSION_DIGEST は**キーだけで値が空**。
+# 手順5 は `scan --seed` で流すので通知先の解決は走らない（cli.py の fail-fast は
+# `if not args.seed:`）。手順7 で値を入れてから通知を貫通させる。
+webhook_ref: "MANSION"
+digest_webhook_ref: "MANSION_DIGEST"
+
+# ⚠ ライフルホームズは入れない。1実行5リクエストの上限を賃貸と食い合い、
+# 市区ローテーションの一巡が 1.4日 → 倍以上に伸びて**取得の鮮度が黙って落ちる**
+sites:
+  - "SUUMO"
+
+# ---- サイト側へ渡す唯一の条件 ----
+search:
+  prefectures:
+    - "東京都"
+  # ⚠ 手順5 は縦切りの実測なので3市区に絞る。都心（千代田区・バス便0件）と
+  # 郊外（八王子市・バス便3件）を混ぜてあるのは、**バス便を含まないフィクスチャでは
+  # 駅同定の欠陥を検出できない**ため（課題#41・#44 で2度踏んだ形）。
+  # ⚠ 市区を増やす方向は取り直しになる（MUST 1段目で fail した掲載はDBに残らない）が、
+  # 下記の MUST は広めなので、増やした市区が新規に取得されるだけで済む。
+  cities:
+    - "千代田区"
+    - "八王子市"
+    - "足立区"
+  # ⚠ **価格上限はサイトへ渡さない。** `kt` の単位が万円で選択肢が離散
+  # （500/1000/…/8000/9000/10000/12000）であることは手順3で実測したが、
+  # **丸めが未実装**なので端数を送ると掲載0件になる（→ 課題#29）。
+  # 実装して実測するまで null のままにする。
+  price_max_hint: null
+  # サイト側MUST は**効きを実測した2軸だけ**を有効にしてある（→ ADR 0015）。
+  # 面積上限 `mt`・築年数 `cn` は選択肢をフォームから採っただけで効きが未測定、
+  # 間取り `md` は複数指定の直列化が未測定なので `data/site_search_params.yaml` 側が
+  # `enabled: false`。⚠ 測っていないものは送らない
+  site_filters:
+    enabled: true
+    axes:
+      - "area_min"
+      - "walk_minutes_max"
+    exclude_sites: []
+
+commute:
+  destination_station: "芝公園"
+  destination_prefecture: "東京都"
+
+# ---- MUST: 未充足なら除外 ----
+# ⚠ 広めに取る。`monthly_cost_max` / `age_max` / `commute_minutes_max` / `layouts` は
+# **意図的に設定していない**（空リスト・未設定は「制約なし」として MUST 判定から外れる）。
+# 分布を見てから締める。
+must:
+  price_max: 100000000         # 1億円（円単位）
+  area_min: 30.0
+  walk_minutes_max: 20
+  layouts: []                  # 制約なし。売買の md は部屋数でしか切れない（→ 課題#4）
+  features: []
+  # ⚠ drop へ倒さないこと。新築の価格未定・管理費未取得が「情報が無いだけ」で消える
+  unknown_policy: keep
+
+# ---- WANT: 重み付き加点。合計 0〜100点へ正規化される ----
+want:
+  # ⚠ 売買の辞書（data/feature_dictionary.yaml の buy:）はまだ空。
+  # 手順5 で未知表記を貯めてから育てる。空の辞書のまま条件を書くと全件 miss になり、
+  # 分母にだけ乗ってスコア全体が沈む
+  features: []
+  numeric:
+    - { metric: price,                weight: 40, best: 40000000, worst: 100000000 }
+    - { metric: area_sqm,             weight: 20, best: 75,       worst: 30 }
+    - { metric: age_years,            weight: 15, best: 0,        worst: 40 }
+    - { metric: monthly_cost,         weight: 10, best: 15000,    worst: 40000 }
+    - { metric: walk_minutes,         weight: 10, best: 3,        worst: 20 }
+    - { metric: commute_minutes,      weight: 25, best: 25,       worst: 60 }
+    # ハザードは全種別で共通に効く（→ ADR 0021）
+    - { metric: flood_rank_avg,       weight: 15, best: 0,        worst: 4 }
+    - { metric: landslide_area_ratio, weight: 5,  best: 0,        worst: 0.1 }
+
+ranking:
+  top_n: 15
+  digest_group: null
+  notify_max_rank: 200

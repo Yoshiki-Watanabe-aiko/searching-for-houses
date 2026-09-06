@@ -219,9 +219,32 @@ def test_雛形YAMLはconfigs直下に置かない() -> None:
     （glob は非再帰なので examples/ 配下は読まれない）。
     """
     live = {p.name for p in (REPO_ROOT / "configs").glob("*.yaml")}
-    assert live == {"chintai_23ku.yaml", "chintai_suburb60.yaml"}, (
-        f"configs/ 直下に実運用しないパターンがある: {sorted(live)}"
-    )
+    assert live == {
+        "chintai_23ku.yaml",
+        "chintai_suburb60.yaml",
+        "chuko_mansion.yaml",
+    }, f"configs/ 直下に実運用しないパターンがある: {sorted(live)}"
+
+
+def test_実運用の売買パターンが読める() -> None:
+    """中古マンションの実運用パターンが v2 スキーマを満たすこと（Phase 6 手順5）。
+
+    ⚠ MUST を広めに取ってある（→ 課題#4 のユーザー判断 2026-09-06）。
+    MUST 1段目で fail した掲載はDBに残らないので**緩める方向は取り直しになる**
+    （→ ADR 0013）。締める方向は `rescore` だけで試せるので、まず分布を見る。
+    """
+    pattern = load_pattern_file(REPO_ROOT / "configs" / "chuko_mansion.yaml")
+    assert pattern.property_type == "CHUKO_MANSION"
+    assert pattern.sites == ["SUUMO"], "ホームズは取得枠を賃貸と食い合うので入れない（→ 課題#4）"
+    # ⚠ 締める方向へ変えるのは自由だが、緩める方向は取り直しになる
+    assert pattern.must.price_max == 100_000_000
+    assert pattern.must.layouts == [], "売買の md は部屋数でしか切れないので制約しない"
+    # 効きを実測した2軸だけをサイトへ渡す（→ ADR 0015・課題#4 手順4）
+    assert pattern.search.site_filters.enabled is True
+    assert set(pattern.search.site_filters.axes) == {"area_min", "walk_minutes_max"}
+    # ⚠ 売買辞書（buy:）が空なうちに WANT の設備条件を書くと全件 miss になり、
+    #   分母にだけ乗ってスコア全体が沈む
+    assert pattern.want.features == []
 
 
 @pytest.mark.parametrize("filename", ["chintai_23ku.yaml", "chintai_suburb60.yaml"])
