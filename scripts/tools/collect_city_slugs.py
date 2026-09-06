@@ -71,6 +71,20 @@ SITES: dict[str, dict[str, object]] = {
         "interval": 15.0,
         "value_with_pref": True,
     },
+    "SUUMO": {
+        # ⚠ **売買だけがこの表を引く。** 賃貸の一覧は JIS5桁（``sc=13121``）で
+        # 組み立てるので不要だが、売買は robots が ``/jj/bukken/ichiran/`` を
+        # **明示的に禁じており**、SEOパス（``/ms/chuko/{pref}/sc_{slug}/``）でしか
+        # 一覧を取れない（→ 課題#4）。スラグは種別によらず共通で、
+        # 既存の賃貸由来23行（``sc_chiyoda`` 等）と一致することを実測で確認する。
+        "index": "https://suumo.jp/ms/chuko/{pref}/city/",
+        "user_agent": None,
+        # 取得数の上限は無い。robots の Crawl-delay は bingbot 向けで `*` には無い
+        "interval": 3.0,
+        # 既存23行が ``sc_chiyoda``（都道府県を含まない）なので揃える
+        "value_with_pref": False,
+        "parser": "suumo",
+    },
 }
 
 # 索引には駅（-st）・沿線（-line）・政令市まとめ（-locate）のリンクが同じURL形で
@@ -119,6 +133,42 @@ def parse_index(html_text: str, *, pref_slug: str) -> list[tuple[str | None, str
             slug,
             label or (current[2] if current else ""),
         )
+    return sorted(found.values(), key=lambda row: (row[0] or "zzzzz", row[1]))
+
+
+# SUUMO の市区選択ページは HOMES/ATHOME と構造が違い、**JIS とスラグが別の要素**にある。
+#   リンク   … <a href="/ms/chuko/tokyo/sc_chiyoda/" id="js-linkSc101">千代田区</a>
+#   実体     … <input type="checkbox" name="sc" value="13101" id="sa01_sc101" ...>
+# ⚠ **リンクの id に入るのは JIS の下3桁**（横浜市鶴見区なら 101 → 14101）。
+# checkbox 側は JIS5桁そのものなので、下3桁で突き合わせて5桁を得る。
+# ⚠ 課題#4 は「``<option value="13101">千代田区(585)</option>``」と記録していたが、
+# 実測（2026-09-06）では **checkbox** で、ラベルに件数も付かない。
+_SUUMO_LINK = re.compile(
+    r"""<a\s[^>]*?href=["']/ms/chuko/(?P<pref>[a-z]+)/(?P<slug>sc_[a-z0-9_]+)/["']"""
+    r"""[^>]*?id=["']js-linkSc(?P<tail>\d{3})["'][^>]*>(?P<label>[^<]*)</a>""",
+    re.IGNORECASE,
+)
+_SUUMO_CHECKBOX = re.compile(
+    r"""<input[^>]*?name=["']sc["'][^>]*?value=["'](?P<jis>\d{5})["']""", re.IGNORECASE
+)
+
+
+def parse_index_suumo(
+    html_text: str, *, pref_slug: str
+) -> list[tuple[str | None, str, str]]:
+    """SUUMO の市区選択ページから ``(JIS5桁 or None, スラグ, リンク文字列)`` を取り出す。
+
+    ⚠ **同定は JIS で行う**（→ ADR 0014）。部分文字列一致は使わない。
+    ⚠ 掲載が無い市区にはリンクが無いので、``m_cities`` より少なくなるのが正常。
+    """
+    by_tail = {jis[2:]: jis for jis in _SUUMO_CHECKBOX.findall(html_text)}
+    found: dict[str, tuple[str | None, str, str]] = {}
+    for match in _SUUMO_LINK.finditer(html_text):
+        if match.group("pref") != pref_slug:
+            continue
+        slug = match.group("slug")
+        label = " ".join(match.group("label").split())
+        found[slug] = (by_tail.get(match.group("tail")), slug, label)
     return sorted(found.values(), key=lambda row: (row[0] or "zzzzz", row[1]))
 
 
@@ -229,7 +279,12 @@ def main() -> int:
     lines: list[str] = []
     with engine.connect() as conn:
         for pref in args.prefectures:
-            rows = parse_index(pages[pref], pref_slug=PREFECTURE_ROMAJI[pref])
+            parser = (
+                parse_index_suumo
+                if SITES[args.site].get("parser") == "suumo"
+                else parse_index
+            )
+            rows = parser(pages[pref], pref_slug=PREFECTURE_ROMAJI[pref])
             matched, unmatched = match_cities(
                 conn,
                 prefecture=pref,

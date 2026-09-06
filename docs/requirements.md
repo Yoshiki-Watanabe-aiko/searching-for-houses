@@ -935,10 +935,21 @@ v1 はサイトごとに列を持つワイドテーブルだった（ADR 0001）
 
 | 系統 | サイト | 値の出どころ |
 |---|---|---|
-| JIS5桁 | SUUMO / GOO / ABLE / CHINTAI_EX / **EHEYA / SMOCCA** / DROOM / HOMEMATE / **CHINTAI_NET** | `m_cities.jis_code` から導出 |
+| JIS5桁 | SUUMO（**賃貸のみ**）/ GOO / ABLE / CHINTAI_EX / **EHEYA / SMOCCA** / DROOM / HOMEMATE / **CHINTAI_NET** | `m_cities.jis_code` から導出 |
 | JIS5桁の**下3桁** | **APAMAN**（新宿区 13104 → `104`） | 同上（アダプタが末尾3桁を切る） |
 | サイト固有スラグ | HOMES（`tokyo/chiyoda-city`）/ MINIMINI（`chiyodaku`）/ **ATHOME**（`tokyo/adachi-city`）/ **NIFTY**（`adachiku`） | `m_city_site_values` |
 | **指定できない** | **UR**（UR独自の `area=01..` しか無く市区の粒度ですらない） | 都県の全 area を取り、応答の `skcs`（市区名）で**ローカルに絞る** |
+
+⚠⚠ **SUUMO は賃貸と売買で系統が違う**（→ 課題#4）。賃貸は JIS5桁（`sc=13121`）だが、
+売買は robots が `/jj/bukken/ichiran/` を**明示的に禁じており**、
+SEOパス（`/ms/chuko/tokyo/sc_chiyoda/`）でしか一覧を取れないので
+**スラグ系として `m_city_site_values` を引く**。⚠ `resolve_areas` は検索値の無い市区を
+**黙って落とす**ので、収集せずに組むと帯の大半が空のまま「取得できている」ことになる
+（→ 課題#36 と同型）。2026-09-06 に1都3県4リクエストで収集し **23 → 173行**にした
+（[`db/seed/13_city_site_values_suumo_buy.sql`](../db/seed/13_city_site_values_suumo_buy.sql)）。
+⚠ **スラグは賃貸／売買で共通**（既存23行と食い違い0を実測）。
+⚠ **同定はリンクの `id="js-linkSc101"`（JIS の下3桁）と
+`<input name="sc" value="13101">`（5桁）の突き合わせで行う**（→ ADR 0014）。
 
 JIS系は `m_city_site_values` に行が無くても値を作れる。マッピング表に縛ると
 対象4都県253市区のうち **67市区しか指定できず**、東京都は23区だけで多摩地域が
