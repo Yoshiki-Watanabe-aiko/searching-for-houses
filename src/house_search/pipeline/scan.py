@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
@@ -666,6 +667,36 @@ def _group_rank(
     return None
 
 
+def _sort_by_notify_rank(
+    outcomes: Sequence[persist.UpsertOutcome],
+    ranks: dict[int, int],
+    memberships: dict[int, dedup.GroupMembership],
+) -> list[persist.UpsertOutcome]:
+    """個別通知を順位の良い順に並べ替える（ユーザー要望 2026-09-07）。
+
+    ⚠ 取得順（サイト順・ページ順）のまま送ると、上位の掲載が下位の後に届く。
+    ダイジェストは順位順（``ORDER BY rank_in_pattern``）なので、
+    **個別通知だけが順不同**だった。
+
+    ⚠ **順位が付いていない掲載は末尾へ置く。** 順位が引けない掲載は
+    「順位未確定」として通知される仕様（→ :func:`_within_notify_rank`）なので、
+    先頭に置くと順位付けが壊れたときに未確定の掲載でチャンネルが埋まる。
+
+    ⚠ 変えるのは**届く順番だけ**。順位・スコア・通知対象は変えない。
+    """
+
+    def key(outcome: persist.UpsertOutcome) -> tuple[int, int, int]:
+        membership = memberships.get(outcome.listing_id, dedup.NO_GROUP)
+        rank = _group_rank(ranks, outcome.listing_id, membership)
+        # 同順位（グループ代表の順位を共有する掲載）は掲載ID順にして
+        # 実行ごとに届く順番が揺れないようにする
+        if rank is None:
+            return (1, 0, outcome.listing_id)
+        return (0, rank, outcome.listing_id)
+
+    return sorted(outcomes, key=key)
+
+
 def _within_notify_rank(rank: int | None, max_rank: int | None) -> bool:
     """個別通知を上位N位までに絞る（``ranking.notify_max_rank``）。
 
@@ -782,7 +813,7 @@ def _notify(
         }
         memberships = dedup.group_membership(conn, [o.listing_id for o in outcomes])
 
-    for outcome in outcomes:
+    for outcome in _sort_by_notify_rank(outcomes, ranks, memberships):
         notification_type = outcome.notification_type
         if notification_type is None:
             continue
