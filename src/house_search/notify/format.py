@@ -158,6 +158,64 @@ def _man_yen(value: int | None) -> str:
     return f"{value // 10_000:,}万円"
 
 
+# 住宅ローンの月々返済額を出すときの前提（→ 課題#57・ユーザー判断 2026-09-07）。
+# ⚠ **表示専用。metric にはしない。** 返済額は `price` の完全な関数なので、
+#   metric にすると価格軸に二重の重みが掛かる（要件定義書 §5.3 の
+#   「坪単価・㎡単価を metric にしない」と同じ理由）。
+# ⚠ **前提を変えれば数字も変わるので、通知には必ず併記する**（`LOAN_NOTE`）。
+LOAN_ANNUAL_RATE = 0.005
+LOAN_YEARS = 35
+LOAN_NOTE = f"{LOAN_YEARS}年・年{LOAN_ANNUAL_RATE:.1%}・頭金0円"
+
+
+def monthly_loan_payment(
+    price: int | None,
+    *,
+    annual_rate: float = LOAN_ANNUAL_RATE,
+    years: int = LOAN_YEARS,
+) -> int | None:
+    """元利均等返済の月々返済額（円）。頭金0円＝借入額は物件価格そのもの。
+
+    ⚠ **価格が無ければ None を返す**（新築は価格未定が実在する）。
+    0円で出すと「安い」と誤読される（→ 要件定義書 §11.4）。
+    """
+    if price is None or price <= 0:
+        return None
+    months = years * 12
+    monthly_rate = annual_rate / 12
+    if monthly_rate == 0:  # ⚠ ゼロ除算を避ける
+        return round(price / months)
+    growth = (1 + monthly_rate) ** months
+    return round(price * monthly_rate * growth / (growth - 1))
+
+
+def _buy_monthly_note(prop: NotifiableListing) -> str:
+    """売買の金額欄に添える月々の負担。
+
+    ⚠⚠ **「月々」という語が2つの違うものを指していた**（→ 課題#57）。
+    こちらの `monthly_cost` は管理費＋修繕積立金だが、SUUMO の物件ページの
+    「月々の支払額」は**住宅ローンの返済額**である。1億5,480万円の物件で
+    前者は 40,340円・後者は約40万円になり、**ちょうど10倍に見えるため
+    「40万円が4万円と表示されている」と誤読された**。名前を付けて区別する。
+
+    ⚠ **金額はカンマ区切りの円で出す**（万円表記だと「4.0万円」が 40,340円 の
+    意味だと読み取りにくく、桁の誤読が再発する）。
+    """
+    loan = monthly_loan_payment(prop.price)
+    monthly = prop.monthly_cost
+    if loan is None:
+        # 価格未定。管理費だけ判っていれば出す（ローンは計算できない）
+        return f"\n（管理費等 {_yen(monthly)}/月）" if monthly is not None else ""
+    if monthly is None:
+        # ⚠ **0円として合計しない。** 新築の棟は詳細に管理費が無いので、
+        #   足すと総額が小さく見える（→ ADR 0021 決定4 と同じ形の欠陥）
+        return f"\n（ローン {_yen(loan)}/月 ＋ 管理費等 不明）\n※{LOAN_NOTE}"
+    return (
+        f"\n（ローン {_yen(loan)}/月 ＋ 管理費等 {_yen(monthly)}/月"
+        f" ＝ 月々 {_yen(loan + monthly)}）\n※{LOAN_NOTE}"
+    )
+
+
 def price_field(prop: NotifiableListing) -> tuple[str, str]:
     """個別通知に出す金額欄の ``(見出し, 本文)``。
 
@@ -166,9 +224,7 @@ def price_field(prop: NotifiableListing) -> tuple[str, str]:
     並び、物件価格と管理費を足した無意味な数字を誰も異常と思わない（→ 課題#4）。
     """
     if _is_buy(prop):
-        monthly = prop.monthly_cost
-        note = f"\n（月々 {_yen(monthly)}）" if monthly is not None else ""
-        return "価格", f"{_man_yen(prop.price)}{note}"
+        return "価格", f"{_man_yen(prop.price)}{_buy_monthly_note(prop)}"
     return (
         "月額",
         f"{_yen(prop.rent_total)}\n（賃料 {_yen(prop.price)} + 管理費 "
