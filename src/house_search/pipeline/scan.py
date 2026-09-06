@@ -624,7 +624,11 @@ def _score_pattern(runtime: Runtime, pattern, summary: ScanSummary) -> dict[int,
     with runtime.engine.begin() as conn:
         for view in views.values():
             must = evaluate_must(view, pattern.must)
-            score = calculate_score(view, pattern.want) if not must.is_fail else None
+            score = (
+                calculate_score(view, pattern.want, condition_names=runtime.condition_names)
+                if not must.is_fail
+                else None
+            )
             persist.save_score(
                 conn,
                 listing_id=view.listing_id,
@@ -719,7 +723,7 @@ def _notify_cheaper_listings(
             continue
 
         previous = views.get(change.previous_listing_id or -1)
-        score = calculate_score(view, pattern.want)
+        score = calculate_score(view, pattern.want, condition_names=runtime.condition_names)
         message = build_listing_message(
             notifiable_from(
                 view,
@@ -805,7 +809,7 @@ def _notify(
             ):
                 continue
 
-        score = calculate_score(view, pattern.want)
+        score = calculate_score(view, pattern.want, condition_names=runtime.condition_names)
         message = build_listing_message(
             notifiable_from(
                 view,

@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -81,10 +82,17 @@ class ScoreResult:
         return [item.to_dict() for item in self.items]
 
 
-def _feature_item(feat: Any, view: ListingView) -> ScoreItem:
-    """WANT設備1件を採点する。``any_of`` はいずれか1つ該当すれば満点。"""
+def _feature_item(feat: Any, view: ListingView, names: Mapping[str, str]) -> ScoreItem:
+    """WANT設備1件を採点する。``any_of`` はいずれか1つ該当すれば満点。
+
+    ⚠ **名前は ``m_conditions.name`` を引く。** コードをそのまま名前にすると
+    通知に ``INT_LAUNDRY`` と出て何の条件か分からない（数値metricは
+    ``spec.label`` で日本語なのに、設備だけがコード表示だった）。
+    ⚠ 名前を引けないコードはコードのまま出す（例外にしない。辞書を先に育てて
+    マスタへ後から条件を足す途中の状態がありうる）。
+    """
     codes = feat.codes
-    label = " / ".join(codes) if len(codes) > 1 else codes[0]
+    label = " / ".join(names.get(code, code) for code in codes)
     if not view.detail_fetched:
         status, s = STATUS_UNKNOWN, 0.0
     elif any(code in view.feature_codes for code in codes):
@@ -130,14 +138,22 @@ def _numeric_item(item: Any, view: ListingView) -> ScoreItem:
     )
 
 
-def calculate_score(view: ListingView, want: Any) -> ScoreResult:
+def calculate_score(
+    view: ListingView, want: Any, *, condition_names: Mapping[str, str]
+) -> ScoreResult:
     """WANTスコアを計算する。
 
     設備は条件コード順、数値は metric 名順に固定して加算するため、
     プロセスをまたいでも同じ入力からは同じスコアが出る。
+
+    ``condition_names`` は設備の表示名（``m_conditions.name``）。
+    ⚠ **既定値を持たせない。** 渡し忘れるとその経路だけコード表示へ戻るが、
+    例外にも件数の変化にもならないので気づけない（同じ不変条件を
+    複数の経路で守る形 → 課題#40）。テストで名前が不要なら空 dict を渡す。
     """
     items: list[ScoreItem] = [
-        _feature_item(feat, view) for feat in sorted(want.features, key=lambda f: f.key)
+        _feature_item(feat, view, condition_names)
+        for feat in sorted(want.features, key=lambda f: f.key)
     ]
     items.extend(
         _numeric_item(item, view) for item in sorted(want.numeric, key=lambda i: i.metric)

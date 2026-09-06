@@ -160,7 +160,7 @@ METRICS: tuple[MetricSpec, ...] = (
     # 「危険なのに情報が無いから減点されない」掲載が満点になる。
     MetricSpec(
         name="flood_rank_avg",
-        label="洪水浸水深（丁目の面積加重平均ランク）",
+        label="洪水リスクの低さ（浸水深の平均ランク）",
         direction=Direction.LOWER_IS_BETTER,
         unit="ランク",
         property_types=ALL_PROPERTY_TYPES,
@@ -170,7 +170,7 @@ METRICS: tuple[MetricSpec, ...] = (
     ),
     MetricSpec(
         name="flood_area_ratio",
-        label="洪水浸水域の面積比",
+        label="洪水リスクの低さ（浸水域の面積比）",
         direction=Direction.LOWER_IS_BETTER,
         unit="割合",
         property_types=ALL_PROPERTY_TYPES,
@@ -178,7 +178,7 @@ METRICS: tuple[MetricSpec, ...] = (
     ),
     MetricSpec(
         name="landslide_area_ratio",
-        label="土砂災害警戒区域の面積比",
+        label="土砂災害リスクの低さ（警戒区域の面積比）",
         direction=Direction.LOWER_IS_BETTER,
         unit="割合",
         property_types=ALL_PROPERTY_TYPES,

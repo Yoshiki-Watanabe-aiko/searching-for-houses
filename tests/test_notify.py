@@ -60,7 +60,7 @@ def make_score(detail_fetched: bool = True, codes: frozenset[str] = frozenset({"
     view = ListingView(
         price=58000, mgmt_fee_monthly=2000, detail_fetched=detail_fetched, feature_codes=codes
     )
-    return calculate_score(view, PATTERN.want)
+    return calculate_score(view, PATTERN.want, condition_names={})
 
 
 # --- 個別通知 ------------------------------------------------------------

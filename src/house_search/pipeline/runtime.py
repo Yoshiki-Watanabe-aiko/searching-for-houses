@@ -36,6 +36,9 @@ class Runtime:
     run_id: uuid.UUID
     dictionary: FeatureDictionary
     condition_ids: dict[str, int]
+    # 条件コード → 日本語名。採点内訳と通知に出す名前で、
+    # これが空だと INT_LAUNDRY のようなコードがそのまま Discord へ出る
+    condition_names: dict[str, str]
     site_ids: dict[str, int]
     property_type_ids: dict[str, int]
     # 全国分の索引。検索パターンごとの都道府県への絞り込みは
@@ -106,6 +109,7 @@ def build_runtime(*, use_test_db: bool = False, prefer_db_dictionary: bool = Tru
 
     with engine.connect() as conn:
         condition_ids = persist.load_lookup(conn, "m_conditions")
+        condition_names = persist.load_condition_names(conn)
         site_ids = persist.load_lookup(conn, "m_sites")
         property_type_ids = persist.load_lookup(conn, "m_property_types")
         city_index = persist.load_city_index(conn)
@@ -125,6 +129,7 @@ def build_runtime(*, use_test_db: bool = False, prefer_db_dictionary: bool = Tru
         run_id=uuid.uuid4(),
         dictionary=dictionary,
         condition_ids=condition_ids,
+        condition_names=condition_names,
         site_ids=site_ids,
         property_type_ids=property_type_ids,
         city_index=city_index,
