@@ -11,10 +11,15 @@ Phase 1 から3値で実装している。
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from house_search.config.metrics import MUST_ITEMS_BY_NAME
 from house_search.scoring.listing_view import ListingView, normalize_layout
+
+# 複数の間取りをまとめた表記の区切り（「1LDK～3LDK」「1LDK・2LDK」）。
+# 新築の棟単位の掲載でしか現れない（→ 課題#4・Phase 6 手順6）
+_LAYOUT_RANGE = re.compile(r"[～~〜・]")
 
 PASS = "pass"
 FAIL = "fail"
@@ -102,6 +107,14 @@ def _check_layouts(view: ListingView, allowed: list[str]) -> tuple[str, object]:
     actual = view.normalized_layout
     if actual is None:
         return UNKNOWN, None
+    if _LAYOUT_RANGE.search(actual):
+        # ⚠ 新築の棟単位の掲載は「1LDK～3LDK」と複数の間取りをまとめて載せる。
+        # 対象の間取りを含むかは掲載情報だけでは断定できないので unknown。
+        # ⚠ **fail にすると、レンジ内に対象が実在するのに掲載を丸ごと除外する**
+        # （例外にならず件数も減らないので気づけない）。pass も同じだけ危うい。
+        # ⚠ 既存の賃貸16サイトに区切り記号を含む間取りは0件（実測 2026-09-06）
+        # なので、この分岐は稼働中の判定を変えない。
+        return UNKNOWN, view.layout
     allowed_normalized = {normalize_layout(item) for item in allowed}
     return (PASS if actual in allowed_normalized else FAIL), view.layout
 

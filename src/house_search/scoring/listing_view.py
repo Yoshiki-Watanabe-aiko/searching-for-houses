@@ -13,18 +13,27 @@ from dataclasses import dataclass, field
 # 「1SLDK」のサービスルーム表記。間取り比較では S を無視する
 # （1SLDK は 1LDK に納戸が付いた形で、1LDK を許容するなら除外する理由がない）。
 _SERVICE_ROOM = re.compile(r"(?<=\d)s(?=[ldk])", re.IGNORECASE)
+# ⚠ **SUUMO 売買は納戸を「2LDK+S（納戸）」と後置する**（賃貸の「2SLDK」とは別表記）。
+# 落とさないと MUST の layouts に当たらず **fail** する（unknown ではないので
+# 「判定できなかった」ようにも見えない）。実測 2026-09-06 で既存DBに2件あった。
+_SERVICE_ROOM_SUFFIX = re.compile(r"\+s(?:（納戸）|\(納戸\))?", re.IGNORECASE)
 
 
 def normalize_layout(layout: str | None) -> str | None:
     """間取り表記を比較用に正規化する。
 
     全角・空白・サービスルーム表記の揺れを吸収する。
+
+    ⚠ **複数の間取りをまとめた表記（「1LDK～3LDK」）は潰さない。**
+    新築の棟単位の掲載がこの形で、下限へ丸めると実態を過小に表現する。
+    判定側（``must._check_layouts``）が unknown に落とす（→ 課題#4）。
     """
     if not layout:
         return None
     value = layout.strip().upper().replace("　", "").replace(" ", "")
     value = value.replace("ＬＤＫ", "LDK").replace("ワンルーム", "1R")
-    return _SERVICE_ROOM.sub("", value.lower()).upper() or None
+    value = _SERVICE_ROOM_SUFFIX.sub("", value.lower())
+    return _SERVICE_ROOM.sub("", value).upper() or None
 
 
 @dataclass(frozen=True, slots=True)
