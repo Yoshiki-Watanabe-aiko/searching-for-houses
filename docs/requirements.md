@@ -1413,7 +1413,8 @@ f:\searching-for-houses\
 │   │   ├── athome.py / eheya.py / nifty.py / apaman.py / smocca.py
 │   │   ├── ur.py           # UR賃貸。3段のJSON API(POST)・任意フック方式（ADR 0019）
 │   │   ├── suumo_buy.py    # SUUMO中古マンション。SEOパス＋スラグ（Phase 6・課題#4）
-│   │   ├── suumo_shinchiku.py  # SUUMO新築マンション。棟と個別住戸が混在（Phase 6・課題#4）
+│   │   ├── suumo_shinchiku.py  # SUUMO新築マンション。棟と個別住戸が混在
+│   │   │                       # ⚠ 一覧のDOMは同一だが**詳細ページは別構造**（Phase 6・課題#4）
 │   ├── extract/
 │   │   ├── normalize.py        # NFKC正規化・トークン化
 │   │   ├── dictionary.py       # 辞書のロードとDB同期
