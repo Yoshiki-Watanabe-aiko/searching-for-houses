@@ -196,7 +196,12 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
   **効くと分かっているキー（UR なら `tdfk`）も同時に動かして差が出ることを示す**
 - **市区の検索値は3系統ある。** JIS5桁（SUUMO/GOO/ABLE/賃貸EX/EHEYA/SMOCCA）／
   JIS5桁の下3桁（APAMAN）／サイト固有スラグ（HOMES/ATHOME/NIFTY/MINIMINI）。
-  スラグ系だけが `m_city_site_values` を引く
+  スラグ系だけが `m_city_site_values` を引く。
+  ⚠⚠ **SUUMO は賃貸と売買で系統が違う**（→ 課題#4）。売買は robots が
+  `/jj/bukken/ichiran/` を禁じており SEOパス（`/ms/chuko/tokyo/sc_chiyoda/`）
+  でしか取れないので**スラグを引く**。⚠ スラグは賃貸／売買で共通（実測で食い違い0）。
+  ⚠ **同定はリンクの `id="js-linkSc101"`（JIS の下3桁）と
+  `<input name="sc" value="13101">`（5桁）を突き合わせる**（→ ADR 0014）
 - 面積の単位は ㎡（U+33A1）・m²・`m<sup>2</sup>` とばらつく。
   `parse_area_sqm` は NFKC 正規化してから読む
 - ⚠ **金額も NFKC 正規化してから読む**（→ 課題#51）。正規表現の `\d` は全角数字に
