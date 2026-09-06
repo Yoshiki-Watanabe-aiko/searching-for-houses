@@ -380,11 +380,19 @@ def _fetch_details(
     fetcher: SiteFetcher,
     *,
     site_id: int,
+    property_type_id: int,
     family: str,
     limit: int,
     outcome: SiteOutcome,
 ) -> None:
-    """詳細未取得の物件を取りに行き、設備を抽出して保存する。"""
+    """詳細未取得の物件を取りに行き、設備を抽出して保存する。
+
+    ⚠⚠ **``property_type_id`` まで渡してキューを絞る**（→ 課題#4）。
+    詳細の解析は ``get_scraper(site_code, pattern.property_type)`` で引いた
+    アダプタが行うので、サイトだけで絞ると**賃貸の詳細ページを売買のパーサで
+    解析する**（逆も同じ）。⚠ 例外にならず ``detail_fetched_at`` だけ入り、
+    設備原文が NULL のまま**二度と再取得されない**。
+    """
     if limit < 1:
         # 市区ローテーションのサイトは一覧で予算を使い切るので詳細を取らない
         # （→ 課題#36）。キューには残るので、予算の回復窓を実測してから
@@ -395,7 +403,11 @@ def _fetch_details(
         # ⚠ 滞留が解消すれば未取得は新しい掲載だけになり、古い順と新しい順が
         # 同じ集合を指すので**恒常的な副作用は無い**。効くのは詰まっている間だけ
         queue = persist.detail_queue(
-            conn, site_id=site_id, limit=limit, oldest_limit=limit // 2
+            conn,
+            site_id=site_id,
+            property_type_id=property_type_id,
+            limit=limit,
+            oldest_limit=limit // 2,
         )
 
     # ⚠ **詳細もGETとは限らない。** UR賃貸は住戸詳細がJSON APIへの POST なので、
@@ -971,6 +983,7 @@ def scan_pattern(
                 scraper,
                 fetcher,
                 site_id=site_id,
+                property_type_id=property_type_id,
                 family=family,
                 limit=detail_limit,
                 outcome=outcome,

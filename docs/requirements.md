@@ -1310,7 +1310,15 @@ uv run house-search db-seed --test-db
   263点中118点なので**構造的に45%ぶん沈む**。⚠ **例外にならず件数も減らない**
   （順位が付いてしまう。近郊60分圏帯では未取得の掲載が**4位**＝ダイジェストに載っていた）。
   ⚠ **滞留が解消すれば古い順と新しい順は同じ集合を指す**ので恒常的な副作用は無い。
-  ⚠ `oldest_limit=0` で従来の挙動へ戻せる
+  ⚠ `oldest_limit=0` で従来の挙動へ戻せる。
+  ⚠⚠ **キューはサイトだけでなく物件種別でも絞る**（→ 課題#4）。詳細の解析は
+  `get_scraper(site_code, pattern.property_type)` で引いたアダプタが行うので、
+  サイトだけで絞ると**賃貸の詳細ページを売買のパーサで解析する**（逆も同じ）。
+  実測（2026-09-06）では売買パターンの `scan` が賃貸18件を掴み、
+  **`raw_features_text` が NULL のまま `detail_fetched_at` だけ入った**。
+  ⚠ キューは `detail_fetched_at IS NULL` しか拾わないので、**設備0件のまま
+  二度と再取得されない**（課題#54 とまったく同じ形で、例外にならず件数も減らない）。
+  ⚠ **`property_type_id` に既定値を持たせない**——渡し忘れたときに黙って汚染が戻る
 - **GET＋HTML の枠に収まらないサイトは任意フックで委譲する**
   （→ [ADR 0019](./adr/0019-ur-api-post-and-robots-403.md)）。
   `pipeline.scan` が `getattr(scraper, "collect_listings", None)` /
