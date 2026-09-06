@@ -745,7 +745,7 @@ _PROPERTY_COLUMNS = """
     p.mgmt_fee_monthly, p.rent_total, p.repair_reserve_monthly,
     p.area_sqm, p.land_area_sqm, p.building_area_sqm, p.layout,
     p.floor_num, p.total_floors, p.age_years,
-    (
+    COALESCE(acc.walk_minutes, (
         -- ⚠⚠ **徒歩は t_listings.walk_minutes ではなく駅ごとの値から採る**（→ 課題#58）。
         -- アダプタは最小値を採っており、**バス停からの徒歩**が入っていることがある
         -- （``新小金井駅 バス12分 (バス停)中町4丁目 歩2分`` → 徒歩2分）。
@@ -760,7 +760,9 @@ _PROPERTY_COLUMNS = """
             (p.group_id IS NULL AND member.id = p.id)
             OR (p.group_id IS NOT NULL AND member.group_id = p.group_id)
         )
-    ) AS walk_minutes,
+    -- ⚠ acc が無い＝徒歩と通勤の両方が取れる駅が1つも無い掲載。
+    -- ここだけ従来どおり「徒歩は徒歩の最小」に落とす（情報を捨てない）。
+    )) AS walk_minutes,
     p.prefecture, p.address, p.image_url, pt.family AS property_family,
     (
         p.detail_fetched_at IS NOT NULL
@@ -770,7 +772,9 @@ _PROPERTY_COLUMNS = """
               AND m.detail_fetched_at IS NOT NULL
         )
     ) AS detail_fetched,
-    (
+    COALESCE(acc.commute_minutes, (
+        -- ⚠ acc が無いときだけのフォールバック（徒歩が取れる駅が1つも無い掲載）。
+        -- 通勤時間だけは取れているので捨てない。
         SELECT min(sc.commute_minutes)
         FROM t_listings member
         JOIN t_listing_stations ls ON ls.listing_id = member.id
@@ -782,7 +786,7 @@ _PROPERTY_COLUMNS = """
             OR (p.group_id IS NOT NULL AND member.group_id = p.group_id)
         )
           AND sc.status = 'ok'
-    ) AS commute_minutes,
+    )) AS commute_minutes,
     hz.flood_rank_avg, hz.flood_rank_max, hz.flood_area_ratio,
     hz.landslide_area_ratio, hz.landslide_special_ratio,
     (
@@ -821,6 +825,38 @@ _PROPERTY_COLUMNS = """
 # 2段目 hz: 決まった (key, level) の9行（3種別×3方式）を横に畳む。
 #   ⚠ 集約なので該当行が無くても1行（全 NULL）を返す。NULL は「未解決」の意味で、
 #   「区域外」は value=0 の明示行として入っている（両者を混ぜない）。
+# ⚠⚠ **徒歩と通勤は「同じ駅」から採る**（→ 課題#58）。
+# 別々に最小化すると「徒歩4分（A駅）＋通勤30分（B駅）」という**実在しない
+# 組み合わせ**で採点される。実測（2026-09-07）で順位付きの掲載の **約6割**が
+# これに当たり、しかもその大半で**実際より良いスコア**が付いていた
+# （上位100位でも8割）。⚠ 例外にも件数の変化にもならない。
+#
+# 候補は徒歩と通勤の**両方**が取れる駅に限り、`徒歩 + 通勤` が最小の駅を1つ選ぶ
+# （door-to-door の近似）。⚠ 徒歩不明の駅は候補から外れるので、
+# 「歩けない駅からの通勤時間が採用される」問題も同時に解決する。
+# ⚠ 同点は徒歩の短い順 → 駅グループコード順で決める（順位を実行ごとに揺らさない）。
+# ⚠ 設備・ハザードと同じく**グループ全体**から選ぶ（サイトによって挙げる駅が違う）。
+_ACCESS_LATERAL = """
+    LEFT JOIN LATERAL (
+        SELECT ls.walk_minutes AS walk_minutes, cm.commute_minutes AS commute_minutes
+        FROM t_listings member
+        JOIN t_listing_stations ls
+          ON ls.listing_id = member.id
+         AND ls.match_status = 'matched'
+         AND ls.walk_minutes IS NOT NULL
+        JOIN t_station_commutes cm
+          ON cm.origin_station_g_cd = ls.station_g_cd
+         AND cm.destination_station_g_cd = :commute_destination
+         AND cm.status = 'ok'
+        WHERE (
+            (p.group_id IS NULL AND member.id = p.id)
+            OR (p.group_id IS NOT NULL AND member.group_id = p.group_id)
+        )
+        ORDER BY ls.walk_minutes + cm.commute_minutes, ls.walk_minutes, ls.station_g_cd
+        LIMIT 1
+    ) acc ON TRUE
+"""
+
 _HAZARD_LATERAL = """
     LEFT JOIN LATERAL (
         SELECT h.normalized_key AS key, h.level AS level
@@ -1012,7 +1048,7 @@ def load_listing_views(
             f"SELECT {_PROPERTY_COLUMNS} FROM t_listings p "
             "JOIN m_sites s ON s.id = p.site_id "
             "JOIN m_property_types pt ON pt.id = p.property_type_id "
-            f"{_HAZARD_LATERAL} "
+            f"{_ACCESS_LATERAL} {_HAZARD_LATERAL} "
             f"WHERE {' AND '.join(where)}"
         ),
         params,
