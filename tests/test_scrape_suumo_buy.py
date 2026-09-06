@@ -119,3 +119,51 @@ def test_詳細から管理費と修繕積立金を取る(scraper: SuumoBuyMansi
     detail = scraper.parse_detail(_read("detail_chuko_m.html"))
     assert detail.mgmt_fee_monthly == 10_900
     assert detail.repair_reserve_monthly == 13_020
+
+
+def test_詳細から設備の原文を取る(scraper: SuumoBuyMansionScraper) -> None:
+    """「特徴ピックアップ」＋「設備仕様」の**設備名だけ**を原文にする。
+
+    ⚠ **課題#4 の「設備の一覧に相当するブロックは見つからなかった」は誤りだった**
+    （2026-09-06 に保存済みHTMLを読み直して判明）。`h3.secTitleInnerR` の
+    「特徴ピックアップ」と「設備仕様」に実データがある。
+    """
+    detail = scraper.parse_detail(_read("detail_chuko_m.html"))
+    text = detail.raw_features_text
+    assert text is not None
+    # 特徴ピックアップのタグ列
+    assert "システムキッチン" in text
+    assert "宅配ボックス" in text
+    assert "ＴＶモニタ付インターホン" in text
+    # 設備仕様の設備名
+    assert "エアコン設置済み" in text
+    assert "ピクチャーレール" in text
+
+
+def test_設備の説明文を原文に入れない(scraper: SuumoBuyMansionScraper) -> None:
+    """⚠⚠ **設備仕様は1セルに「設備名＋説明文」が同居する。**
+
+    説明文には ``雨の日でも洗濯が干せる浴室乾燥機付き`` のように
+    **その住戸に無い設備名**が出てくる。辞書照合は本文全体への部分一致なので、
+    入れると**設備数が黙って水増しされる**（CHINTAI.net の用語集展開・
+    HOMES の ``sr-only`` と同型 → 課題#37）。
+    """
+    text = scraper.parse_detail(_read("detail_chuko_m.html")).raw_features_text or ""
+    for phrase in ("洗濯が干せる", "残置物", "室内に絵画", "来訪者がモニターで"):
+        assert phrase not in text, f"説明文が混ざっている: {phrase}"
+
+
+def test_広告のキャッチコピーを原文に入れない(scraper: SuumoBuyMansionScraper) -> None:
+    """⚠ 「物件の特徴」の見出しは広告文（``◆現在空室◆…``）。
+
+    入れると未知表記が文断片で埋まる（賃貸EX → 課題#19 と同型）。
+    """
+    text = scraper.parse_detail(_read("detail_chuko_m.html")).raw_features_text or ""
+    for phrase in ("現在空室", "アフターサポート", "マルチアクセス"):
+        assert phrase not in text, f"広告文が混ざっている: {phrase}"
+
+
+def test_掲載終了ページでは設備の原文が空になる(scraper: SuumoBuyMansionScraper) -> None:
+    """⚠ ブロックが無いときに空文字を返すと、``COALESCE`` で上書きされて
+    **既存の原文が空に潰れる**。``None`` を返して既存値を保つ。"""
+    assert scraper.parse_detail(_read("detail_gone.html")).raw_features_text is None
