@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text as sql_text
 
 from house_search.config.pattern import load_patterns
 from house_search.extract.dictionary import FeatureDictionary, load_dictionary
@@ -162,3 +163,75 @@ class Test2面採光とクローゼットの表記:
 
         only_south = extract_from_text("南向き", dictionary, family="CHINTAI")
         assert "LOC_TWO_SIDE_LIGHT" not in only_south.codes
+
+
+# ============================================================
+# 辞書のセクション割り当て（→ 課題#4・Phase 6 手順5）
+#
+# ⚠⚠ **セクションを間違えても例外にならず、抽出が減るだけ**である。
+# 売買掲載の設備原文は保存されるのに照合先の辞書が空集合になり、
+# **抽出0件のまま正常終了する**（→ 課題#4 が `buy` で予見した形）。
+# ============================================================
+
+
+def test_共通セクションは3ファミリへ展開される(tmp_path: Path) -> None:
+    """``common`` は CHINTAI / MANSION_BUY / KODATE_BUY のすべてに効かせる。
+
+    設備の語彙は賃貸と売買でほぼ共通なので、同じ表記を ``buy`` へコピーせず
+    1箇所で保守する（コピーすると賃貸側を直したとき売買側が黙って古くなる）。
+    """
+    path = tmp_path / "dict.yaml"
+    path.write_text(
+        "chintai:\n"
+        "  MOVEIN_PET:\n"
+        "    patterns: ['ペット相談']\n"
+        "common:\n"
+        "  EQUIP_ELEVATOR:\n"
+        "    patterns: ['エレベーター']\n",
+        encoding="utf-8",
+    )
+    entries = load_dictionary(path).entries
+    families = {e.family for e in entries if e.code == "EQUIP_ELEVATOR"}
+    assert families == {"CHINTAI", "MANSION_BUY", "KODATE_BUY"}
+
+    # 賃貸だけの条件は売買へ漏れない
+    assert {e.family for e in entries if e.code == "MOVEIN_PET"} == {"CHINTAI"}
+
+
+def test_マスタが売買に紐づける条件は売買ファミリへ展開される(
+    test_engine, dictionary: FeatureDictionary
+) -> None:
+    """どのセクションに置くかは人が選ばず、**マスタの線引きで機械的に決まる**。
+
+    ⚠ 条件マスタ（``m_condition_property_types``）がマンション売買にも
+    紐づけている条件が ``chintai`` に取り残されていると、
+    **売買では照合されないまま抽出0件で正常終了する**。
+
+    ⚠ 逆方向（マスタが紐づけない条件が売買へ展開される）は固定しない。
+    ``common`` の一部は戸建てに紐づかないが、
+    ①戸建ての原文にその語が出ることは稀 ②``want.features`` に書かなければ
+    採点に影響しない ため許容すると決めた（→ 課題#4）。
+    """
+    codes = sorted({e.code for e in dictionary.entries})
+    with test_engine.connect() as conn:
+        rows = conn.execute(
+            sql_text(
+                """
+                SELECT DISTINCT co.code
+                  FROM m_conditions co
+                  JOIN m_condition_property_types cpt ON cpt.condition_id = co.id
+                  JOIN m_property_types pt ON pt.id = cpt.property_type_id
+                 WHERE pt.family = 'MANSION_BUY' AND co.code = ANY(:codes)
+                """
+            ),
+            {"codes": codes},
+        ).fetchall()
+    expected = {r[0] for r in rows}
+    assert expected, "テストDBの条件マスタが空です（db-seed --test-db を流してください）"
+
+    actual = {e.code for e in dictionary.entries if e.family == "MANSION_BUY"}
+    missing = sorted(expected - actual)
+    assert not missing, (
+        "マスタがマンション売買に紐づけているのに辞書が売買へ展開していない条件: "
+        f"{missing}。`common` セクションへ移してください"
+    )

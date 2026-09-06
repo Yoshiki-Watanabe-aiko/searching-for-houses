@@ -198,8 +198,17 @@ class ConditionSynonym(TimestampMixin, Base):
     __tablename__ = "m_condition_synonyms"
     __table_args__ = (
         # site_id NULL（全サイト共通パターン）同士も重複とみなしたいので NULLS NOT DISTINCT。
+        # ⚠ **property_family を外さない。** 辞書の1セクションは複数ファミリへ展開する
+        # （`common` は賃貸＋売買、`buy` はマンション＋戸建て）ので、外すと
+        # 同じ表記を2ファミリへ入れた時点で `sync-dict` が UniqueViolation で落ちる。
         UniqueConstraint(
-            "condition_id", "site_id", "pattern", "is_negative", postgresql_nulls_not_distinct=True
+            "condition_id",
+            "site_id",
+            "property_family",
+            "pattern",
+            "is_negative",
+            name="uq_m_condition_synonyms_condition_site_family_pattern_neg",
+            postgresql_nulls_not_distinct=True,
         ),
         {"comment": "設備抽出辞書（条件コード → 表記パターン）"},
     )

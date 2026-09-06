@@ -694,7 +694,15 @@ SHA256 を `config_hash` として保存し、不一致なら自動再スコア�
 原文保存が要。辞書を改善したら再スクレイピングせずDB内の原文から全件再抽出できる（`re-extract`）。
 
 辞書は **Git管理YAML（`data/feature_dictionary.yaml`）が正 → `sync-dict` で `m_condition_synonyms` へ同期**。
-賃貸ブロックと売買ブロックの2部構成にする（証明書・性能評価系の語彙は賃貸と別体系のため）。
+セクションは **`chintai` / `common` / `buy` の3部構成**（→ 課題#4・Phase 6 手順5）。
+⚠ **設備の語彙は賃貸と売買でほぼ共通**なので、`common`（賃貸＋売買の両方へ展開）に
+58条件を置いている。⚠ **どのセクションに置くかは人が選ばない。**
+`m_condition_property_types` がマンション売買にも紐づけているかで機械的に決まる
+（`buy` へ表記をコピーすると同じ語を2箇所で保守することになり、賃貸側を直したとき
+売買側が黙って古くなる）。`buy` は売買固有の語彙（証明書・性能評価系）だけを持つ。
+⚠ **`m_condition_synonyms` の一意性制約には `property_family` を含める。**
+含めないと同じ表記を2ファミリへ入れた時点で `sync-dict` が UniqueViolation で落ちる
+（`buy` が空の間は表面化しなかった）。
 
 マッチしなかったトークンは `t_unknown_tokens` へ記録し、`report-unknown` → 辞書追記 →
 `sync-dict` → `re-extract` で反映する運用ループを回す。

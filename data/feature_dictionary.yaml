@@ -53,6 +53,68 @@ chintai:
   # ---- 構造 ----
   # 「src造」は「rc造」を部分文字列として含むため、negative で打ち消す。
   # これを怠るとSRC物件がRCとしても抽出され、any_of の判定が濁る
+  STRUCT_WOOD:
+    patterns: ["木造"]
+  STRUCT_BLOCK:
+    patterns: ["ブロック造", "alc造", "その他構造"]
+
+  # ---- 室内設備 ----
+  INT_FURNISHED:
+    patterns: ["家具付", "家電付", "家具家電付", "家具・家電付"]
+
+  # ---- 冷暖房 ----
+  HVAC_KEROSENE:
+    patterns: ["灯油暖房", "石油暖房", "ffヒーター"]
+  HVAC_GAS_HEAT:
+    patterns: ["ガス暖房", "都市ガス暖房", "ガスヒーター"]
+
+  # ---- テレビ・通信 ----
+  COMM_NET_FREE:
+    patterns: ["インターネット無料", "ネット無料", "wi-fi無料", "インターネット使用料無料"]
+  # ---- 入居条件 ----
+  # SUUMO の「入居」欄が「即」なら、アダプタが「即入居可」へ正規化して載せる
+  MOVEIN_IMMEDIATE:
+    patterns: ["即入居可", "即入居", "すぐ入居可"]
+  MOVEIN_FEMALE_ONLY:
+    patterns: ["女性限定", "女性専用", "女性向"]
+  MOVEIN_PET:
+    patterns: ["ペット相談", "ペット可", "ペット飼育可"]
+    negative_patterns: ["ペット不可", "ペット相談不可"]
+  MOVEIN_INSTRUMENT:
+    patterns: ["楽器相談", "楽器可", "楽器演奏可"]
+    negative_patterns: ["楽器不可"]
+  MOVEIN_OFFICE_USE:
+    patterns: ["事務所利用可", "事務所可", "sohoo可", "soho可"]
+  MOVEIN_ROOMSHARE:
+    patterns: ["ルームシェア可", "ルームシェア相談", "二人入居可", "2人入居可", "二人入居相談"]
+  MOVEIN_SENIOR:
+    patterns: ["高齢者歓迎", "高齢者相談", "シニア歓迎"]
+  MOVEIN_LGBT:
+    patterns: ["lgbt", "同性カップル可"]
+  MOVEIN_CUSTOMIZE:
+    patterns: ["カスタマイズ可", "カスタマイズ賃貸"]
+  MOVEIN_DIY:
+    patterns: ["diy可", "diy相談"]
+  MOVEIN_NO_FIXED_TERM:
+    patterns: ["普通借家"]
+    negative_patterns: ["定期借家"]
+
+  # ---- 物件特性 ----
+  FEAT_SUBLEASE:
+    patterns: ["分譲賃貸", "分譲マンション賃貸"]
+
+
+# ------------------------------------------------------------
+# 共通ブロック（賃貸・売買の双方で使う）
+# マスタ（m_condition_property_types）がマンション売買にも紐づける条件を置く。
+# CHINTAI / MANSION_BUY / KODATE_BUY の3ファミリへ展開される。
+# ⚠ どちらのセクションに置くかは人が選ばない。マスタの線引きで機械的に決まる
+# ------------------------------------------------------------
+common:
+
+  # ---- 構造 ----
+  # 「src造」は「rc造」を部分文字列として含むため、negative で打ち消す。
+  # これを怠るとSRC物件がRCとしても抽出され、any_of の判定が濁る
   STRUCT_RC:
     patterns: ["鉄筋コンクリート", "鉄筋コン", "rc造"]
     negative_patterns: ["鉄骨鉄筋コンクリート", "鉄骨鉄筋コン", "src造"]
@@ -61,11 +123,6 @@ chintai:
   STRUCT_STEEL:
     patterns: ["鉄骨造", "軽量鉄骨", "重量鉄骨"]
     negative_patterns: ["鉄骨鉄筋"]
-  STRUCT_WOOD:
-    patterns: ["木造"]
-  STRUCT_BLOCK:
-    patterns: ["ブロック造", "alc造", "その他構造"]
-
   # ---- 位置・向き ----
   # 「2階以上」は閾値条件のため所在階の列から導出する（DERIVED）。
   # 「最上階」は掲載本文にタグとして現れるので、導出と併用して取りこぼしを減らす
@@ -90,20 +147,12 @@ chintai:
     patterns: ["ロフト"]
   INT_SOUNDPROOF:
     patterns: ["防音室", "楽器可防音"]
-  INT_FURNISHED:
-    patterns: ["家具付", "家電付", "家具家電付", "家具・家電付"]
-
   # ---- 冷暖房 ----
   HVAC_AC:
     patterns: ["エアコン", "冷暖房"]
     negative_patterns: ["エアコンなし", "エアコン無", "エアコン別途"]
   HVAC_FLOOR_HEAT:
     patterns: ["床暖房"]
-  HVAC_KEROSENE:
-    patterns: ["灯油暖房", "石油暖房", "ffヒーター"]
-  HVAC_GAS_HEAT:
-    patterns: ["ガス暖房", "都市ガス暖房", "ガスヒーター"]
-
   # ---- バス・トイレ ----
   BATH_SEPARATE:
     patterns: ["バス・トイレ別", "バストイレ別", "バス、トイレ別", "浴室独立"]
@@ -196,8 +245,6 @@ chintai:
   COMM_NET_AVAILABLE:
     patterns: ["インターネット", "高速ネット対応", "ネット対応", "wi-fi", "wifi"]
     negative_patterns: ["インターネット不可"]
-  COMM_NET_FREE:
-    patterns: ["インターネット無料", "ネット無料", "wi-fi無料", "インターネット使用料無料"]
   COMM_FIBER:
     patterns: ["光ファイバー", "光回線", "光インターネット"]
   COMM_BS:
@@ -217,47 +264,19 @@ chintai:
   STORAGE_CLOSET:
     patterns: ["クローゼット", "クロゼット"]
 
-  # ---- 入居条件 ----
-  # SUUMO の「入居」欄が「即」なら、アダプタが「即入居可」へ正規化して載せる
-  MOVEIN_IMMEDIATE:
-    patterns: ["即入居可", "即入居", "すぐ入居可"]
-  MOVEIN_FEMALE_ONLY:
-    patterns: ["女性限定", "女性専用", "女性向"]
-  MOVEIN_PET:
-    patterns: ["ペット相談", "ペット可", "ペット飼育可"]
-    negative_patterns: ["ペット不可", "ペット相談不可"]
-  MOVEIN_INSTRUMENT:
-    patterns: ["楽器相談", "楽器可", "楽器演奏可"]
-    negative_patterns: ["楽器不可"]
-  MOVEIN_OFFICE_USE:
-    patterns: ["事務所利用可", "事務所可", "sohoo可", "soho可"]
-  MOVEIN_ROOMSHARE:
-    patterns: ["ルームシェア可", "ルームシェア相談", "二人入居可", "2人入居可", "二人入居相談"]
-  MOVEIN_SENIOR:
-    patterns: ["高齢者歓迎", "高齢者相談", "シニア歓迎"]
-  MOVEIN_LGBT:
-    patterns: ["lgbt", "同性カップル可"]
-  MOVEIN_CUSTOMIZE:
-    patterns: ["カスタマイズ可", "カスタマイズ賃貸"]
-  MOVEIN_DIY:
-    patterns: ["diy可", "diy相談"]
-  MOVEIN_NO_FIXED_TERM:
-    patterns: ["普通借家"]
-    negative_patterns: ["定期借家"]
-
   # ---- 物件特性 ----
   FEAT_RENOVATED:
     patterns: ["リノベーション", "リノベ済", "フルリノベ"]
   FEAT_DESIGNER:
     patterns: ["デザイナーズ"]
-  FEAT_SUBLEASE:
-    patterns: ["分譲賃貸", "分譲マンション賃貸"]
   FEAT_TOWER:
     patterns: ["タワーマンション", "タワマン", "超高層"]
   FEAT_IT_CONTRACT:
     patterns: ["it重説", "オンライン重説", "it重要事項説明"]
   FEAT_ONLINE_CONSULT:
     patterns: ["オンライン相談", "オンライン内見", "リモート内見"]
+
+
 
 # ------------------------------------------------------------
 # 売買ブロック（Phase 6 で追加する）
