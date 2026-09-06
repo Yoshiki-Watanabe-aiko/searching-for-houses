@@ -92,6 +92,9 @@ class ScrapedDetail:
     floor_num: int | None = None
     total_floors: int | None = None
     mgmt_fee_monthly: int | None = None
+    # 修繕積立金（円/月）。マンション売買の ``monthly_cost`` metric の入力で、
+    # 管理費と合算する。⚠ 賃貸では使わない。⚠ 一覧には出ないので詳細専用
+    repair_reserve_monthly: int | None = None
     deposit_amount: int | None = None
     key_money_amount: int | None = None
     address: str | None = None
