@@ -55,11 +55,27 @@ def make_view(**overrides) -> ListingView:
         ("ワンルーム", "1R"),
         (" 2DK ", "2DK"),
         (None, None),
+        # ⚠ SUUMO 売買は納戸を「+S（納戸）」と後置する（賃貸の 2SLDK とは別表記）。
+        # 落とさないと MUST の layouts に当たらず **fail** する（unknown ではない）。
+        # 実測 2026-09-06: 既存DBに `2LDK+S（納戸）` が2件あり落ちていた
+        ("2LDK+S（納戸）", "2LDK"),
+        ("1LDK+S(納戸)", "1LDK"),
+        ("2LDK+S", "2LDK"),
     ],
 )
 def test_間取りの正規化はサービスルーム表記を無視する(raw, expected) -> None:
     # 1SLDK は 1LDK に納戸が付いた形。1LDK を許容するなら除外する理由がない
     assert normalize_layout(raw) == expected
+
+
+def test_新築の間取りレンジは記号を残したまま正規化される() -> None:
+    """棟単位の掲載は「1LDK～3LDK」と複数の間取りをまとめて載せる。
+
+    ⚠ ここで下限へ潰してはいけない（実態を過小に表現する）。判定側で
+    unknown に落とす（→ 課題#4・Phase 6 手順6）。
+    """
+    assert normalize_layout("2LDK+S（納戸）～4LDK") == "2LDK～4LDK"
+    assert normalize_layout("1LDK・2LDK") == "1LDK・2LDK"
 
 
 # --- MUST 3値判定 --------------------------------------------------------
@@ -80,6 +96,26 @@ def test_値が取れなければunknown() -> None:
     result = evaluate_must(make_view(price=None, mgmt_fee_monthly=None), pattern.must)
     assert result.result == UNKNOWN
     assert result.unknown_names == ("rent_total_max",)
+
+
+def test_間取りが一致すればpass_外れればfail() -> None:
+    pattern = make_pattern(must={"layouts": ["2LDK", "3LDK"]})
+    assert evaluate_must(make_view(layout="2LDK"), pattern.must).result == PASS
+    assert evaluate_must(make_view(layout="1K"), pattern.must).result == FAIL
+
+
+def test_複数の間取りをまとめた表記はunknown() -> None:
+    """新築（棟単位）の「1LDK～3LDK」は対象を含むか断定できないので unknown。
+
+    ⚠ **fail にしてはいけない。** レンジの中に対象の間取りが実在しうるのに、
+    掲載を丸ごと除外することになる（例外にならず件数も減らないので気づけない）。
+    ⚠ **pass にもしてはいけない**（含まない可能性も同じだけある）。
+    ⚠ 既存の賃貸16サイトに区切り記号を含む間取りは **0件**（実測 2026-09-06）
+    なので、この分岐は稼働中の判定を変えない。
+    """
+    pattern = make_pattern(must={"layouts": ["2LDK", "3LDK"]})
+    for layout in ("1LDK～3LDK", "2LDK+S（納戸）～4LDK", "1LDK・2LDK", "1R~3LDK"):
+        assert evaluate_must(make_view(layout=layout), pattern.must).result == UNKNOWN, layout
 
 
 def test_面積の下限は_area_sqm_を見る() -> None:
