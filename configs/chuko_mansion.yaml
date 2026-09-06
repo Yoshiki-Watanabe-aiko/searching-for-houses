@@ -18,9 +18,13 @@ name: "中古マンション"
 property_type: "CHUKO_MANSION"
 
 # 通知先はファミリ単位で共有する（新築・中古で分けない → 課題#4）。
-# ⚠ `.env` の DISCORD_WEBHOOK_MANSION / _MANSION_DIGEST は**キーだけで値が空**。
-# 手順5 は `scan --seed` で流すので通知先の解決は走らない（cli.py の fail-fast は
-# `if not args.seed:`）。手順7 で値を入れてから通知を貫通させる。
+# ⚠⚠ `.env` の DISCORD_WEBHOOK_MANSION / _MANSION_DIGEST には**既に値が入っている**
+# （2026-09-07 実測。以前の「キーだけで値が空」という記述は古い）。
+# ⚠ **つまり configs/ 直下に置いた瞬間から、定期スキャン（`--seed` なし）が
+# 新規掲載を通知として飛ばす。** 初回は必ず `scan --seed` でDBへ入れてから
+# 配置すること（→ ADR 0006）。
+# （`scan --seed` は通知しないので通知先の解決も走らない。cli.py の fail-fast は
+# `if not args.seed:`）。
 webhook_ref: "MANSION"
 digest_webhook_ref: "MANSION_DIGEST"
 

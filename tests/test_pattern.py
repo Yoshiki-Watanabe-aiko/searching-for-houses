@@ -225,6 +225,7 @@ def test_雛形YAMLはconfigs直下に置かない() -> None:
         "chintai_23ku.yaml",
         "chintai_suburb60.yaml",
         "chuko_mansion.yaml",
+        "shinchiku_mansion.yaml",
     }, f"configs/ 直下に実運用しないパターンがある: {sorted(live)}"
 
 
@@ -247,6 +248,28 @@ def test_実運用の売買パターンが読める() -> None:
     # ⚠ 売買辞書（buy:）が空なうちに WANT の設備条件を書くと全件 miss になり、
     #   分母にだけ乗ってスコア全体が沈む
     assert pattern.want.features == []
+
+
+def test_実運用の新築マンションパターンが読める() -> None:
+    """新築マンションの実運用パターンが v2 スキーマを満たすこと（Phase 6 手順6-3）。
+
+    ⚠ **中古のパターンからコピーすると落ちる箇所**を固定してある。
+    ``age_years`` は新築マンションに適用されない metric なので、`want.numeric` に
+    残っているとレジストリが弾く。
+    """
+    pattern = load_pattern_file(REPO_ROOT / "configs" / "shinchiku_mansion.yaml")
+    assert pattern.property_type == "SHINCHIKU_MANSION"
+    assert pattern.sites == ["SUUMO"]
+    # ⚠ 新築に適用されない metric が紛れていないこと
+    metrics = {item.metric for item in pattern.want.numeric}
+    assert "age_years" not in metrics, "age_years は新築マンションに適用されない"
+    # ⚠ 棟には設備原文が無いので、書くと棟が全件 miss になり分母にだけ乗る
+    assert pattern.want.features == []
+    # ⚠ 価格未定（price が NULL）・間取りレンジ・管理費未取得が構造的に生じるので、
+    #   drop へ倒すと棟の掲載がまとめて消える
+    assert pattern.must.unknown_policy == "keep"
+    # ⚠ 新築のサイト側フィルタは効きが未測定なので送らない（→ ADR 0015）
+    assert pattern.search.site_filters.enabled is False
 
 
 @pytest.mark.parametrize("filename", ["chintai_23ku.yaml", "chintai_suburb60.yaml"])
