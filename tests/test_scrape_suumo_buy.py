@@ -121,6 +121,18 @@ def test_詳細から管理費と修繕積立金を取る(scraper: SuumoBuyMansi
     assert detail.repair_reserve_monthly == 13_020
 
 
+def test_詳細から所在階と総階数を取る(scraper: SuumoBuyMansionScraper) -> None:
+    """⚠⚠ **所在階はマンションの ``dedup_key`` の構成要素**（→ ADR 0012）。
+
+    1つでも欠けるとキーを作らないので、読み落とすと**名寄せが静かに失敗する**
+    （実測 2026-09-06 で dedup_key が 0/60 だった）。
+    ⚠ 総階数の原文は ``RC13階地下1階建`` で、地下の階数を拾うと **1** になる。
+    """
+    detail = scraper.parse_detail(_read("detail_chuko_m.html"))
+    assert detail.floor_num == 1
+    assert detail.total_floors == 13
+
+
 def test_詳細から設備の原文を取る(scraper: SuumoBuyMansionScraper) -> None:
     """「特徴ピックアップ」＋「設備仕様」の**設備名だけ**を原文にする。
 
