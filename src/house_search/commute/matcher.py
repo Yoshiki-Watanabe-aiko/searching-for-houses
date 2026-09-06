@@ -88,6 +88,19 @@ _BEFORE_TIME = re.compile(
     rf"(?:^|[{_BOUNDARY}]|分)([^{_BOUNDARY}0-9０-９]{{1,24}})\s*(?=バス\d|徒歩|歩\d|車\d)"
 )
 
+# 駅名と「その直後の時間表記」を一緒に拾う版（→ station_walk_minutes）。
+# 上の2つと**同じ駅名の規則**を使い、直後の種別と分数だけを足してある
+# （別の規則を書くと、駅は取れるのに徒歩が付かない駅が黙って生まれる）。
+# ⚠ 直後に許すのは区切り文字だけ。地名などが挟まればマッチせず「不明」になる。
+_AFTER_STATION_SEP = r"[\s　/／:：]*"
+_TIME_KIND = r"(?:(バス|徒歩|歩|車)\s*(\d+)\s*分)?"
+_WITH_SUFFIX_WALK = re.compile(
+    rf"([^{_BOUNDARY}・]{{1,24}}(?:・[^{_BOUNDARY}・]{{1,24}})*)駅{_AFTER_STATION_SEP}{_TIME_KIND}"
+)
+_NAME_WALK = re.compile(
+    rf"(?:^|[{_BOUNDARY}]|分)([^{_BOUNDARY}0-9０-９]{{1,24}})\s*(バス|徒歩|歩|車)\s*(\d+)\s*分"
+)
+
 # 候補の先頭に紛れ込む時間表記（賃貸EXの「歩10分小岩」のような連結表記）。
 _LEADING_TIME = re.compile(r"^(?:徒歩|歩|バス|車)\d+分")
 # 候補の先頭に紛れ込む路線名（gooの「ＪＲ外房線本納」のような地続き表記）。
@@ -159,6 +172,61 @@ def extract_station_names(station_info: str) -> tuple[tuple[str, ...], tuple[str
     masked = _PAREN_BEFORE_STATION.sub("", masked)
     masked = _QUOTED_BEFORE_STATION.sub(r"\1", masked)
     return _dedupe(_WITH_SUFFIX.findall(masked)), _dedupe(_BEFORE_TIME.findall(masked))
+
+
+def station_walk_minutes(station_info: str | None) -> dict[str, int]:
+    """``駅名 → 駅徒歩分数`` を原文から切り出す。**バス便と判別不能は含めない**。
+
+    ⚠⚠ **バス停からの徒歩を駅徒歩にしない**のがこの関数の目的である。
+    実測（2026-09-07）で ``t_listings.walk_minutes`` は最小値を採っており、
+    ``武蔵小金井駅 歩5分 / 新小金井駅 バス12分 (バス停)中町4丁目 歩2分`` の
+    掲載が**徒歩2分**として保存され、``walk_minutes_max: 20`` を不当に通過して
+    WANT でも満点近くを取っていた（active 掲載で 3,090件・上位100位に35件）。
+
+    ⚠ **判定は原文に対して行う。** ``mask_bus_stops`` はバス停名だけでなく
+    「バス7分 とのした橋 」ごと消すパターンを持つ（いい部屋ネット）ため、
+    マスク後の文字列で見ると ``溝の口駅 徒歩2分`` に見えて**バス便を駅徒歩と誤認する**。
+
+    ⚠ **駅名の直後（区切り文字だけを挟んだ位置）しか見ない。** 間に地名が挟まる形
+    （ハウスコム ``柏駅 大井まで徒歩6分、駅までバスで15分``）は「駅から徒歩6分」では
+    ないので、含めない側に倒す（誤って含めるより、不明として扱うほうが安全）。
+
+    ⚠ 同じ駅が複数回出る掲載がある（``ＪＲ常磐線/柏駅 歩17分東武野田線/柏駅 バス5分``）。
+    **駅徒歩が取れた方を採り、複数あれば最小**にする（同じ駅への別ルート）。
+    """
+    if not station_info:
+        return {}
+    text = _QUOTED_BEFORE_STATION.sub(r"\1", station_info)
+    text = _PAREN_BEFORE_STATION.sub("", text)
+
+    walks: dict[str, int] = {}
+
+    def _record(name: str, kind: str | None, minutes: str | None) -> None:
+        # 「徒歩」「歩」以外（バス・車）と、時間表記が無いものは駅徒歩ではない
+        if kind not in ("徒歩", "歩") or not minutes:
+            return
+        value = int(minutes)
+        for variant in candidate_variants(name):
+            current = walks.get(variant)
+            if current is None or value < current:
+                walks[variant] = value
+
+    # ⚠ **第1パスが取れたら第2パスは使わない**（``match_stations`` と同じ優先関係）。
+    # 混ぜるとバス停名を駅として拾う（``(バス停)前原坂 歩2分`` → 前原坂: 2 /
+    # ``バス9分 小岩消防署下車 徒歩1分`` → 小岩消防署下車: 1）。
+    # ⚠ 判定は「**駅名が取れたか**」で行う。「徒歩が取れたか」にすると、
+    # 全駅がバス便の掲載（D-room ``「与野本町」駅 バス15分「白鍬」停徒歩3分``）で
+    # 第2パスへ落ちて ``停徒: 3`` を拾ってしまう。
+    found_suffix = False
+    for m in _WITH_SUFFIX_WALK.finditer(text):
+        found_suffix = True
+        _record(m.group(1), m.group(2), m.group(3))
+    if found_suffix:
+        return walks
+
+    for m in _NAME_WALK.finditer(text):
+        _record(m.group(1), m.group(2), m.group(3))
+    return walks
 
 
 def _dedupe(names: Iterable[str]) -> tuple[str, ...]:

@@ -17,6 +17,7 @@ from house_search.commute.matcher import (
     MATCH_UNMATCHED,
     StationIndex,
     match_stations,
+    station_walk_minutes,
 )
 
 # 一度にDBへ書き込む掲載数。1万件規模でもメモリと往復回数の折り合いが付く。
@@ -110,10 +111,10 @@ _INSERT = text(
     """
     INSERT INTO t_listing_stations (
         listing_id, position, raw_station_name, station_g_cd, match_status,
-        created_at, updated_at
+        walk_minutes, created_at, updated_at
     )
     VALUES (:listing_id, :position, :raw_station_name, :station_g_cd, :match_status,
-            now(), now())
+            :walk_minutes, now(), now())
     """
 )
 
@@ -167,6 +168,11 @@ def resolve_listing_stations(
         )
         counter["listings"] += 1
         matches = match_stations(station_info, index, pref_cd)
+        # ⚠ **徒歩分数は同定とは別に原文から切り出す**（→ 課題#58）。
+        # t_listings.walk_minutes はバス停からの徒歩を採っていることがあるので、
+        # 駅ごとの値をここへ落として採点はその最小を使う。
+        # ⚠ キーは candidate_variants を通した名前なので raw_name で引ける。
+        walks = station_walk_minutes(station_info)
         for match in matches:
             if match.match_status == MATCH_MATCHED:
                 counter["matched"] += 1
@@ -181,6 +187,7 @@ def resolve_listing_stations(
                     "raw_station_name": match.raw_name[:100],
                     "station_g_cd": match.station_g_cd,
                     "match_status": match.match_status,
+                    "walk_minutes": walks.get(match.raw_name),
                 }
             )
         if any(m.match_status == MATCH_MATCHED for m in matches):
