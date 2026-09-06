@@ -358,6 +358,7 @@ last_seen_at の古い順だけで選ぶと**順位がまったく考慮され�
 | 項目 | 内容 |
 |---|---|
 | 測る区間 | **駅から駅まで**。駅までの徒歩は含めない（`walk_minutes` が別に効くため） |
+| 徒歩の出どころ | ⚠⚠ **`t_listings.walk_minutes` ではなく `t_listing_stations.walk_minutes` の最小値**（→ 課題#58） |
 | 目的地 | `commute.destination_station`（＋ `destination_prefecture`） |
 | MUST | `commute_minutes_max`（実運用は両帯とも60分） |
 | WANT | `commute_minutes` weight 25（`walk_minutes` を 15→10 に下げて捻出） |
@@ -441,6 +442,7 @@ last_seen_at の古い順だけで選ぶと**順位がまったく考慮され�
 - **駅の同定率は99.4%**（10,259/10,322掲載）。同名駅は掲載の所在都道府県で絞ると
   曖昧が168件→23件に減る。残る23件（浅草・早稲田・弘明寺）は unknown 扱い
 - **通勤時間はグループ内の最短を採る**（設備の和集合と同じ）。サイトによって挙げる駅が違うため
+- ⚠⚠ **駅徒歩もグループ内の最小を採るが、`t_listings.walk_minutes` は使わない**（→ 課題#58）。アダプタは最小値を採るため**バス停からの徒歩**が入る（`新小金井駅 バス12分 (バス停)中町4丁目 歩2分` → 徒歩2分）。実測 2026-09-07 で active の 1,888件が不当に短く、**上位15件にも 6件**入っていた。⚠ **例外にも件数の変化にもならない**。⚠ アダプタを直しても戻らない（一覧の upsert で毎回上書きされる）ので、**駅ごとの値を `t_listing_stations` へ落として採点はその最小を使う**。⚠ 全駅がバス便の掲載は **unknown のまま残す**（MUST は `keep` で通り、WANT は missing で分母から外れる）
 
 #### 全国網羅（→ [ADR 0018](./adr/0018-nationwide-commute-destinations.md)）
 
@@ -603,7 +605,7 @@ YAMLは読み込み時にこのレジストリと突き合わせて検証され�
 | `building_area_sqm` | 高いほど良 | - | - | - | ○ | ○ |
 | `land_area_sqm` | 高いほど良 | - | - | - | ○ | ○ |
 | `age_years` | 低いほど良 | ○ | - | ○ | - | ○ |
-| `walk_minutes` | 低いほど良 | ○ | ○ | ○ | ○ | ○ |
+| `walk_minutes`（駅徒歩） | 低いほど良 | ○ | ○ | ○ | ○ | ○ |
 | `commute_minutes`（勤務先の最寄り駅まで） | 低いほど良 | ○ | ○ | ○ | ○ | ○ |
 | `flood_rank_avg`（洪水の浸水深ランクの面積加重平均） | 低いほど良 | ○ | ○ | ○ | ○ | ○ |
 | `flood_area_ratio`（洪水浸水域の面積比） | 低いほど良 | ○ | ○ | ○ | ○ | ○ |
@@ -969,7 +971,7 @@ DDLは Alembic（`migrations/`）、マスタデータは `db/seed/*.sql`（冪�
 | `t_scrape_runs` | 実行チェックポイント（中断・再開用） |
 | `t_site_scan_cursors` | **市区ローテーションの位置**（サイト×検索パターン。取得数に上限があるサイト用 → 課題#36） |
 | `t_scrape_logs` | 実行ログ（全件永久保持・追記専用） |
-| `t_listing_stations` | 掲載の駅表記と駅マスタの同定結果 |
+| `t_listing_stations` | 掲載の駅表記と駅マスタの同定結果。⚠ **`walk_minutes` は駅ごとの徒歩分数**で、採点はこの最小値を使う（→ 課題#58） |
 | `t_station_commutes` | 駅ペアの通勤所要時間キャッシュ |
 | `t_navitime_routes` | **NAVITIME の乗換案内が返した経路候補の原文**（再解析の入力 → ADR 0017） |
 | `t_rail_segments` | **乗車区間（駅間）の実所要時間**。目的地を変えたときの再計算に使う |

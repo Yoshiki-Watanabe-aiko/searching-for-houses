@@ -625,6 +625,14 @@ class ListingStation(TimestampMixin, Base):
             "unmatched=マスタに無い（バス停・施設名など）"
         ),
     )
+    walk_minutes: Mapped[int | None] = mapped_column(
+        SmallInteger,
+        comment=(
+            "その駅からの徒歩分数。バス便・判別不能は NULL。"
+            "t_listings.walk_minutes はバス停からの徒歩を採っていることがあるため"
+            "（実測 3,090件）、採点はこちらの最小値を使う"
+        ),
+    )
 
 
 class StationCommute(TimestampMixin, Base):

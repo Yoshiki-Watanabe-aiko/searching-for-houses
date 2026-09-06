@@ -744,7 +744,23 @@ _PROPERTY_COLUMNS = """
     p.id, s.code AS site_code, p.url, p.title, p.price, p.price_prev,
     p.mgmt_fee_monthly, p.rent_total, p.repair_reserve_monthly,
     p.area_sqm, p.land_area_sqm, p.building_area_sqm, p.layout,
-    p.floor_num, p.total_floors, p.age_years, p.walk_minutes,
+    p.floor_num, p.total_floors, p.age_years,
+    (
+        -- ⚠⚠ **徒歩は t_listings.walk_minutes ではなく駅ごとの値から採る**（→ 課題#58）。
+        -- アダプタは最小値を採っており、**バス停からの徒歩**が入っていることがある
+        -- （``新小金井駅 バス12分 (バス停)中町4丁目 歩2分`` → 徒歩2分）。
+        -- 実測 2026-09-07 で active 掲載の 1,888件が不当に短く、上位15件にも 6件入っていた。
+        -- ⚠ **アダプタを直しても戻らない**——``t_listings.walk_minutes`` は一覧の upsert で
+        -- 毎回上書きされるので、後処理では直せない。
+        -- ⚠ 通勤時間と同じく**グループ内の最小**を採る（サイトによって挙げる駅が違う）。
+        SELECT min(ls.walk_minutes)
+        FROM t_listings member
+        JOIN t_listing_stations ls ON ls.listing_id = member.id
+        WHERE (
+            (p.group_id IS NULL AND member.id = p.id)
+            OR (p.group_id IS NOT NULL AND member.group_id = p.group_id)
+        )
+    ) AS walk_minutes,
     p.prefecture, p.address, p.image_url, pt.family AS property_family,
     (
         p.detail_fetched_at IS NOT NULL
