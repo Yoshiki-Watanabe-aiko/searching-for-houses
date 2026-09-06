@@ -25,8 +25,14 @@ from house_search.extract.normalize import normalize_text
 # **抽出0件のまま正常終了する**（例外にも件数の減少にもならない → 課題#4）。
 # 証明書・性能評価系の語彙はマンションと戸建てで概ね共通なので、
 # 実測で語彙が分かれたときにセクションを分割する。
+#
+# ⚠ **`common` は設備の語彙が賃貸と売買で共通だから置いている。** どの条件を
+# ここへ置くかは人が選ばず、**マスタ（m_condition_property_types）が
+# マンション売買にも紐づけているか**で機械的に決まる。`buy` へ表記をコピーすると
+# 同じ語を2箇所で保守することになり、賃貸側を直したとき売買側が黙って古くなる。
 FAMILY_SECTIONS: dict[str, tuple[str, ...]] = {
     "chintai": ("CHINTAI",),
+    "common": ("CHINTAI", "MANSION_BUY", "KODATE_BUY"),
     "buy": ("MANSION_BUY", "KODATE_BUY"),
 }
 
