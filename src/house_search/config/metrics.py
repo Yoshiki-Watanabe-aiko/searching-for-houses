@@ -286,6 +286,19 @@ MUST_ITEMS: tuple[MustSpec, ...] = (
         False,
     ),
     MustSpec(
+        "market_rate_ratio_min",
+        "相場に対する賃料の比の下限",
+        # ⚠ 賃貸のみ（相場が賃貸にしか無い → 課題#49）。
+        # 相場比が極端に低い掲載は「サイト側が賃料の単位を取り違えて登録した」異常で
+        # （実勢 14.3万円が 14,000円 → 課題#50）、加点で覆うと実在する激安物件まで
+        # 一緒に抑えてしまう（→ ADR 0022）。下限の MUST で外す（ユーザー判断 2026-09-07）。
+        # ⚠ 相場が引けない掲載（23区 6.3% / 近郊 12.1%）は unknown → keep で通る。
+        # ⚠ 2段目の MUST なので fail でも掲載はDBに残り、緩めるときは rescore だけで戻る。
+        frozenset({CHINTAI}),
+        ("market_rate_ratio",),
+        False,
+    ),
+    MustSpec(
         "floor_min",
         "所在階の下限",
         frozenset({CHINTAI}) | MANSION_TYPES,

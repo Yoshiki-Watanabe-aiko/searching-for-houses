@@ -45,6 +45,9 @@ _VALUE_METRIC: dict[str, str] = {
     # None（住所を照合できず情報が無い）は unknown になる。
     "flood_rank_max": "flood_rank_max",
     "landslide_special_ratio_max": "landslide_special_ratio",
+    # 相場比の下限（→ 課題#50）。名前が ``_min`` で終わるので ``_compare_min`` が選ばれる。
+    # ⚠ 相場が引けない（None）は unknown。0 にすると「相場ちょうど」と区別がつかない
+    "market_rate_ratio_min": "market_rate_ratio",
     "floor_min": "floor_num",
 }
 

@@ -98,6 +98,7 @@ def test_一覧だけで判定できないMUST項目が明示されている() -
         "floor_min",
         "features",
         "commute_minutes_max",
+        "market_rate_ratio_min",
         "flood_rank_max",
         "landslide_special_ratio_max",
     }
