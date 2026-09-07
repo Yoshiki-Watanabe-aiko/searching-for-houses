@@ -81,10 +81,33 @@ must:
 
 # ---- WANT: 重み付き加点。合計 0〜100点へ正規化される ----
 want:
-  # ⚠ 売買の辞書（data/feature_dictionary.yaml の buy:）はまだ空。
-  # 手順5 で未知表記を貯めてから育てる。空の辞書のまま条件を書くと全件 miss になり、
-  # 分母にだけ乗ってスコア全体が沈む
-  features: []
+  # ---- 設備 40点（数値140点に対し22%。ユーザー判断 2026-09-07）----
+  # ⚠ **出現率は61掲載（3市区）での実測**。市区を増やすと動くので、
+  # 母集団が増えたら測り直す（→ 課題#31・#4）。まず控えめに入れて効果を測る。
+  #
+  # ⚠ **出現率が高すぎる条件は入れない。** ほぼ全件が持つと分母 Σw だけ増えて
+  # 全掲載が等しく加点され、順位がまったく動かない（→ 課題#15・#31）。
+  # 除外: エレベーター95.1% / 2階以上85.2% / システムキッチン83.6%
+  features:
+    # 購入後の初期費用に直結する。⚠ **リフォーム済みとリノベは排他グループにする**
+    # ——リノベ17件のうち15件（88%）がリフォーム済みも持つので、別々に weight を
+    # 振ると同じ属性に二重の重みが掛かる（重複が低ければ分けてよい → ADR 0022）
+    - { any_of: [FEAT_REFORMED, FEAT_RENOVATED], weight: 5 }   # 54.1%
+    # 後から付けられない共用設備・構造
+    - { code: SEC_AUTOLOCK,         weight: 5 }    # 16.4% オートロック
+    - { code: STRUCT_QUAKE,         weight: 4 }    #  8.2% 耐震基準適合（ローン控除の要件）
+    - { code: HVAC_FLOOR_HEAT,      weight: 4 }    #  8.2% 床暖房
+    - { code: EQUIP_DELIVERY_BOX,   weight: 3 }    # 44.3% 宅配ボックス
+    # 後から変えられない住戸の条件
+    - { code: LOC_CORNER,           weight: 3 }    # 34.4% 角部屋
+    - { code: LOC_SOUTH_FACING,     weight: 3 }    # 39.3% 南向き
+    # 住み始めるまでの手間・専有部の設備
+    - { code: FEAT_VACANT,          weight: 3 }    # 47.5% 現況空家（即引渡し可）
+    - { code: KITCHEN_DISHWASHER,   weight: 3 }    # 29.5% 食器洗い乾燥機
+    - { code: STORAGE_WIC,          weight: 3 }    # 16.4% ウォークインクローゼット
+    # 出現率が高いので軽め（差が付きにくい）
+    - { code: SEC_MONITOR_INTERCOM, weight: 2 }    # 78.7% TVモニタ付きインターホン
+    - { code: BATH_DRY,             weight: 2 }    # 70.5% 浴室乾燥機
   numeric:
     - { metric: price,                weight: 40, best: 40000000, worst: 100000000 }
     - { metric: area_sqm,             weight: 20, best: 75,       worst: 30 }
