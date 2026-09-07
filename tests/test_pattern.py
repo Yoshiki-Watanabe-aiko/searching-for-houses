@@ -245,9 +245,19 @@ def test_実運用の売買パターンが読める() -> None:
     # 効きを実測した2軸だけをサイトへ渡す（→ ADR 0015・課題#4 手順4）
     assert pattern.search.site_filters.enabled is True
     assert set(pattern.search.site_filters.axes) == {"area_min", "walk_minutes_max"}
-    # ⚠ 売買辞書（buy:）が空なうちに WANT の設備条件を書くと全件 miss になり、
-    #   分母にだけ乗ってスコア全体が沈む
-    assert pattern.want.features == []
+    # 設備は 2026-09-07 に配点した（辞書の buy: が育つまでは空にしてあった）。
+    # ⚠ **合計40点＝数値140点に対し22%** の水準を固定する。増減はユーザー判断で、
+    #   変えると config_hash が変わり全件が自動再スコアされる
+    weights = [
+        item.weight for item in pattern.want.features
+    ]
+    assert sum(weights) == 40, "設備の重み合計（ユーザー判断 2026-09-07）"
+    codes = {c for item in pattern.want.features for c in (item.any_of or [item.code])}
+    # ⚠ 出現率が高すぎる条件を入れてはいけない。ほぼ全件が持つと分母 Σw だけ
+    #   増えて全掲載が等しく加点され、順位がまったく動かない（→ 課題#15・#31）
+    assert not codes & {"EQUIP_ELEVATOR", "LOC_FLOOR_2UP", "KITCHEN_SYSTEM"}, (
+        "実測で出現率83%超の条件は判別力を持たない（61掲載・2026-09-07）"
+    )
 
 
 def test_実運用の新築マンションパターンが読める() -> None:
@@ -263,7 +273,9 @@ def test_実運用の新築マンションパターンが読める() -> None:
     # ⚠ 新築に適用されない metric が紛れていないこと
     metrics = {item.metric for item in pattern.want.numeric}
     assert "age_years" not in metrics, "age_years は新築マンションに適用されない"
-    # ⚠ 棟には設備原文が無いので、書くと棟が全件 miss になり分母にだけ乗る
+    # ⚠ 棟には設備原文が無いので、書くと棟が全件 miss になり分母にだけ乗る。
+    #   実測（2026-09-07）で active 50掲載のうち**設備原文があるのは13件（26%）だけ**。
+    #   中古マンションには配点したが（設備40点）、新築は据え置く
     assert pattern.want.features == []
     # ⚠ 価格未定（price が NULL）・間取りレンジ・管理費未取得が構造的に生じるので、
     #   drop へ倒すと棟の掲載がまとめて消える

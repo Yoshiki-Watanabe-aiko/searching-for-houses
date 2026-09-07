@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text as sql_text
 
+from house_search.config.metrics import FAMILY_OF
 from house_search.config.pattern import load_patterns
 from house_search.extract.dictionary import FeatureDictionary, load_dictionary
 from house_search.extract.extractor import extract_from_text
@@ -57,7 +58,14 @@ def test_WANTの条件はすべて抽出できる(pattern, dictionary: FeatureDi
     辞書にも DERIVED にも無い条件を WANT に書くと、weight が死ぬだけでなく
     **他の項目の満点も相対的に下がる**（分母に乗り続けるため）。
     """
-    known = {e.code for e in dictionary.entries if e.family == "CHINTAI"} | DERIVED_CODES
+    # ⚠⚠ **照合先はパターンのファミリで決める。** 初版は "CHINTAI" 固定で、
+    # 売買パターンの条件を賃貸の辞書と突き合わせていた（→ 課題#4 の
+    # 「re-extract がファミリ固定だった」とまったく同じ形）。
+    # 実際に売買固有の4条件（FEAT_VACANT・STRUCT_QUAKE ほか）が
+    # **抽出できているのに落ちる**という偽陽性が出た。
+    # ⚠ 逆向き（賃貸に無い条件を賃貸パターンに書く）は依然として検出できる。
+    family = FAMILY_OF[pattern.property_type]
+    known = {e.code for e in dictionary.entries if e.family == family} | DERIVED_CODES
     missing = sorted(set(_want_feature_codes(pattern)) - known)
     assert not missing, (
         f"WANT に書いてあるのに抽出できない条件: {missing}\n"
