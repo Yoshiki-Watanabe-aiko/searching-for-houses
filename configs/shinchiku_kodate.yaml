@@ -1,16 +1,18 @@
 # ============================================================
-# 新築一戸建て（売買・Phase 6 手順8 の縦切り実測）
+# 新築一戸建て（売買・Phase 6）
 #
-# ⚠⚠ **weight と best/worst は暫定値である。** 戸建ての掲載はまだ1件も無いので、
-# 母集団の分布を見てから確定する（→ 課題#31・#34）。
+# 2026-09-07 に **東京・千葉・埼玉・神奈川の全域**へ広げ、配点を
+# 「通勤を下げ、設備とハザードを上げる」方向へ付け替えた（ユーザー判断 → 課題#4）。
+#
+# ⚠ **`cities` は空にしてある。** 空なら4都県の全市区へ自動展開され、SUUMO のスラグが
+#   無い市区は黙って落ちる（実測 173/251 市区 → chuko_mansion.yaml の注記）。
+# ⚠ **weight・best/worst は暫定。** 4都県の母集団で分布を測ってから確定する
+#   （→ 課題#31・#34）。設備の出現率は3市区・49掲載での実測値。
 #
 # ⚠ **新築は「分譲地（全N区画）」が1掲載**で、価格・土地面積・建物面積・間取りが
-# レンジや中黒列挙になる（`4960万円～4980万円` / `120.17m2・120.18m2` /
-# `3LDK・3LDK+S（納戸）`）。価格はレンジ下限で採点し、間取りの複数表記は unknown になる
-# （→ 課題#4 手順6・要件定義書 §5.4）。⚠ `unknown_policy` を drop にすると
-# これらが「情報が無いだけ」で消える。
-#
-# ⚠ **`age_years` は使えない**（新築には適用されない metric。書くと validate-config が落ちる）。
+# レンジや中黒列挙になる。価格はレンジ下限で採点し、間取りの複数表記は unknown になる
+# （→ 課題#4 手順6・要件定義書 §5.4）。⚠ `unknown_policy` を drop にするとこれらが消える。
+# ⚠ **`age_years` は使えない**（新築には適用されない metric）。
 # ⚠ **`name:` は変えない**（→ 課題#4）。
 # ============================================================
 
@@ -18,7 +20,7 @@ name: "新築一戸建て"
 property_type: "SHINCHIKU_KODATE"
 
 # 通知先は中古一戸建てと共有（ファミリ単位 → 課題#4）。
-# ⚠⚠ configs/ 直下へ置くのは `scan --seed` の後（→ ADR 0006・chuko_kodate.yaml の注記）
+# ⚠⚠ 市区を広げるときは **CONFIGS_DIR を一時ディレクトリへ向けて `scan --seed`** を先に流す
 webhook_ref: "KODATE"
 digest_webhook_ref: "KODATE_DIGEST"
 
@@ -28,14 +30,13 @@ sites:
 search:
   prefectures:
     - "東京都"
-  # 中古一戸建てと同じ3市区（郊外1・23区東西2）。⚠ 新築は八王子で1,007件と多く、
-  # バス便が 17/20 と多数派（→ 課題#4 手順8）
-  cities:
-    - "足立区"
-    - "練馬区"
-    - "八王子市"
+    - "千葉県"
+    - "埼玉県"
+    - "神奈川県"
+  # 空＝4都県の全市区（スラグのある173市区）へ自動展開する
+  cities: []
   price_max_hint: null
-  # ⚠ サイト側MUST は未測定なので無効（→ chuko_kodate.yaml の注記）
+  # ⚠ サイト側MUST は無効（→ chuko_kodate.yaml の注記。`et` はバス便を丸ごと除外する）
   site_filters:
     enabled: false
     axes: []
@@ -55,20 +56,48 @@ must:
   features: []
   unknown_policy: keep
 
+# ---- WANT: 重み付き加点。合計 0〜100点へ正規化される ----
+# 配点の内訳（2026-09-07・ユーザー判断）: 設備 50 / 価格 40 / 土地 15 / 建物 15 /
+# 徒歩 8 / 通勤 10 / ハザード 35（洪水25・土砂10）＝ 173。
 want:
-  features: []
+  # 出現率は3市区・49掲載（2026-09-07 実測）。⚠ 出現率が高すぎる条件は入れない
+  # （システムキッチン98% / モニタ付インターホン94% / 浴室乾燥機92% / 温水洗浄便座90% /
+  #   都市ガス80% → 分母だけ増えて順位が動かない → 課題#15・#31）。
+  # ⚠ 「省エネ性能ラベル」は等級の開示であって基準への適合ではないので入れない。
+  features:
+    # 購入で検討すべき材料（性能・認定）。⚠ 辞書の buy: に 2026-09-07 に追加した
+    - { code: CERT_PERFORMANCE_EVAL, weight: 6 }   # 42% 住宅性能評価書（設計/建設）
+    - { code: CERT_LONG_TERM_HOUSING, weight: 6 }  # 22% 長期優良住宅認定
+    - { code: CERT_ENERGY_SAVING,   weight: 3 }    # 12% 省エネ基準適合・ZEH
+    - { code: CERT_SEISMIC_GRADE,   weight: 3 }    #  0% 耐震等級（実測0だが定型語）
+    # 後から変えられない土地・立地の条件
+    - { code: EQUIP_PARKING_2,      weight: 4 }    # 34% 駐車2台以上
+    - { code: LOC_CORNER_LOT,       weight: 3 }    # 20% 角地
+    - { code: LOC_SOUTH_FACING,     weight: 2 }    # 51% 南向き
+    - { code: LOC_TWO_SIDE_LIGHT,   weight: 3 }    # 31% 2面採光
+    # 設備・仕様
+    - { code: HVAC_FLOOR_HEAT,      weight: 5 }    # 35% 床暖房
+    - { code: KITCHEN_DISHWASHER,   weight: 3 }    # 63% 食器洗い乾燥機
+    - { code: STORAGE_WIC,          weight: 3 }    # 53% ウォークインクローゼット
+    - { code: EQUIP_ROOF_BALCONY,   weight: 2 }    # 29% ルーフバルコニー
+    - { code: SEC_CAMERA,           weight: 3 }    # 12% 防犯カメラ
+    - { code: EQUIP_BARRIER_FREE,   weight: 1 }    # 18% バリアフリー
+    # 完成済みで即入居できる（完成前の分譲地との差）
+    - { code: FEAT_VACANT,          weight: 3 }    # 22% 即引渡可
   numeric:
-    - { metric: price,                weight: 40, best: 40000000, worst: 100000000 }
-    - { metric: land_area_sqm,        weight: 15, best: 120,      worst: 40 }
-    - { metric: building_area_sqm,    weight: 15, best: 120,      worst: 50 }
-    - { metric: walk_minutes,         weight: 10, best: 3,        worst: 20 }
-    # ⚠ 通勤の best/worst は母集団（現在の3市区・MUST fail 以外）の下位10%〜上位10%に
-    #   合わせた**暫定値**（ユーザー判断 2026-09-07・課題#4 手順8）。賃貸の 25〜60 を流用すると
-    #   八王子の掲載が0点に張り付き weight 25 が死ぬ（→ 課題#31）。MUST は置かない
-    #   （売買は地域を限定しない判断 → 課題#4）。⚠ 市区を増やしたら付け直すこと。
-    - { metric: commute_minutes,      weight: 25, best: 40,       worst: 80 }
-    - { metric: flood_rank_avg,       weight: 15, best: 0,        worst: 4 }
-    - { metric: landslide_area_ratio, weight: 5,  best: 0,        worst: 0.1 }
+    # best/worst は 4都県 seed 後の母集団（MUST 通過 3,876件・2026-09-08）の p10〜p90 に
+    # 合わせた（→ 課題#31・#34）。⚠ 3市区時代の値だと価格の満点が 34%・建物面積の満点が 3%。
+    # ⚠ 価格は絶対額なので郊外が満点を取り続ける（相場比が入るまでの既知の限界 → 課題#49）
+    - { metric: price,                weight: 40, best: 30000000, worst: 72000000 }   # p10 2,990万 / p90 7,180万
+    - { metric: land_area_sqm,        weight: 15, best: 170,      worst: 60 }         # p90 167 / p10 61
+    # ⚠ 新築戸建ての建物面積は 82〜111㎡（p10〜p90）に固まる。幅は狭いが階調は出る
+    - { metric: building_area_sqm,    weight: 15, best: 110,      worst: 82 }         # p90 111 / p10 82
+    - { metric: walk_minutes,         weight: 8,  best: 3,        worst: 20 }         # 0点 6%・満点 2%（据え置き）
+    # 通勤は 25→10 へ（ユーザー判断 2026-09-07）。best/worst は4都県の母集団の p10〜p90
+    - { metric: commute_minutes,      weight: 10, best: 45,       worst: 90 }         # p10 46 / p90 90
+    # ハザード（→ ADR 0021）。戸建ては崖地の土砂災害が効くので土砂も 5→10 へ
+    - { metric: flood_rank_avg,       weight: 25, best: 0,        worst: 4 }
+    - { metric: landslide_area_ratio, weight: 10, best: 0,        worst: 0.1 }
 
 ranking:
   top_n: 15

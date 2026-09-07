@@ -206,9 +206,7 @@ def test_同梱の雛形YAMLが読める() -> None:
         ("kodate_buy_v2.yaml", KodateBuyPattern, "CHUKO_KODATE"),
     ],
 )
-def test_売買の雛形YAMLが読める(
-    filename: str, expected_cls: type, expected_type: str
-) -> None:
+def test_売買の雛形YAMLが読める(filename: str, expected_cls: type, expected_type: str) -> None:
     pattern = load_pattern_file(REPO_ROOT / "configs" / "examples" / filename)
     assert isinstance(pattern, expected_cls)
     assert pattern.property_type == expected_type
@@ -249,12 +247,11 @@ def test_実運用の売買パターンが読める() -> None:
     assert pattern.search.site_filters.enabled is True
     assert set(pattern.search.site_filters.axes) == {"area_min", "walk_minutes_max"}
     # 設備は 2026-09-07 に配点した（辞書の buy: が育つまでは空にしてあった）。
-    # ⚠ **合計40点＝数値140点に対し22%** の水準を固定する。増減はユーザー判断で、
+    # ⚠ **合計60点** の水準を固定する（4都県全域への拡大時に 40 → 60 へ。購入で検討すべき
+    #   材料として設備の比重を上げるユーザー判断 2026-09-07 → 課題#4）。増減はユーザー判断で、
     #   変えると config_hash が変わり全件が自動再スコアされる
-    weights = [
-        item.weight for item in pattern.want.features
-    ]
-    assert sum(weights) == 40, "設備の重み合計（ユーザー判断 2026-09-07）"
+    weights = [item.weight for item in pattern.want.features]
+    assert sum(weights) == 60, "設備の重み合計（ユーザー判断 2026-09-07・4都県拡大）"
     codes = {c for item in pattern.want.features for c in (item.any_of or [item.code])}
     # ⚠ 出現率が高すぎる条件を入れてはいけない。ほぼ全件が持つと分母 Σw だけ
     #   増えて全掲載が等しく加点され、順位がまったく動かない（→ 課題#15・#31）
@@ -278,13 +275,76 @@ def test_実運用の新築マンションパターンが読める() -> None:
     assert "age_years" not in metrics, "age_years は新築マンションに適用されない"
     # ⚠ 棟には設備原文が無いので、書くと棟が全件 miss になり分母にだけ乗る。
     #   実測（2026-09-07）で active 50掲載のうち**設備原文があるのは13件（26%）だけ**。
-    #   中古マンションには配点したが（設備40点）、新築は据え置く
+    #   中古マンションには配点したが（設備60点）、新築は据え置く（ユーザー判断 2026-09-07）
     assert pattern.want.features == []
     # ⚠ 価格未定（price が NULL）・間取りレンジ・管理費未取得が構造的に生じるので、
     #   drop へ倒すと棟の掲載がまとめて消える
     assert pattern.must.unknown_policy == "keep"
     # ⚠ 新築のサイト側フィルタは効きが未測定なので送らない（→ ADR 0015）
     assert pattern.search.site_filters.enabled is False
+
+
+BUY_PATTERN_FILES = (
+    "chuko_mansion.yaml",
+    "shinchiku_mansion.yaml",
+    "chuko_kodate.yaml",
+    "shinchiku_kodate.yaml",
+)
+
+
+@pytest.mark.parametrize("filename", BUY_PATTERN_FILES)
+def test_売買パターンは4都県全域を対象にする(filename: str) -> None:
+    """売買4パターンは「東京・千葉・埼玉・神奈川の全域」で、市区を限定しない
+    （ユーザー判断 2026-09-07 → 課題#4「4都県全域への拡大」）。
+
+    ⚠ 賃貸のエリア帯（``cities`` 必須 → ``test_エリア帯は市区を明示列挙し重ならない``）
+    とは**逆の運用**。売買は相場より安いことで見るため帯に相当する概念を持たない。
+    ⚠ ``cities`` が空なら売買アダプタ（``requires_city=True``）が全市区へ自動展開する。
+    SUUMO のスラグが無い市区は ``resolve_areas`` が黙って落とす（実測 173/251 市区）。
+    ⚠⚠ 市区を絞り直すのは自由だが、**広げる方向は `scan --seed` を先に流す**
+    （配置した瞬間から定期スキャンが新規掲載を全件通知する → ADR 0006）。
+    """
+    pattern = load_pattern_file(REPO_ROOT / "configs" / filename)
+    assert pattern.property_type != "CHINTAI"
+    assert set(pattern.search.prefectures) == {"東京都", "千葉県", "埼玉県", "神奈川県"}, (
+        f"{filename}: 4都県すべてを対象にする"
+    )
+    assert pattern.search.cities == [], f"{filename}: 売買は市区を限定しない（全域）"
+
+
+@pytest.mark.parametrize("filename", BUY_PATTERN_FILES)
+def test_売買パターンは通勤を下げハザードを上げる(filename: str) -> None:
+    """売買の配点は「通勤を下げ、購入で検討すべき材料（ハザード）を上げる」
+    （ユーザー判断 2026-09-07 → 課題#4）。4パターン共通の値を固定する。
+
+    ⚠ 売買の相場（→ 課題#49）が無い間は価格の絶対額で採点するので、通勤を下げるほど
+    安い郊外が上位に寄る（→ 課題#24 と同型）ことは承知のうえの判断。
+    ⚠ weight を変えると config_hash が変わり、次回の定期スキャンで全件再スコアされる。
+    ⚠ best/worst はここでは固定しない（4都県の母集団で付け直す → 課題#31・#34）。
+    """
+    pattern = load_pattern_file(REPO_ROOT / "configs" / filename)
+    weights = {item.metric: item.weight for item in pattern.want.numeric}
+    assert weights["commute_minutes"] == 10, f"{filename}: 通勤は 25 → 10 へ下げた"
+    assert weights["walk_minutes"] == 8, f"{filename}: 徒歩は 10 → 8 へ下げた"
+    assert weights["flood_rank_avg"] == 25, f"{filename}: 洪水は 15 → 25 へ上げた"
+    assert weights["landslide_area_ratio"] == 10, f"{filename}: 土砂は 5 → 10 へ上げた"
+    assert weights["price"] == 40, f"{filename}: 価格は据え置き"
+    # ⚠ 売買は地域を限定しない判断と整合させ、通勤の MUST は置かない（→ 課題#4 手順8）
+    assert pattern.must.commute_minutes_max is None, f"{filename}: 通勤の MUST は置かない"
+
+
+@pytest.mark.parametrize("filename", ("chuko_kodate.yaml", "shinchiku_kodate.yaml"))
+def test_戸建てパターンの設備は50点(filename: str) -> None:
+    """戸建て2種別は 4都県拡大時に設備 50 点を新設した（ユーザー判断 2026-09-07 → 課題#4）。
+
+    ⚠ 新築マンションには入れない（棟に設備原文が無く、配点すると棟が構造的に沈む
+    → ``test_実運用の新築マンションパターンが読める``）。中古マンションは 60 点
+    （→ ``test_実運用の売買パターンが読める``）。
+    """
+    pattern = load_pattern_file(REPO_ROOT / "configs" / filename)
+    assert sum(item.weight for item in pattern.want.features) == 50, (
+        f"{filename}: 設備の重み合計（ユーザー判断 2026-09-07）"
+    )
 
 
 @pytest.mark.parametrize("filename", ["chintai_23ku.yaml", "chintai_suburb60.yaml"])
@@ -484,9 +544,7 @@ def test_MustクラスのフィールドはそのファミリのMUSTに限られ
     （実行時に全件 unknown になるだけで例外にならない）。
     """
     allowed = {
-        spec.name
-        for ptype in _property_types_of(pattern_cls)
-        for spec in must_items_for(ptype)
+        spec.name for ptype in _property_types_of(pattern_cls) for spec in must_items_for(ptype)
     }
     extra = _must_fields_of(pattern_cls) - allowed
     assert not extra, (
