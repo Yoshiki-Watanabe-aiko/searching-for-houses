@@ -62,7 +62,11 @@ want:
     - { metric: land_area_sqm,        weight: 15, best: 120,      worst: 40 }
     - { metric: building_area_sqm,    weight: 15, best: 120,      worst: 50 }
     - { metric: walk_minutes,         weight: 10, best: 3,        worst: 20 }
-    - { metric: commute_minutes,      weight: 25, best: 25,       worst: 60 }
+    # ⚠ 通勤の best/worst は母集団（現在の3市区・MUST fail 以外）の下位10%〜上位10%に
+    #   合わせた**暫定値**（ユーザー判断 2026-09-07・課題#4 手順8）。賃貸の 25〜60 を流用すると
+    #   八王子の掲載が0点に張り付き weight 25 が死ぬ（→ 課題#31）。MUST は置かない
+    #   （売買は地域を限定しない判断 → 課題#4）。⚠ 市区を増やしたら付け直すこと。
+    - { metric: commute_minutes,      weight: 25, best: 40,       worst: 80 }
     - { metric: flood_rank_avg,       weight: 15, best: 0,        worst: 4 }
     - { metric: landslide_area_ratio, weight: 5,  best: 0,        worst: 0.1 }
 

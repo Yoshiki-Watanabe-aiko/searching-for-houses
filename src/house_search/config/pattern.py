@@ -189,6 +189,12 @@ class ChintaiMust(MustBase):
     area_max: float | None = Field(default=None, description="専有面積の上限（㎡）")
     age_max: int | None = Field(default=None, description="築年数の上限（年）")
     floor_min: int | None = Field(default=None, description="所在階の下限")
+    # 相場比（rent_total ÷ 同じ市区・間取りの相場）の下限。サイト側の賃料データ異常
+    # （実勢の約1/10で登録された掲載 → 課題#50）を外すための足切り。
+    # ⚠ 相場が引けない掲載は unknown（unknown_policy に従う）
+    market_rate_ratio_min: float | None = Field(
+        default=None, description="相場に対する賃料の比の下限（例 0.20）"
+    )
 
 
 class MansionBuyMust(MustBase):
