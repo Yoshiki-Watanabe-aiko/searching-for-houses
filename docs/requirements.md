@@ -1463,6 +1463,9 @@ f:\searching-for-houses\
 │   │   ├── suumo_buy.py    # SUUMO中古マンション。SEOパス＋スラグ（Phase 6・課題#4）
 │   │   ├── suumo_shinchiku.py  # SUUMO新築マンション。棟と個別住戸が混在
 │   │   │                       # ⚠ 一覧のDOMは同一だが**詳細ページは別構造**（Phase 6・課題#4）
+│   │   ├── suumo_kodate.py # SUUMO一戸建て（新築・中古）。土地/建物の2軸
+│   │   │                   # ⚠ **バス便が過半数**（中古11/20・新築17/20）で
+│   │   │                   #   バス停名も鉤括弧に入る（Phase 6 手順8・課題#4）
 │   ├── extract/
 │   │   ├── normalize.py        # NFKC正規化・トークン化
 │   │   ├── dictionary.py       # 辞書のロードとDB同期

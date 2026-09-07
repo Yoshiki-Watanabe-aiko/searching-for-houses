@@ -261,7 +261,10 @@ def test_未対応の組はNoneを返す() -> None:
     # ⚠ ライフルホームズの売買は**入れないと決めた**（取得枠を賃貸と食い合う → 課題#4）。
     # 未実装ではなく方針なので、実装したくなったらここも一緒に見直す
     assert get_scraper("HOMES", "CHUKO_MANSION") is None
-    assert get_scraper("SUUMO", "CHUKO_KODATE") is None
+    # ⚠ 戸建て2種別は Phase 6 手順8（2026-09-07）で配線した。
+    #   他サイトの売買は依然として未実装
+    assert get_scraper("GOO", "CHUKO_KODATE") is None
+    assert get_scraper("ATHOME", "SHINCHIKU_KODATE") is None
 
 
 def test_新築マンションは中古と別のアダプタを引く() -> None:
@@ -301,4 +304,6 @@ def test_賃貸アダプタは種別を宣言しないので賃貸として登�
         "CHINTAI",
         "CHUKO_MANSION",
         "SHINCHIKU_MANSION",
+        "CHUKO_KODATE",
+        "SHINCHIKU_KODATE",
     }
