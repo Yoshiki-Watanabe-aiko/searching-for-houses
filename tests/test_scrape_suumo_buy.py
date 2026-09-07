@@ -179,3 +179,34 @@ def test_掲載終了ページでは設備の原文が空になる(scraper: Suum
     """⚠ ブロックが無いときに空文字を返すと、``COALESCE`` で上書きされて
     **既存の原文が空に潰れる**。``None`` を返して既存値を保つ。"""
     assert scraper.parse_detail(_read("detail_gone.html")).raw_features_text is None
+
+
+def test_一覧URLは新着順でrobotsに許可される(scraper: SuumoBuyMansionScraper) -> None:
+    """⚠⚠ **新着・更新順（``po=1&pj=2``）を必ず付ける**（2026-09-07 実測）。
+
+    既定順は千代田区の1ページ目20件のうち「新着」バッジが **1件**、``po=1&pj=2`` は
+    **20件全部**（総件数586は不変）。増分スキャンは各市区の1ページ目しか見ないので、
+    既定順のままだと新着を**黙って取りこぼす**（例外にならず件数も減らない）。
+    ⚠ 賃貸は robots が ``/*?*sort=`` を禁じて並び順を送れない（→ 課題#52）が、
+    売買の ``po``/``pj`` は禁止されていない。組み立てたURLを実 robots.txt に当てて固定する。
+    """
+    from pathlib import Path
+
+    from house_search.scrape.area import AreaTarget
+    from house_search.scrape.fetch import RobotsRules
+
+    area = AreaTarget(
+        prefecture="東京都", city_name="千代田区", jis_code="13101", value="sc_chiyoda"
+    )
+    urls = scraper.list_urls(None, [area])
+    assert urls == ["https://suumo.jp/ms/chuko/tokyo/sc_chiyoda/?po=1&pj=2"]
+    assert scraper.page_url(urls[0], 2) == urls[0] + "&page=2"
+
+    robots = (Path(__file__).parent / "fixtures" / "robots" / "suumo.txt").read_text(
+        encoding="utf-8"
+    )
+    rules = RobotsRules.parse(robots)
+    assert rules.can_fetch("house-search/2.0", urls[0]) is True
+    assert rules.can_fetch("house-search/2.0", scraper.page_url(urls[0], 2)) is True
+    # サイト側MUST（mb・et）が後ろに付いても許可される
+    assert rules.can_fetch("house-search/2.0", urls[0] + "&mb=30&et=20") is True

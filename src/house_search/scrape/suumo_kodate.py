@@ -42,6 +42,7 @@ from house_search.scrape.base import (
 from house_search.scrape.fetch import SiteFetcher
 from house_search.scrape.prefectures import PREFECTURE_ROMAJI
 from house_search.scrape.suumo_buy import (
+    BUY_LIST_QUERY,
     features_text,
     list_fields,
     read_spec_table,
@@ -135,7 +136,10 @@ class _SuumoKodateScraper:
             if not area.value:
                 # スラグの無い市区は取りに行けない（``resolve_areas`` が落とす）
                 continue
-            urls.append(BASE_URL + self.list_path.format(pref=pref, city=area.value))
+            # 新着・更新順で取る（既定順だと1ページ目に新着が載らない → suumo_buy.BUY_LIST_QUERY）
+            urls.append(
+                BASE_URL + self.list_path.format(pref=pref, city=area.value) + "?" + BUY_LIST_QUERY
+            )
         return urls
 
     def page_url(self, base_url: str, page: int) -> str:

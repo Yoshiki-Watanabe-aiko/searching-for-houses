@@ -1,11 +1,11 @@
 ﻿# ============================================================
-# 物件検索通知システム v2 - タスクスケジューラ登録（4本）
+# 物件検索通知システム v2 - タスクスケジューラ登録（7本）
 #
 # 使い方:
 #   .\scripts\register_tasks.ps1 -DryRun          # XMLを生成して検証するだけ（権限不要）
 #   .\scripts\register_tasks.ps1                  # 登録する（★管理者権限が要る）
-#   .\scripts\register_tasks.ps1 -EnableScraping  # 取得を伴う2本を有効化する
-#   .\scripts\register_tasks.ps1 -Unregister      # 4本とも削除する
+#   .\scripts\register_tasks.ps1 -EnableScraping  # 取得を伴う5本（Scan・ScanBuy・Sweep・CheckSold・MarketRates）を有効化する
+#   .\scripts\register_tasks.ps1 -Unregister      # 7本とも削除する
 #
 # ★ 登録には管理者権限が必要（2026-09-02 に実測して判明）:
 #   LogonType が S4U（＝ログオフ中も実行・パスワード保存なし）のタスクを作るには
@@ -27,8 +27,9 @@
 #   登録後は必ず schtasks /query /fo LIST /v の「実行ユーザー」を確認すること。
 #
 # 登録されるタスク:
-#   HouseSearch-Scan       2時間ごと 01:15起点  増分スキャン（一覧1ページ＋詳細40件/サイト）
-#   HouseSearch-Sweep      毎週日曜 02:00      在庫棚卸し（一覧5ページ＋詳細400件/サイト）
+#   HouseSearch-Scan       2時間ごと 01:15起点  増分スキャン（賃貸のみ・一覧1ページ＋詳細40件/サイト）
+#   HouseSearch-ScanBuy    毎日 10:25           売買4パターンの日次スキャン＋掲載終了の確認（課題#4）
+#   HouseSearch-Sweep      毎週日曜 02:00      在庫棚卸し（全パターン・一覧5ページ＋詳細400件/サイト）
 #   HouseSearch-CheckSold  毎日 08:40           成約・掲載終了の確認
 #   HouseSearch-Digest     毎日 20:00           日次ランキングダイジェスト
 #   HouseSearch-Backup     毎日 03:30           pg_dump（課題#8）
@@ -70,7 +71,7 @@
 param(
     [switch]$DryRun,
     [switch]$Unregister,
-    # 取得を伴う2本（Scan / CheckSold）を有効化する。
+    # 取得を伴う5本（Scan / ScanBuy / Sweep / CheckSold / MarketRates）を有効化する。
     # 初回全件スキャンが終わってから実行すること（並走すると実効間隔が半分になる）
     [switch]$EnableScraping,
 
@@ -161,6 +162,19 @@ $Tasks = @(
         TimeLimit   = "PT1H50M"
     },
     @{
+        Name        = "HouseSearch-ScanBuy"
+        Description = "物件検索通知システム: 売買4パターン（マンション・戸建て・4都県173市区）の日次スキャンと掲載終了の確認。売買は掲載の回転が遅いので1日1回（→ 課題#4）。"
+        TaskArg     = "scan-buy"
+        Scraping    = $true
+        # 毎日 10:25。09:15 の scan（実測55〜60分）が終わったあと、11:15 の scan の前に置く。
+        # 所要は一覧692リクエスト約30分＋詳細約7分＋掲載終了の確認約8分の見込み。
+        # ⚠ 11:15 を越えると 11:15 の scan が pg_advisory_lock でスキップされる
+        #   （データは壊れない。新着の検知が2時間遅れるだけ → ADR 0013 決定8）
+        StartAt     = "2026-09-08T10:25:00"
+        Repeat      = $null
+        TimeLimit   = "PT1H10M"
+    },
+    @{
         Name        = "HouseSearch-Sweep"
         Description = "物件検索通知システム: 週次の在庫棚卸し（一覧5ページ）。増分が拾うのは各市区の先頭だけなので、週に一度だけ在庫を舐め直す。"
         TaskArg     = "sweep"
@@ -219,7 +233,7 @@ if ($Unregister) {
     foreach ($task in $Tasks) {
         & schtasks.exe /delete /tn $task.Name /f 2>&1 | Out-String | Write-Output
     }
-    Write-Host "4本のタスクを削除しました" -ForegroundColor Green
+    Write-Host "7本のタスクを削除しました" -ForegroundColor Green
     exit 0
 }
 
@@ -415,7 +429,7 @@ if ($failed) {
 }
 
 Write-Host ""
-Write-Host "4本のタスクを登録しました。確認と手動起動:" -ForegroundColor Cyan
+Write-Host "7本のタスクを登録しました。確認と手動起動:" -ForegroundColor Cyan
 foreach ($task in $Tasks) {
     Write-Host "  schtasks /query /tn $($task.Name) /fo LIST /v"
 }

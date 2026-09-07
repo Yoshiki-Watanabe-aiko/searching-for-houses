@@ -187,12 +187,24 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 
 | タスク名 | トリガー | 実行 | 実行時間上限 |
 |---|---|---|---|
-| `HouseSearch-Scan` | **2時間ごと・01:15起点** | `task_runner.ps1 -Task scan` | PT1H50M |
-| `HouseSearch-Sweep` | **毎週日曜 02:00** | `-Task sweep`（`scan --full`） | PT10H |
-| `HouseSearch-CheckSold` | **毎日 08:40** | `-Task check-sold` | PT1H |
+| `HouseSearch-Scan` | **2時間ごと・01:15起点** | `task_runner.ps1 -Task scan`（`scan --family CHINTAI`・**賃貸のみ**） | PT1H50M |
+| `HouseSearch-ScanBuy` | **毎日 10:25** | `-Task scan-buy`（`scan --family MANSION_BUY --family KODATE_BUY` → `check-sold`〈同〉`--limit 10 --top-rank-limit 30`） | PT1H10M |
+| `HouseSearch-Sweep` | **毎週日曜 02:00** | `-Task sweep`（`scan --full`・全パターン） | PT10H |
+| `HouseSearch-CheckSold` | **毎日 08:40** | `-Task check-sold`（`--family CHINTAI`・**賃貸のみ**） | PT1H |
 | `HouseSearch-Digest` | 毎日 20:00 | `-Task digest` | PT30M |
 | `HouseSearch-Backup` | 毎日 03:30 | `-Task backup` → `backup_db.ps1` | PT30M |
 | `HouseSearch-MarketRates` | **毎月1日 04:30** | `-Task market-rates` → `update_market_rates.ps1` | PT30M |
+
+⚠⚠ **売買4パターンは2時間ごとの scan に同居させない**（2026-09-07 ユーザー判断 → 課題#4）。
+売買を4都県173市区へ広げたので、同居させると一覧692リクエスト（約30分）＋詳細が加わり
+所要が約95〜105分になって上限 PT1H50M に迫る。上限で切られると**末尾の売買パターンが
+採点されない**（例外にならず順位が古いまま残る）。売買は掲載の回転が遅いので
+**1日1回**（`HouseSearch-ScanBuy`・10:25）で足り、掲載終了の確認もそこで行う
+（08:40 の check-sold に売買を含めると最大600件が加わり PT1H を超える → 課題#26 の再来）。
+⚠ `scan` / `check-sold` の `--family` は種別ファミリ（`CHINTAI` / `MANSION_BUY` / `KODATE_BUY`）で
+絞る。⚠ **絞った結果が空なら例外**にする（黙って空を返すとタスクが「対象0件で正常終了」を
+繰り返して気づけない）。⚠ 10:25 なのは 09:15 の scan（実測55〜60分）の後・11:15 の前だから。
+越えると 11:15 の scan が `pg_advisory_lock` でスキップされる（データは壊れない）。
 
 ⚠ **HOME'S の取得間隔を広げる対策は無効だった**（2026-09-03 実測 → 課題#17・#36）。
 スロットリングで本番でもほとんど取れていなかったため 2.5 → 10秒へ広げたが、
@@ -297,6 +309,11 @@ last_seen_at の古い順だけで選ぶと**順位がまったく考慮され�
   - **個別通知は帯ごとに別チャンネル、ダイジェストは両帯とも `DIGEST` へ集約**する（→ §9.1）
   - 売買は**種別ごとに1本**（Phase 6・帯は持たない → 課題#4）:
     `configs/chuko_mansion.yaml` / `shinchiku_mansion.yaml` / `chuko_kodate.yaml` / `shinchiku_kodate.yaml`。
+    ⚠ **4都県の全域が対象で `cities` は空**（2026-09-07 ユーザー判断）。売買アダプタは
+    `requires_city=True` なので空なら全市区へ自動展開され、SUUMO のスラグが無い市区は
+    黙って落ちる（実測 173/251 市区。無い市区は収集時に掲載が無かった市区）。
+    ⚠ 賃貸のエリア帯（`cities` 必須）とは逆の運用なので、`tests/test_pattern.py` の
+    「帯は市区を明示列挙する」テストは賃貸2本だけを対象にしている。
     ⚠⚠ **新しいパターンは `scan --seed` を流してから直下へ置く**（`.env` の通知先に値が
     入っているので、置いた瞬間から定期スキャンが全件を通知として飛ばす → ADR 0006）。
     ⚠ 配置してから seed を流す順序だと、その間に定期スキャンが起動しうる。
@@ -1372,6 +1389,14 @@ uv run house-search db-seed --test-db
   即座に取りこぼすとは限らないが、影響は実測して記録する）。
   ⚠ `tests/test_scrape_suumo.py` が**組み立てたURLを実 robots.txt に当てて**
   固定しているので、並び順を足すと落ちる
+- ⚠⚠ **SUUMO 売買の一覧は新着・更新順（`?po=1&pj=2`）で取る**（2026-09-07 実測 → 課題#4）。
+  既定の並びは千代田区の1ページ目20件のうち「新着」バッジが **1件**しかなく、
+  `po=1&pj=2` を付けると **20件全部**が新着になった（総件数586は不変）。増分スキャンは
+  各市区の1ページ目しか見ないので、**既定順のままだと新着を黙って取りこぼす**
+  （例外にならず件数も減らない）。HOMES の `cond[sortby]=newdate` と同じ理由（→ 課題#39）。
+  ⚠ 賃貸の `sort=` と違い、売買の `po` / `pj` は robots に当たらない（実 robots.txt に
+  当てて固定 → `tests/test_scrape_suumo_buy.py`）。⚠ ページ送りは `&page=N` になる
+  （`?` を重ねると page が黙って無視される → 課題#29）
 - User-Agent は既定で `.env` の `USER_AGENT`。アダプタが宣言したサイトだけ差し替える
   （LIFULL HOME'S は自己申告UAを 403 で拒否するため）
 - **能動的なボット検知は突破しない**（→ 課題#17・#18・#20）。

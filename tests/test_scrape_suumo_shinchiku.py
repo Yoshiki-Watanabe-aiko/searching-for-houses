@@ -236,13 +236,35 @@ def test_一覧URLはSEOパスで市区スラグを使う(scraper) -> None:
         prefecture="東京都", city_name="板橋区", jis_code="13119", value="sc_itabashi"
     )
     urls = scraper.list_urls(None, [area])
-    assert urls == ["https://suumo.jp/ms/shinchiku/tokyo/sc_itabashi/"]
+    # ⚠⚠ 新着・更新順（po=1&pj=2）を必ず付ける。既定順は1ページ目に新着がほぼ載らない
+    #   （実測 1/20）ので、増分スキャンが新着を黙って取りこぼす
+    assert urls == ["https://suumo.jp/ms/shinchiku/tokyo/sc_itabashi/?po=1&pj=2"]
 
 
 def test_ページ送りは1始まりのpageクエリ(scraper) -> None:
-    base = "https://suumo.jp/ms/shinchiku/tokyo/sc_itabashi/"
+    """⚠ 一覧URLは新着順のクエリを既に持つので、ページ番号は ``&`` で足す。"""
+    base = "https://suumo.jp/ms/shinchiku/tokyo/sc_itabashi/?po=1&pj=2"
     assert scraper.page_url(base, 1) == base
-    assert scraper.page_url(base, 2) == base + "?page=2"
+    assert scraper.page_url(base, 2) == base + "&page=2"
+
+
+def test_一覧URLがrobotsで許可される(scraper) -> None:
+    """⚠⚠ 組み立てたURLを実 robots.txt に当てて確かめる（→ 課題#52）。"""
+    from pathlib import Path
+
+    from house_search.scrape.area import AreaTarget
+    from house_search.scrape.fetch import RobotsRules
+
+    robots = (Path(__file__).parent / "fixtures" / "robots" / "suumo.txt").read_text(
+        encoding="utf-8"
+    )
+    rules = RobotsRules.parse(robots)
+    area = AreaTarget(
+        prefecture="東京都", city_name="板橋区", jis_code="13119", value="sc_itabashi"
+    )
+    for url in scraper.list_urls(None, [area]):
+        assert rules.can_fetch("house-search/2.0", url) is True
+        assert rules.can_fetch("house-search/2.0", scraper.page_url(url, 2)) is True
 
 
 def test_1ページ30件に満たなければ最終ページ(scraper) -> None:

@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from house_search import __version__
+from house_search.config.metrics import Family
 
 # 未実装サブコマンドと、実装予定の Phase。Phase 2 ですべて実装済みになった。
 PLANNED: dict[str, str] = {}
@@ -55,6 +56,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_scan.add_argument("--pattern", help="対象の検索パターン名（省略時は全件）")
     p_scan.add_argument("--site", help="対象サイトコード（省略時はパターンの全サイト）")
     p_scan.add_argument(
+        "--family",
+        action="append",
+        choices=[f.value for f in Family],
+        help=(
+            "対象を種別ファミリで絞る（複数指定可）。2時間ごとの定期スキャンは CHINTAI だけ、"
+            "売買（MANSION_BUY / KODATE_BUY）は1日1回の別タスクで回す（→ 課題#4）"
+        ),
+    )
+    p_scan.add_argument(
         "--seed",
         action="store_true",
         help="シードモード。通知を送らず記録だけ行う（初回全件取得・長期停止からの再開で使う）",
@@ -73,6 +83,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_sold = sub.add_parser("check-sold", help="成約・掲載終了の確認")
     p_sold.add_argument("--pattern", help="対象の検索パターン名")
+    p_sold.add_argument(
+        "--family",
+        action="append",
+        choices=[f.value for f in Family],
+        help="対象を種別ファミリで絞る（複数指定可）。scan と同じ分け方（→ 課題#4）",
+    )
     p_sold.add_argument("--limit", type=int, default=100, help="1回に確認する件数（既定100）")
     p_sold.add_argument(
         "--top-rank-limit",
@@ -123,17 +139,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "sync-hazards",
         help=(
-            "data/hazard_levels/hazard_levels.csv を m_hazard_levels へ同期する"
-            "（ネットワーク不要）"
+            "data/hazard_levels/hazard_levels.csv を m_hazard_levels へ同期する（ネットワーク不要）"
         ),
     )
 
     sub.add_parser(
         "sync-market-rates",
-        help=(
-            "data/market_rates/rent_rates.csv を m_market_rates へ同期する"
-            "（ネットワーク不要）"
-        ),
+        help=("data/market_rates/rent_rates.csv を m_market_rates へ同期する（ネットワーク不要）"),
     )
 
     sub.add_parser(
@@ -215,17 +227,32 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _load_patterns(name: str | None):
-    """検索パターンを読み込む。``--pattern`` 指定があれば name で絞る。"""
+def select_patterns(patterns, *, name: str | None = None, families: Sequence[str] | None = None):
+    """読み込んだ検索パターンを ``--pattern`` / ``--family`` で絞る（純関数）。
+
+    ⚠ **絞った結果が空なら例外にする。** 黙って空を返すと、タスクが「対象0件で正常終了」
+    を繰り返して気づけない（--family の綴り違いは argparse の choices が弾くが、
+    configs/ にそのファミリのパターンが1本も無い状態は検出できない）。
+    """
+    selected = list(patterns)
+    if name:
+        selected = [p for p in selected if p.name == name]
+        if not selected:
+            raise ValueError(f"検索パターン '{name}' が見つかりません")
+    if families:
+        wanted = {str(f) for f in families}
+        selected = [p for p in selected if p.family.value in wanted]
+        if not selected:
+            raise ValueError(f"種別ファミリ {sorted(wanted)} の検索パターンが見つかりません")
+    return selected
+
+
+def _load_patterns(name: str | None, families: Sequence[str] | None = None):
+    """検索パターンを読み込む。``--pattern`` / ``--family`` 指定があれば絞る。"""
     from house_search.config.pattern import load_patterns
     from house_search.config.settings import load_settings
 
-    patterns = load_patterns(load_settings().configs_dir)
-    if name:
-        patterns = [p for p in patterns if p.name == name]
-        if not patterns:
-            raise ValueError(f"検索パターン '{name}' が見つかりません")
-    return patterns
+    return select_patterns(load_patterns(load_settings().configs_dir), name=name, families=families)
 
 
 def _cmd_db_seed(args: argparse.Namespace) -> int:
@@ -286,9 +313,7 @@ def _cmd_validate_config(args: argparse.Namespace) -> int:
             # ⚠ ダイジェストの通知先も確かめる。個別通知と別チャンネルにしたとき
             #   ここを見ないと、20:00 のダイジェストで初めて欠落に気づくことになる
             refs = {pattern.webhook_ref, pattern.effective_digest_webhook_ref}
-            missing = [
-                message for ref in sorted(refs) for message in _webhook_error(settings, ref)
-            ]
+            missing = [message for ref in sorted(refs) for message in _webhook_error(settings, ref)]
             if missing:
                 failures += 1
                 print(f"NG  {path.name}: " + " / ".join(missing), file=sys.stderr)
@@ -390,7 +415,7 @@ def _run_scan(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
 
-    patterns = _load_patterns(args.pattern)
+    patterns = _load_patterns(args.pattern, args.family)
 
     # ⚠ 通知先は**取得を始める前に**解決しておく。`_notify` は
     #   `scan_pattern` の最後にあるので、ここで確かめないと
@@ -513,10 +538,8 @@ def _cmd_check_sold(args: argparse.Namespace) -> int:
 
 
 def _run_check_sold(args: argparse.Namespace, runtime, check_sold) -> int:
-    for pattern in _load_patterns(args.pattern):
-        result = check_sold(
-            runtime, pattern, limit=args.limit, top_rank_limit=args.top_rank_limit
-        )
+    for pattern in _load_patterns(args.pattern, args.family):
+        result = check_sold(runtime, pattern, limit=args.limit, top_rank_limit=args.top_rank_limit)
         print(
             f"{pattern.name}: 確認 {result.checked}件"
             f"（うち上位{args.top_rank_limit}位 {result.from_top_rank}件）"
@@ -1453,9 +1476,7 @@ def _cmd_hazard_stats(args: argparse.Namespace) -> int:
         print(f"  母集団: MUST通過 {len(passing)}件")
 
         for metric in _HAZARD_WANT_METRICS:
-            known = sorted(
-                value for v in passing if (value := v.metric_value(metric)) is not None
-            )
+            known = sorted(value for v in passing if (value := v.metric_value(metric)) is not None)
             print(f"  [{metric}] {METRICS_BY_NAME[metric].label}")
             if not known:
                 print("    値のある掲載がありません")
@@ -1476,9 +1497,7 @@ def _cmd_hazard_stats(args: argparse.Namespace) -> int:
 
         print("  MUST 上限候補ごとの通過件数（値のある掲載が分母）:")
         for must_name, field, limits in _HAZARD_MUST_CANDIDATES:
-            known = [
-                value for v in passing if (value := getattr(v, field, None)) is not None
-            ]
+            known = [value for v in passing if (value := getattr(v, field, None)) is not None]
             if not known:
                 print(f"    {must_name}: 値のある掲載がありません")
                 continue

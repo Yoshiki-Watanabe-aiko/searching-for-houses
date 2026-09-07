@@ -81,9 +81,7 @@ class TestForceUtf8Output:
         cli._force_utf8_output()
         assert calls == [("stdout", "utf-8"), ("stderr", "utf-8")]
 
-    def test_tolerates_streams_without_reconfigure(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_tolerates_streams_without_reconfigure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """reconfigure を持たない差し替え先でも落ちない（テストの捕捉先など）。"""
         monkeypatch.setattr(cli.sys, "stdout", object())
         monkeypatch.setattr(cli.sys, "stderr", object())
@@ -126,3 +124,68 @@ class TestReSegmentArguments:
         parser = build_parser()
         args = parser.parse_args(["re-segment", "--destination", "芝公園"])
         assert (args.region, args.destination) == (None, "芝公園")
+
+
+class TestFamilyFilter:
+    """``--family`` で種別ファミリを絞る（→ 課題#4・2026-09-07）。
+
+    2時間ごとの定期スキャンは賃貸だけ、売買4パターンは1日1回の別タスクで回す。
+    売買を4都県173市区へ広げたので、同居させると所要が上限 PT1H50M に迫るため。
+    """
+
+    def test_familyは複数指定できる(self) -> None:
+        args = build_parser().parse_args(
+            ["scan", "--family", "MANSION_BUY", "--family", "KODATE_BUY"]
+        )
+        assert args.family == ["MANSION_BUY", "KODATE_BUY"]
+
+    def test_未指定ならNone(self) -> None:
+        assert build_parser().parse_args(["scan"]).family is None
+        assert build_parser().parse_args(["check-sold"]).family is None
+
+    def test_知らないファミリは弾く(self) -> None:
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["scan", "--family", "TOCHI"])
+
+    def test_check_soldも同じ分け方(self) -> None:
+        args = build_parser().parse_args(["check-sold", "--family", "CHINTAI"])
+        assert args.family == ["CHINTAI"]
+
+    def test_ファミリで絞れる(self) -> None:
+        from house_search.config.pattern import parse_pattern
+
+        chintai = parse_pattern(_pattern("賃貸", "CHINTAI"))
+        mansion = parse_pattern(_pattern("中古M", "CHUKO_MANSION"))
+        kodate = parse_pattern(_pattern("新築K", "SHINCHIKU_KODATE"))
+        patterns = [chintai, mansion, kodate]
+
+        assert cli.select_patterns(patterns) == patterns
+        assert cli.select_patterns(patterns, families=["CHINTAI"]) == [chintai]
+        assert cli.select_patterns(patterns, families=["MANSION_BUY", "KODATE_BUY"]) == [
+            mansion,
+            kodate,
+        ]
+        assert cli.select_patterns(patterns, name="中古M", families=["MANSION_BUY"]) == [mansion]
+
+    def test_絞った結果が空なら例外(self) -> None:
+        """黙って空を返すと、タスクが「対象0件で正常終了」を繰り返して気づけない。"""
+        from house_search.config.pattern import parse_pattern
+
+        patterns = [parse_pattern(_pattern("賃貸", "CHINTAI"))]
+        with pytest.raises(ValueError):
+            cli.select_patterns(patterns, families=["KODATE_BUY"])
+        with pytest.raises(ValueError):
+            cli.select_patterns(patterns, name="無い")
+
+
+def _pattern(name: str, property_type: str) -> dict:
+    """最小の検索パターン（ファミリの絞り込みだけを試すためのもの）。"""
+    return {
+        "name": name,
+        "property_type": property_type,
+        "webhook_ref": "X",
+        "sites": ["SUUMO"],
+        "search": {"prefectures": ["東京都"], "cities": []},
+        "must": {"unknown_policy": "keep"},
+        "want": {"features": [], "numeric": []},
+    }
