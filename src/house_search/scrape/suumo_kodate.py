@@ -50,6 +50,8 @@ from house_search.scrape.suumo_shinchiku import parse_price_range
 
 SITE_CODE = "SUUMO"
 BASE_URL = "https://suumo.jp"
+# 一覧の販売価格欄が価格未定を表す語。⚠ 新築マンションの ``価格未定`` を含む上位集合
+_UNDECIDED_MARK = "未定"
 # 1ページ20件（実測 2026-09-07・中古586件/新築1,007件の八王子市で確認）
 PAGE_SIZE = 20
 
@@ -169,12 +171,20 @@ class _SuumoKodateScraper:
                 continue
             fields = list_fields(unit)
             access = fields.get("沿線・駅")
-            price_min, price_max = parse_price_range(fields.get("販売価格"))
+            price_text = fields.get("販売価格")
+            price_min, price_max = parse_price_range(price_text)
+            # ⚠ 新築一戸建ての一覧は価格未定を **``未定``** と書く（新築マンションの
+            #   ``価格未定`` とは表記が違う。実測 2026-09-07・八王子「つなぎの丘」）。
+            #   ⚠ フラグを立てないと「価格が取れなかった」と区別できない
+            #   （→ 要件定義書 §11.4）。⚠ JSONB は ``||`` でマージされるので
+            #   価格があるときは **False を明示**する（→ PR #109）
+            undecided = _UNDECIDED_MARK in (price_text or "") and price_min is None
             listings.append(
                 ScrapedListing(
                     site_code=SITE_CODE,
                     external_id=external_id,
                     url=BASE_URL + href if href.startswith("/") else href,
+                    type_specific_attrs={"price_undecided": undecided},
                     # ⚠ **物件名が無い掲載がある**（実測で中古 4/20）。
                     #   必須にすると黙って落ちる
                     title=fields.get("物件名"),

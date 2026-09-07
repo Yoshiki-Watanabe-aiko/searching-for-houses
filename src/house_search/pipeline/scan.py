@@ -146,6 +146,14 @@ def _listing_view(listing: ScrapedListing) -> ListingView:
         age_years=listing.age_years,
         walk_minutes=listing.walk_minutes,
         address=listing.address,
+        # ⚠ 戸建ての MUST（land_area_min / building_area_min）は一覧で判定できる
+        #   （available_on_list=True）のに、ここへ渡していなかった（2026-09-07 実測）。
+        #   渡さないと1段目が unknown → keep で通り、2段目で fail する掲載に
+        #   詳細リクエストを使う（中古一戸建て 48件中3件）。例外にならず件数も減らない。
+        #   tests/test_first_stage_view.py が「一覧で判定できる MUST の入力列は
+        #   すべてここを通る」ことを機械的に固定している
+        land_area_sqm=listing.land_area_sqm,
+        building_area_sqm=listing.building_area_sqm,
         detail_fetched=False,
     )
 

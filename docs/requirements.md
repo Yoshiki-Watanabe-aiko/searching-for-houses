@@ -295,6 +295,13 @@ last_seen_at の古い順だけで選ぶと**順位がまったく考慮され�
   - [`configs/chintai_23ku.yaml`](../configs/chintai_23ku.yaml) — 東京23区（23市区・個別通知は `CHINTAI_23KU`）
   - [`configs/chintai_suburb60.yaml`](../configs/chintai_suburb60.yaml) — 近郊60分圏（59市区・個別通知は `CHINTAI_SUBURB60`）
   - **個別通知は帯ごとに別チャンネル、ダイジェストは両帯とも `DIGEST` へ集約**する（→ §9.1）
+  - 売買は**種別ごとに1本**（Phase 6・帯は持たない → 課題#4）:
+    `configs/chuko_mansion.yaml` / `shinchiku_mansion.yaml` / `chuko_kodate.yaml` / `shinchiku_kodate.yaml`。
+    ⚠⚠ **新しいパターンは `scan --seed` を流してから直下へ置く**（`.env` の通知先に値が
+    入っているので、置いた瞬間から定期スキャンが全件を通知として飛ばす → ADR 0006）。
+    ⚠ 配置してから seed を流す順序だと、その間に定期スキャンが起動しうる。
+    **`CONFIGS_DIR` を一時ディレクトリへ向けて seed を流せば競合そのものが無い**
+    （環境変数が `.env` の空値より優先される。戸建て2本は 2026-09-07 にこの手順で入れた）
 - 雛形: [`configs/examples/`](../configs/examples/)
   — 賃貸 `chintai_v2.yaml` / マンション売買 `mansion_buy_v2.yaml` / 戸建て売買 `kodate_buy_v2.yaml`
   ⚠ **売買雛形の weight・best/worst は暫定値**（母集団の分布を見てから決める → 課題#31・#34）
@@ -1111,7 +1118,15 @@ metric・MUST判定の入力になる数値は型付き列、正規化が未確�
 新築マンション・新築分譲戸建ては**1物件=1棟/1プロジェクト**で価格がレンジ表示になる。
 
 - `price` にレンジ下限、`price_min`/`price_max` にレンジを入れる
-- 価格未定は `price NULL` ＋ `type_specific_attrs.price_undecided = true`
+- 価格未定は `price NULL` ＋ `type_specific_attrs.price_undecided = true`。
+  ⚠ **一覧の表記はサイト・種別で違う**（SUUMO 新築マンションは `価格未定`、
+  **新築一戸建ては `未定`**）。アダプタごとに実測して立てる。⚠ 価格があるときは
+  **false を明示**する（JSONB の `||` マージでフラグが残るため → 課題#4）
+- ⚠ **MUST を一覧だけで判定する1段目（`scan._listing_view`）は、一覧で判定できる
+  MUST 項目の入力列をすべて写す。** 写し漏れると1段目が unknown → keep で通り、
+  2段目で fail する掲載に詳細リクエストを使う（例外にならない。戸建ての土地・建物面積で
+  実際に起きた → 課題#4 手順8）。`tests/test_first_stage_view.py` が `MUST_ITEMS` から
+  機械的に固定している
 - スコアはレンジ下限で計算し内訳に `"range": true` を記録。価格未定は price metric 欠損として再正規化
 - 通知は棟単位。住戸タイプ別の追跡はしない
 
