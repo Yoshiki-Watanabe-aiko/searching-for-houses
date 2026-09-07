@@ -68,6 +68,11 @@ class ScrapedListing:
     deposit_amount: int | None = None
     key_money_amount: int | None = None
     area_sqm: float | None = None
+    # ⚠ **戸建てに ``area_sqm`` を流用しない**（→ 要件定義書 §5.3）。
+    # 専有面積という概念が無く、土地面積・建物面積の2軸になる。
+    # 混ぜると metric の意味が濁り、名寄せキーも壊れる
+    land_area_sqm: float | None = None
+    building_area_sqm: float | None = None
     layout: str | None = None
     floor_num: int | None = None
     total_floors: int | None = None

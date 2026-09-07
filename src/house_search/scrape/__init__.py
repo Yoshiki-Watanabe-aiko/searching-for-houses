@@ -61,6 +61,10 @@ from house_search.scrape.nifty import NiftyScraper
 from house_search.scrape.smocca import SmoccaScraper
 from house_search.scrape.suumo import SuumoScraper
 from house_search.scrape.suumo_buy import SuumoBuyMansionScraper
+from house_search.scrape.suumo_kodate import (
+    SuumoChukoKodateScraper,
+    SuumoShinchikuKodateScraper,
+)
 from house_search.scrape.suumo_shinchiku import SuumoNewMansionScraper
 from house_search.scrape.ur import UrScraper
 
@@ -99,6 +103,8 @@ SCRAPERS: dict[tuple[str, str], type] = {
         ChintaiNetScraper,
         SuumoBuyMansionScraper,
         SuumoNewMansionScraper,
+        SuumoChukoKodateScraper,
+        SuumoShinchikuKodateScraper,
     )
 }
 

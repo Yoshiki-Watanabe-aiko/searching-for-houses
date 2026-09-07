@@ -183,14 +183,16 @@ _UPSERT = text(
     INSERT INTO t_listings (
         site_id, property_type_id, external_id, url, title,
         price, price_prev, mgmt_fee_monthly, deposit_amount, key_money_amount,
-        area_sqm, layout, floor_num, total_floors, age_years,
+        area_sqm, land_area_sqm, building_area_sqm, layout,
+        floor_num, total_floors, age_years,
         address, prefecture, city_id, station_info, walk_minutes, image_url,
         price_min, price_max, type_specific_attrs,
         status, first_seen_at, last_seen_at, created_at, updated_at
     ) VALUES (
         :site_id, :property_type_id, :external_id, :url, :title,
         :price, :price_prev, :mgmt_fee_monthly, :deposit_amount, :key_money_amount,
-        :area_sqm, :layout, :floor_num, :total_floors, :age_years,
+        :area_sqm, :land_area_sqm, :building_area_sqm, :layout,
+        :floor_num, :total_floors, :age_years,
         :address, :prefecture, :city_id, :station_info, :walk_minutes, :image_url,
         :price_min, :price_max, CAST(:type_specific_attrs AS jsonb),
         'active', now(), now(), now(), now()
@@ -204,6 +206,8 @@ _UPSERT = text(
         deposit_amount = EXCLUDED.deposit_amount,
         key_money_amount = EXCLUDED.key_money_amount,
         area_sqm = COALESCE(EXCLUDED.area_sqm, t_listings.area_sqm),
+        land_area_sqm = COALESCE(EXCLUDED.land_area_sqm, t_listings.land_area_sqm),
+        building_area_sqm = COALESCE(EXCLUDED.building_area_sqm, t_listings.building_area_sqm),
         layout = COALESCE(EXCLUDED.layout, t_listings.layout),
         floor_num = COALESCE(EXCLUDED.floor_num, t_listings.floor_num),
         total_floors = COALESCE(EXCLUDED.total_floors, t_listings.total_floors),
@@ -393,6 +397,8 @@ def upsert_listings(
                 "deposit_amount": listing.deposit_amount,
                 "key_money_amount": listing.key_money_amount,
                 "area_sqm": listing.area_sqm,
+                "land_area_sqm": listing.land_area_sqm,
+                "building_area_sqm": listing.building_area_sqm,
                 "layout": listing.layout,
                 "floor_num": listing.floor_num,
                 "total_floors": listing.total_floors,

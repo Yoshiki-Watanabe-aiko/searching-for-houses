@@ -45,7 +45,7 @@ PAGE_SIZE = 20
 LIST_PATH = "/ms/chuko/{pref}/{city}/"
 
 
-def _fields(unit) -> dict[str, str]:
+def list_fields(unit) -> dict[str, str]:
     """掲載ブロックの定義リストを「ラベル → 値」にする。
 
     ⚠ ``dl`` に class は付いていない（``dottable-line`` のような名前で探すと0件）。
@@ -80,7 +80,7 @@ def _external_id(href: str) -> str | None:
     return None
 
 
-def _station_info(value: str | None) -> str | None:
+def station_info(value: str | None) -> str | None:
     """交通欄を駅同定できる形へ整える。
 
     ⚠ **鉤括弧の「前に空白」と「後ろに駅」の両方が要る**（→ 課題#41・D-room）。
@@ -94,7 +94,7 @@ def _station_info(value: str | None) -> str | None:
     return " ".join(text.split())
 
 
-def _walk_minutes(value: str | None) -> int | None:
+def walk_minutes_of(value: str | None) -> int | None:
     """駅からの徒歩分。**バス便は採らない**。
 
     ⚠ ``京王高尾線「めじろ台」バス5分停歩5分`` の「5分」は**バス停からの徒歩**で、
@@ -230,7 +230,7 @@ class SuumoBuyMansionScraper:
             external_id = _external_id(href)
             if not external_id:
                 continue
-            fields = _fields(unit)
+            fields = list_fields(unit)
             access = fields.get("沿線・駅")
             listings.append(
                 ScrapedListing(
@@ -246,8 +246,8 @@ class SuumoBuyMansionScraper:
                     layout=fields.get("間取り") or None,
                     age_years=age_years_from_built(fields.get("築年月")),
                     address=clean_address(fields.get("所在地")),
-                    station_info=_station_info(access),
-                    walk_minutes=_walk_minutes(access),
+                    station_info=station_info(access),
+                    walk_minutes=walk_minutes_of(access),
                 )
             )
         return listings
@@ -288,7 +288,7 @@ class SuumoBuyMansionScraper:
             # ``_TOTAL_FLOORS`` を直してある（→ 課題#4）
             total_floors=parse_total_floors(values.get("構造・階建て")),
             address=clean_address(values.get("所在地")),
-            walk_minutes=_walk_minutes(access),
+            walk_minutes=walk_minutes_of(access),
             type_specific_attrs={
                 key: values[key]
                 for key in ("敷地の権利形態", "用途地域", "構造・階建て", "総戸数")
