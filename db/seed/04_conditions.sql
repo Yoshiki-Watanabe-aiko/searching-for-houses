@@ -154,6 +154,9 @@ FROM (VALUES
     ('CERT', 'CERT_SEISMIC_GRADE', '耐震等級取得', NULL, 'boolean', TRUE, 6),
     ('CERT', 'CERT_ENERGY_SAVING', '省エネ基準適合・ZEH', NULL, 'boolean', TRUE, 7),
     ('CERT', 'CERT_ANSHIN_R', '安心R住宅', '国土交通省の既存住宅の標章制度', 'boolean', TRUE, 8),
+    -- 2026-09-07 追加（課題#4・売買の配点）。新築一戸建ての設備原文の22%に
+    -- 「長期優良住宅認定通知書」が現れるのに対応する条件が無かった
+    ('CERT', 'CERT_LONG_TERM_HOUSING', '長期優良住宅認定', '長期優良住宅の普及の促進に関する法律による認定', 'boolean', TRUE, 9),
     ('LAND', 'LAND_OWNERSHIP', '権利形態：所有権', NULL, 'boolean', TRUE, 1),
     ('LAND', 'LAND_LEASEHOLD', '権利形態：借地権', NULL, 'boolean', TRUE, 2),
     ('LAND', 'LAND_ROAD_WIDTH', '前面道路幅員（m）', '接道の幅員。type_specific_attrs に原文も保持する', 'number', FALSE, 3),

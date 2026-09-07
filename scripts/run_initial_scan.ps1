@@ -41,7 +41,12 @@ param(
     # 詳細ページを取りに行く上限（サイトあたり）
     [int]$DetailLimit = 800,
     # 対象サイトを1つに絞る（例: NIFTY の取り直し）。省略時は全サイト
-    [string]$Site = ""
+    [string]$Site = "",
+    # 検索パターンYAMLのディレクトリを差し替える（CONFIGS_DIR）。
+    # ⚠ 新しいパターンや市区を広げたパターンは、configs/ 直下へ置く前に
+    #   ここへ一時ディレクトリを渡して seed を流す（置いた瞬間から定期スキャンが
+    #   新規掲載を全件通知として飛ばすため → ADR 0006・課題#4）
+    [string]$ConfigsDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -72,6 +77,7 @@ if (-not $Worker) {
     )
     if ($Drain) { $childArgs += "-Drain" }
     if ($Site)  { $childArgs += @("-Site", $Site) }
+    if ($ConfigsDir) { $childArgs += @("-ConfigsDir", "`"$ConfigsDir`"") }
 
     # out と err は必ず別ファイル（5.1 は同一ファイルを指定できない）
     $proc = Start-Process -FilePath "powershell.exe" `
@@ -86,6 +92,7 @@ if (-not $Worker) {
     Write-Host "  モード      : $(if ($Drain) { '掃き出し（一覧1ページ）' } else { '初回（一覧5ページ）' })"
     Write-Host "  詳細の上限  : $DetailLimit 件/サイト"
     if ($Site) { Write-Host "  対象サイト  : $Site" }
+    if ($ConfigsDir) { Write-Host "  パターン    : $ConfigsDir（CONFIGS_DIR を差し替え）" }
     Write-Host "  標準出力    : $outLog"
     Write-Host "  標準エラー  : $errLog"
     Write-Host ""
@@ -138,6 +145,11 @@ Write-Step "リポジトリ: $RepoRoot"
 Write-Step "モード    : $(if ($Drain) { '掃き出し（一覧1ページ）' } else { '初回（一覧5ページ）' })"
 Write-Step "詳細上限  : $DetailLimit 件/サイト"
 if ($Site) { Write-Step "対象サイト: $Site" }
+if ($ConfigsDir) {
+    # 環境変数は .env の値より優先される（pydantic-settings）。子の python にだけ効く
+    $env:CONFIGS_DIR = $ConfigsDir
+    Write-Step "パターン  : $ConfigsDir（CONFIGS_DIR を差し替え）"
+}
 
 Invoke-HouseSearch -Label "辞書の同期" -Arguments @("sync-dict") | Out-Null
 

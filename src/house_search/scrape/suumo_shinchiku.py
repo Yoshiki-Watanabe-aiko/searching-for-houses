@@ -46,7 +46,7 @@ from house_search.scrape.prefectures import PREFECTURE_ROMAJI
 # ⚠ 詳細ページの ``th``/``td`` と設備ブロックは**中古マンションと同じ構造**
 # （実測 2026-09-07・個別住戸のみ）。別々に書くと片方を直したとき
 # もう片方が黙って古くなるので共用する
-from house_search.scrape.suumo_buy import features_text, read_spec_table
+from house_search.scrape.suumo_buy import BUY_LIST_QUERY, features_text, read_spec_table
 
 SITE_CODE = "SUUMO"
 BASE_URL = "https://suumo.jp"
@@ -251,7 +251,10 @@ class SuumoNewMansionScraper:
             if not area.value:
                 # スラグの無い市区は取りに行けない（``resolve_areas`` が落とす）
                 continue
-            urls.append(BASE_URL + LIST_PATH.format(pref=pref, city=area.value))
+            # 新着・更新順で取る（既定順だと1ページ目に新着が載らない → suumo_buy.BUY_LIST_QUERY）
+            urls.append(
+                BASE_URL + LIST_PATH.format(pref=pref, city=area.value) + "?" + BUY_LIST_QUERY
+            )
         return urls
 
     def page_url(self, base_url: str, page: int) -> str:
@@ -394,9 +397,7 @@ def _read_prices(unit) -> tuple[int | None, int | None, int | None, str | None, 
         accents = row.cssselect("span.cassette_price-accent")
         accent = " ".join(accents[0].text_content().split()) if accents else None
         descriptions = row.cssselect("p.cassette_price-description")
-        description = (
-            " ".join(descriptions[0].text_content().split()) if descriptions else None
-        )
+        description = " ".join(descriptions[0].text_content().split()) if descriptions else None
         if fallback_description is None:
             fallback_description = description
         if accent and _UNDECIDED in accent:

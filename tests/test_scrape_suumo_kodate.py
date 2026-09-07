@@ -213,23 +213,48 @@ class Test詳細ページ:
 
 
 def test_ページ送りは1始まりのpageクエリ() -> None:
+    """⚠ 一覧URLは新着順のクエリを既に持つので、ページ番号は ``&`` で足す。
+    ``?`` を重ねると page が黙って無視される（APAMAN で実測 → 課題#29）。"""
     scraper = SuumoChukoKodateScraper()
-    base = "https://suumo.jp/chukoikkodate/tokyo/sc_hachioji/"
+    base = "https://suumo.jp/chukoikkodate/tokyo/sc_hachioji/?po=1&pj=2"
     assert scraper.page_url(base, 1) == base
-    assert scraper.page_url(base, 2) == base + "?page=2"
+    assert scraper.page_url(base, 2) == base + "&page=2"
 
 
 def test_一覧URLはSEOパスで組み立てる() -> None:
-    """⚠ robots が ``/jj/bukken/ichiran/`` を禁じているのでこの経路しかない。"""
+    """⚠ robots が ``/jj/bukken/ichiran/`` を禁じているのでこの経路しかない。
+
+    ⚠⚠ **新着・更新順（``po=1&pj=2``）を必ず付ける。** 既定順は1ページ目に新着が
+    ほぼ載らず（実測 1/20）、増分スキャンが新着を黙って取りこぼす。
+    """
     from house_search.scrape.area import AreaTarget
 
     area = AreaTarget(prefecture="東京都", city_name="八王子市", value="sc_hachioji")
     assert SuumoChukoKodateScraper().list_urls(None, [area]) == [
-        "https://suumo.jp/chukoikkodate/tokyo/sc_hachioji/"
+        "https://suumo.jp/chukoikkodate/tokyo/sc_hachioji/?po=1&pj=2"
     ]
     assert SuumoShinchikuKodateScraper().list_urls(None, [area]) == [
-        "https://suumo.jp/ikkodate/tokyo/sc_hachioji/"
+        "https://suumo.jp/ikkodate/tokyo/sc_hachioji/?po=1&pj=2"
     ]
+
+
+def test_一覧URLがrobotsで許可される() -> None:
+    """⚠⚠ 組み立てたURL（1ページ目・2ページ目）を実 robots.txt に当てて確かめる（→ 課題#52）。
+    賃貸は ``/*?*sort=`` で並び順を送れないが、売買の ``po``/``pj`` は禁止されていない。"""
+    from pathlib import Path
+
+    from house_search.scrape.area import AreaTarget
+    from house_search.scrape.fetch import RobotsRules
+
+    robots = (Path(__file__).parent / "fixtures" / "robots" / "suumo.txt").read_text(
+        encoding="utf-8"
+    )
+    rules = RobotsRules.parse(robots)
+    area = AreaTarget(prefecture="東京都", city_name="八王子市", value="sc_hachioji")
+    for scraper in (SuumoChukoKodateScraper(), SuumoShinchikuKodateScraper()):
+        for url in scraper.list_urls(None, [area]):
+            assert rules.can_fetch("house-search/2.0", url) is True
+            assert rules.can_fetch("house-search/2.0", scraper.page_url(url, 2)) is True
 
 
 def test_サイト側フィルタは送らない() -> None:

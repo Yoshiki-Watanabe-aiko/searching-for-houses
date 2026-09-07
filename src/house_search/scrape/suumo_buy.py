@@ -159,11 +159,23 @@ def features_text(doc, heading_class: str = "secTitleInnerR") -> str | None:
         else:
             # 設備名だけを拾う。説明文は同じセルの ``div.p10`` にある
             parts.extend(
-                " ".join(cell.text_content().split())
-                for cell in body.cssselect("div.b.pv15h10")
+                " ".join(cell.text_content().split()) for cell in body.cssselect("div.b.pv15h10")
             )
     text = " / ".join(p for p in parts if p)
     return text or None
+
+
+#: 一覧の並び順（**新着・更新順**）。SUUMO 売買の3アダプタが共用する。
+#:
+#: ⚠⚠ **既定の並びでは1ページ目に新着がほぼ載らない**（2026-09-07 実測・千代田区
+#: 中古マンション: 既定順は20件中「新着」バッジ **1件**、``po=1&pj=2`` は **20件全部**）。
+#: 増分スキャンは各市区の1ページ目しか見ないので、既定順のままだと新着を
+#: **黙って取りこぼす**（例外にならず件数も減らない）。HOMES が
+#: ``cond[sortby]=newdate`` を送るのと同じ理由（→ 課題#39）。
+#: ⚠ 賃貸は robots が ``/*?*sort=`` を禁じるので並び順を送れない（→ 課題#52）が、
+#: 売買の並び替えキーは ``po`` / ``pj`` で robots に当たらない（実 robots.txt で確認済み。
+#: ``tests/test_scrape_suumo_buy.py`` が固定している）。総件数は不変（586件）。
+BUY_LIST_QUERY = "po=1&pj=2"
 
 
 class SuumoBuyMansionScraper:
@@ -197,7 +209,10 @@ class SuumoBuyMansionScraper:
                 # スラグの無い市区は取りに行けない。``resolve_areas`` が落とすので
                 # ここへは来ない想定
                 continue
-            urls.append(BASE_URL + LIST_PATH.format(pref=pref, city=area.value))
+            # 新着・更新順で取る（既定順だと1ページ目に新着が載らない → BUY_LIST_QUERY）
+            urls.append(
+                BASE_URL + LIST_PATH.format(pref=pref, city=area.value) + "?" + BUY_LIST_QUERY
+            )
         return urls
 
     def page_url(self, base_url: str, page: int) -> str:
