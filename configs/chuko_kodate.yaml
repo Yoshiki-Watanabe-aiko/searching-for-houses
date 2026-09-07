@@ -1,0 +1,95 @@
+# ============================================================
+# 中古一戸建て（売買・Phase 6 手順8 の縦切り実測）
+#
+# ⚠⚠ **weight と best/worst は暫定値である。** 戸建ての掲載はまだ1件も無いので、
+# 母集団の分布を見てから確定する（→ 課題#31・#34）。中古マンションの値を
+# 機械的に流用すると配点が死ぬ（築年数 worst=30 が母集団の9割に張り付いた前例がある）。
+#
+# ⚠ **MUST は「広めに取ってから締める」**（中古マンションと同じ手順・ユーザー判断 2026-09-06）。
+# MUST 1段目で fail した掲載はDBに残らないので、**緩める方向は取り直しになる**
+# （→ ADR 0013・課題#24）。締める方向は `rescore` だけで試せる。
+#
+# ⚠ **`name:` は変えない。** 通知履歴・順位・スコアが `pattern_name` に紐づいており、
+# 変えると全掲載が「未通知」扱いになり new が全件再発火する（→ 課題#4）。
+#
+# ⚠ **戸建てに area_sqm は使えない。** 専有面積という概念が無く、
+# 土地面積（land_area_sqm）と建物面積（building_area_sqm）の2軸になる（→ 再設計計画 §4.5）。
+# ============================================================
+
+name: "中古一戸建て"
+property_type: "CHUKO_KODATE"
+
+# 通知先はファミリ単位で共有する（新築・中古で分けない → 課題#4）。
+# ⚠⚠ `.env` の DISCORD_WEBHOOK_KODATE / _KODATE_DIGEST には**既に値が入っている**。
+# ⚠ **つまり configs/ 直下に置いた瞬間から、定期スキャン（`--seed` なし）が
+# 新規掲載を通知として飛ばす。** 初回は必ず `scan --seed` でDBへ入れてから
+# 配置すること（→ ADR 0006）。2026-09-07 は CONFIGS_DIR を一時ディレクトリへ向けて
+# `scan --seed` を流し、そのあと configs/ 直下へ置いた。
+webhook_ref: "KODATE"
+digest_webhook_ref: "KODATE_DIGEST"
+
+# ⚠ ライフルホームズは入れない（賃貸の市区ローテーションと取得枠を食い合う → 課題#4）
+sites:
+  - "SUUMO"
+
+# ---- サイト側へ渡す唯一の条件 ----
+search:
+  prefectures:
+    - "東京都"
+  # ⚠ 手順8 は縦切りの実測なので3市区に絞る。郊外（八王子市・バス便が過半数）と
+  # 23区の東西（足立区・練馬区）を混ぜてある。⚠ **千代田区は戸建てがほぼ無い**ので
+  # 中古マンションの3市区をそのまま流用していない。
+  # ⚠ 市区を増やす方向は取り直しになる（MUST 1段目で fail した掲載はDBに残らない）が、
+  # 下記の MUST は広めなので、増やした市区が新規に取得されるだけで済む。
+  cities:
+    - "足立区"
+    - "練馬区"
+    - "八王子市"
+  # ⚠ **価格上限はサイトへ渡さない**（戸建ての `kt` の選択肢・丸めは未測定 → 課題#29）
+  price_max_hint: null
+  # ⚠ **サイト側MUST は未測定なので無効**（アダプタも supports_site_filters=False）。
+  # 戸建ての面積軸は土地・建物の2つがあり、サイト側のキーがどちらを指すかまで
+  # 確かめないと**黙って別の軸で絞られる**（→ 課題#4 手順8）。
+  site_filters:
+    enabled: false
+    axes: []
+    exclude_sites: []
+
+commute:
+  destination_station: "芝公園"
+  destination_prefecture: "東京都"
+
+# ---- MUST: 未充足なら除外 ----
+# ⚠ 広めに取る。`age_max` / `commute_minutes_max` / `layouts` は**意図的に設定していない**。
+# ⚠ **`walk_minutes_max` は当面 20 のまま**。バス便が過半数（八王子で11/20）で
+# `walk_minutes` が NULL になる掲載は unknown → `keep` で通る。実測してから扱いを決める。
+must:
+  price_max: 100000000         # 1億円（円単位）
+  land_area_min: 40.0          # ⚠ 23区の狭小3階建て（土地40〜60㎡）を落とさない
+  building_area_min: 50.0
+  walk_minutes_max: 20
+  layouts: []                  # 制約なし
+  features: []
+  # ⚠ drop へ倒さないこと。バス便の徒歩不明・間取りレンジが「情報が無いだけ」で消える
+  unknown_policy: keep
+
+# ---- WANT: 重み付き加点。合計 0〜100点へ正規化される ----
+want:
+  # ⚠ 設備は配点しない（戸建ての設備原文の分布が未測定。中古マンションと同じく
+  #   出現率を測ってから → 課題#4）
+  features: []
+  numeric:
+    - { metric: price,                weight: 40, best: 30000000, worst: 100000000 }
+    - { metric: land_area_sqm,        weight: 15, best: 120,      worst: 40 }
+    - { metric: building_area_sqm,    weight: 15, best: 120,      worst: 50 }
+    - { metric: age_years,            weight: 15, best: 0,        worst: 40 }
+    - { metric: walk_minutes,         weight: 10, best: 3,        worst: 20 }
+    - { metric: commute_minutes,      weight: 25, best: 25,       worst: 60 }
+    # ハザードは全種別で共通に効く（→ ADR 0021）
+    - { metric: flood_rank_avg,       weight: 15, best: 0,        worst: 4 }
+    - { metric: landslide_area_ratio, weight: 5,  best: 0,        worst: 0.1 }
+
+ranking:
+  top_n: 15
+  digest_group: null
+  notify_max_rank: 200

@@ -150,6 +150,20 @@ class Test新築一戸建ての一覧:
         assert shinchiku[0].land_area_sqm == pytest.approx(120.17)
         assert shinchiku[0].building_area_sqm == pytest.approx(91.5)
 
+    def test_価格未定はフラグを立てる(self, shinchiku) -> None:
+        """一覧の販売価格欄が **``未定``**（``価格未定`` ではない）の掲載がある。
+
+        ⚠ ``price`` を NULL にするだけでは「価格が取れなかった」と区別できない
+        （→ 要件定義書 §11.4）。実測（2026-09-07・3市区 49件）では9件がこれで、
+        フラグが立たないまま新築一戸建ての1位に載っていた。
+        ⚠ 価格がある掲載は **False を明示**する（JSONB の ``||`` マージでフラグが残るため）。
+        """
+        undecided = [x for x in shinchiku if x.price is None]
+        assert undecided, "価格未定の掲載が1件も無い（フィクスチャが変わった）"
+        assert all(x.type_specific_attrs.get("price_undecided") is True for x in undecided)
+        priced = [x for x in shinchiku if x.price is not None]
+        assert all(x.type_specific_attrs.get("price_undecided") is False for x in priced)
+
     def test_土地の掲載を取り込まない(self, shinchiku) -> None:
         """⚠ 新築の索引には ``/tochi/``（建築条件付き土地）が混ざる。
 

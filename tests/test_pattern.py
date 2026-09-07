@@ -226,6 +226,9 @@ def test_雛形YAMLはconfigs直下に置かない() -> None:
         "chintai_suburb60.yaml",
         "chuko_mansion.yaml",
         "shinchiku_mansion.yaml",
+        # 戸建て2種別（Phase 6 手順8・2026-09-07）。⚠ 直下へ置く前に scan --seed を流した
+        "chuko_kodate.yaml",
+        "shinchiku_kodate.yaml",
     }, f"configs/ 直下に実運用しないパターンがある: {sorted(live)}"
 
 
