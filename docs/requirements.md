@@ -192,12 +192,13 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 | タスク名 | トリガー | 実行 | 実行時間上限 |
 |---|---|---|---|
 | `HouseSearch-Scan` | **2時間ごと・01:15起点** | `task_runner.ps1 -Task scan`（`scan --family CHINTAI`・**賃貸のみ**） | PT1H50M |
-| `HouseSearch-ScanBuy` | **毎日 10:25** | `-Task scan-buy`（`scan --family MANSION_BUY --family KODATE_BUY` → `check-sold`〈同〉`--limit 10 --top-rank-limit 30`） | PT1H10M |
+| `HouseSearch-ScanBuy` | **毎日 10:25** | `-Task scan-buy`（`scan --family MANSION_BUY --family KODATE_BUY --detail-limit 200` → `check-sold`〈同〉`--limit 10 --top-rank-limit 30`） | PT1H40M |
 | `HouseSearch-Sweep` | **毎週日曜 02:00** | `-Task sweep`（`scan --full`・全パターン） | PT10H |
 | `HouseSearch-CheckSold` | **毎日 08:40** | `-Task check-sold`（`--family CHINTAI`・**賃貸のみ**） | PT1H |
 | `HouseSearch-Digest` | 毎日 20:00 | `-Task digest` | PT30M |
 | `HouseSearch-Backup` | 毎日 03:30 | `-Task backup` → `backup_db.ps1` | PT30M |
 | `HouseSearch-MarketRates` | **毎月1日 04:30** | `-Task market-rates` → `update_market_rates.ps1` | PT30M |
+| `HouseSearch-BuyMarketRates` | **1/4/7/10月の2日 04:30** | `-Task buy-market-rates` → `update_buy_market_rates.ps1` | PT30M |
 
 ⚠⚠ **売買4パターンは2時間ごとの scan に同居させない**（2026-09-07 ユーザー判断 → 課題#4）。
 売買を4都県173市区へ広げたので、同居させると一覧692リクエスト（約30分）＋詳細が加わり
@@ -209,6 +210,18 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 絞る。⚠ **絞った結果が空なら例外**にする（黙って空を返すとタスクが「対象0件で正常終了」を
 繰り返して気づけない）。⚠ 10:25 なのは 09:15 の scan（実測55〜60分）の後・11:15 の前だから。
 越えると 11:15 の scan が `pg_advisory_lock` でスキップされる（データは壊れない）。
+
+⚠⚠ **ScanBuy の詳細上限は 200件/パターン**（既定40からの上書き → 課題#4・2026-09-09）。
+売買の詳細キューは約27,000件（＝取得だけで19時間）あり、40件では1日120件＝消化に227日かかる。
+**設備原文が付くまで掲載は設備12〜15項目が全部 `unknown`（0点・分母に残る）で上限が
+約62点に固定される**ので、順位が「詳細が取れた掲載の中」でしか決まらない状態が続く。
+⚠ **主力は手動の掃き出し**（`run_initial_scan.ps1 -Drain -Family MANSION_BUY,KODATE_BUY`）で、
+このタスクはその補助。⚠ 上げたぶん所要が +20分ほど増える見込みなので上限を
+**PT1H10M → PT1H40M** へ広げた。⚠ **上限で強制終了されると終了コードが取れず後処理も飛ぶ**
+（課題#26 で check-sold が 267014 で切られた実例がある）ため、上限に当てて切るより
+越えて 11:15 の scan を1回飛ばすほうが被害が小さい。
+⚠⚠ **ScanBuy はタスク登録が未実施でまだ一度も走っておらず、所要は未測定**。
+初回の実行ログで実測し、この上限と詳細件数を見直すこと。
 
 ⚠ **HOME'S の取得間隔を広げる対策は無効だった**（2026-09-03 実測 → 課題#17・#36）。
 スロットリングで本番でもほとんど取れていなかったため 2.5 → 10秒へ広げたが、
@@ -294,6 +307,22 @@ last_seen_at の古い順だけで選ぶと**順位がまったく考慮され�
 ⚠ **CSV（`data/market_rates/rent_rates.csv`）は Git 管理下の生成物**だが、
 タスクは**コミットしない**（自動コミットは差分をレビューできなくする）。
 更新されたらログに「コミットしてください」と出るので、内容を見てから手で入れる。
+
+⚠ **売買相場の更新は 1/4/7/10月の「2日」04:30**（→ 課題#49 Step 8）。国交省
+「不動産情報ライブラリ」XIT001 から最新4四半期を取り、`buy_rates.csv` を作り直して
+`m_market_rates` の売買ぶんを全置換する（取得16リクエスト×10秒＋CSV生成で約5分）。
+⚠⚠ **家賃相場（毎月1日）と同じ日に置かない。** どちらも `m_market_rates` を
+全置換するので並走させない。
+⚠⚠ **新しい四半期が公開されていなければ CSV も DB も触らずに終わる。**
+取得は「既存は飛ばす」実装なので、公開前に流すと**中身の同じCSVを `acquired_on` だけ
+変えて書き直す**ことになり、毎回コミットを促されて「変わっていないこと」が読めなくなる。
+作り直したいときは `-Force`。⚠ 国交省の公開は四半期終了後2〜3ヶ月（実測で 2026-09-08
+時点の最新が 2026Q1）なので、**四半期タスクが空振りするのは正常**。
+⚠⚠ **集計は最新4四半期だけを読む**（`--quarters`・既定4）。保存済みの応答は
+四半期ごとに増え続けるので、絞らないと窓が単調に広がって**古い相場が混ざったまま
+行数と `sample_count` だけが増える**（例外にならず水準だけが静かにずれる）。
+⚠ 窓の外のファイルは**消さない**（過去の窓で作り直せる状態を保つ）。
+⚠ **取得側と集計側で窓の既定値を揃える**（`tests/test_buy_market_window.py` が固定）。
 
 登録に `Register-ScheduledTask`（PowerShell の CIM 経由）は使わない。自分自身のタスクを
 登録するだけでも 0x80070005 で拒否されることがあるため、**XMLを UTF-16 で書き出して

@@ -7,6 +7,7 @@
 #   .\scripts\task_runner.ps1 -Task digest
 #   .\scripts\task_runner.ps1 -Task backup
 #   .\scripts\task_runner.ps1 -Task market-rates
+#   .\scripts\task_runner.ps1 -Task buy-market-rates
 #
 # ⚠ run_initial_scan.ps1 を流用してはいけない。
 #   あちらは Start-Process で処理を「切り離す」ため、タスクから呼ぶと
@@ -26,7 +27,8 @@
 
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("scan", "scan-buy", "sweep", "check-sold", "digest", "backup", "market-rates")]
+    [ValidateSet("scan", "scan-buy", "sweep", "check-sold", "digest", "backup",
+                 "market-rates", "buy-market-rates")]
     [string]$Task,
 
     # ログの保持日数。超過した task_*.log を起動時に掃除する
@@ -75,9 +77,19 @@ switch ($Task) {
     #   上位30位＋古い順10件/パターンに絞ってあるのは、09:15 の scan が終わる
     #   10:25 から 11:15 の次の scan までの約50分に収めるため（超えると 11:15 の
     #   scan が pg_advisory_lock でスキップされる → ADR 0013 決定8）
+    # ⚠⚠ 詳細上限を既定40から 200/パターンへ上げてある（→ 課題#4・2026-09-09）。
+    #   売買の詳細キューは約27,000件（＝取得だけで19時間）あり、40件/パターンでは
+    #   1日120件しか進まず消化に227日かかる。設備原文が付くまで掲載は設備12〜15項目が
+    #   全部 unknown（0点・分母に残る）で上限が約62点に固定されるので、
+    #   順位が「詳細が取れた掲載の中」でしか決まらない状態が続く。
+    #   ⚠ 主力は手動の掃き出し（run_initial_scan.ps1 -Drain）で、これはその補助
+    #   ⚠ 上げたぶん所要が +20分ほど増える見込み（160件 × 3パターン × 2.5秒）。
+    #     ScanBuy はタスク登録が未実施でまだ一度も走っておらず**所要が未測定**なので、
+    #     初回の実行ログで実測して上限（TimeLimit）ごと見直すこと
     "scan-buy"   {
         $steps += @{ Exe = $Python; Argv = @("-m", "house_search.cli", "scan",
-                     "--family", "MANSION_BUY", "--family", "KODATE_BUY") }
+                     "--family", "MANSION_BUY", "--family", "KODATE_BUY",
+                     "--detail-limit", "200") }
         $steps += @{ Exe = $Python; Argv = @("-m", "house_search.cli", "check-sold",
                      "--family", "MANSION_BUY", "--family", "KODATE_BUY",
                      "--limit", "10", "--top-rank-limit", "30") }
@@ -105,6 +117,13 @@ switch ($Task) {
     "market-rates" {
         $steps += @{ Exe = "powershell.exe"; Argv = @("-NoProfile", "-ExecutionPolicy", "Bypass",
                      "-File", "`"$(Join-Path $PSScriptRoot 'update_market_rates.ps1')`"") }
+    }
+    # 売買相場の四半期更新（国交省「不動産情報ライブラリ」→ CSV → DB → 課題#49 Step 8）。
+    # ⚠ 家賃相場（毎月1日 04:30）と重ならないよう 1/4/7/10月の「2日」04:30 に置いてある。
+    # ⚠ 新しい四半期が公開されていなければ CSV も DB も触らずに終わる（空振りは正常）
+    "buy-market-rates" {
+        $steps += @{ Exe = "powershell.exe"; Argv = @("-NoProfile", "-ExecutionPolicy", "Bypass",
+                     "-File", "`"$(Join-Path $PSScriptRoot 'update_buy_market_rates.ps1')`"") }
     }
 }
 
