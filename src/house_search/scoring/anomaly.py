@@ -25,6 +25,9 @@
 ⚠ **エラー通知（Discord）へは送らない。** 既知の偽陽性で通知が埋まると
 「読まれない通知は本物のエラーを見逃すという形で実害になる」
 （→ 課題#45・要件定義書 §14.1）。実行サマリとログに出して見て判断できるようにする。
+
+⚠⚠ **閾値は種別ファミリごとに違う**（2026-09-09 → ``BUY_MARKET_RATE_ANOMALY_THRESHOLD``）。
+相場比の母集団が賃貸と売買で別の位置にあるため、**同じ数字が同じ意味を持たない**。
 """
 
 from __future__ import annotations
@@ -56,22 +59,71 @@ from house_search.scoring.listing_view import ListingView
 #: （読まれない通知は本物を見逃す実害になる → 課題#45）。
 MARKET_RATE_ANOMALY_THRESHOLD = 0.20
 
+#: 売買の種別ファミリ。⚠ 金額と面積の意味も、下の閾値もここで変わる
+_BUY_FAMILIES = frozenset({"MANSION_BUY", "KODATE_BUY"})
 
-def is_price_anomaly(
-    view: ListingView, *, threshold: float = MARKET_RATE_ANOMALY_THRESHOLD
-) -> bool:
+#: 売買の閾値。
+#:
+#: ⚠⚠ **賃貸の 0.20 をそのまま当ててはいけない**（2026-09-09 実測）。
+#: 相場比の母集団の中央がファミリで大きく違うため、**同じ数字でも意味が変わる**。
+#: うちの ``price`` は売出価格で相場は取引価格なので、売買の比は 1.0 をまたぐ。
+#:
+#: ==================  ========  =========================
+#: パターン            中央      0.20 が相当する位置
+#: ==================  ========  =========================
+#: 東京23区賃貸        0.618     中央の約 1/3
+#: 近郊60分圏賃貸      0.541     中央の約 1/2.7
+#: 中古一戸建て        0.978     中央の約 1/5
+#: 中古マンション      1.171     中央の約 **1/6**
+#: 新築マンション      1.962     中央の約 **1/10**
+#: ==================  ========  =========================
+#:
+#: ⚠ 実測（MUST 通過 29,781件）で 0.20 未満は **20件**あり、**全件が築44〜82年**で
+#: 実在しうる安値だった（再建築不可・借地・築古）。賃貸の課題#50 のような
+#: 「サイトが単位を取り違えた」掲載は1件も含まれていない。
+#:
+#: ======  ==============  ==============
+#: 閾値    中古一戸建て    中古マンション
+#: ======  ==============  ==============
+#: 0.20    11件            9件
+#: 0.15    3件             3件
+#: 0.12    1件             3件
+#: **0.10**  **0件**       **1件**
+#: ======  ==============  ==============
+#:
+#: 0.10 で残る1件（中古M id=190852・築48年・**50万円**・36.61㎡）は、
+#: 他の19件（0.104〜0.19）から**1桁外れている**唯一の掲載である。
+#: ⚠ **新築は 0.20 未満が元から0件**（最小 0.598 / 0.694）なので、この変更で
+#: 新築の検出力は変わらない。
+BUY_MARKET_RATE_ANOMALY_THRESHOLD = 0.10
+
+
+def threshold_for(view: ListingView) -> float:
+    """その掲載に当てる閾値。
+
+    ⚠ **ファミリ未設定は賃貸に倒す。** 既定を売買（厳しい側）にすると、
+    ``property_family`` を渡し忘れた経路で**検出が黙って止まる**
+    （``describe_price_anomaly`` が既定を賃貸に倒しているのと同じ理由）。
+    """
+    if view.property_family in _BUY_FAMILIES:
+        return BUY_MARKET_RATE_ANOMALY_THRESHOLD
+    return MARKET_RATE_ANOMALY_THRESHOLD
+
+
+def is_price_anomaly(view: ListingView, *, threshold: float | None = None) -> bool:
     """相場に対して極端に安いか。
 
+    ``threshold`` を渡さなければ**ファミリごとの閾値**を使う（→ ``threshold_for``）。
+    明示的に渡した値はファミリより優先する（実測や切り戻しのため）。
+
     ⚠ **相場が引けない掲載は判定できないので False を返す**（実測で
-    23区帯 6.3% / 近郊帯 12.1% が未解決）。「異常が無い」のではなく
+    23区帯 6.3% / 近郊帯 12.1%、売買は 0.0〜13.1% が未解決）。「異常が無い」のではなく
     「判定していない」ことに注意する——相場が無いセルの異常は検出できない。
     """
     ratio = view.market_rate_ratio
-    return ratio is not None and ratio < threshold
-
-
-#: 売買の種別ファミリ。⚠ 金額と面積の意味がここで変わる
-_BUY_FAMILIES = frozenset({"MANSION_BUY", "KODATE_BUY"})
+    if ratio is None:
+        return False
+    return ratio < (threshold_for(view) if threshold is None else threshold)
 
 
 def describe_price_anomaly(view: ListingView) -> str:
@@ -111,13 +163,16 @@ def describe_price_anomaly(view: ListingView) -> str:
 def collect_price_anomalies(
     views: Iterable[ListingView],
     *,
-    threshold: float = MARKET_RATE_ANOMALY_THRESHOLD,
+    threshold: float | None = None,
     limit: int = 10,
 ) -> list[str]:
     """疑いのある掲載の説明を、相場比の低い順に最大 ``limit`` 件返す。
 
     ⚠ **呼び出し側は MUST を通った掲載だけを渡す**こと。``fail`` の掲載は
     ランキングにも通知にも出ないので、警告しても行動につながらない。
+
+    ⚠ 閾値は**掲載ごとに**ファミリから決まる（→ ``threshold_for``）。
+    賃貸と売買が混ざった一覧を渡しても、それぞれの閾値で判定される。
     """
     hits = [v for v in views if is_price_anomaly(v, threshold=threshold)]
     hits.sort(key=lambda v: (v.market_rate_ratio, v.listing_id or 0))
