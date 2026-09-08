@@ -15,6 +15,7 @@ from pathlib import Path
 from house_search.scoring.anomaly import (
     MARKET_RATE_ANOMALY_THRESHOLD,
     collect_price_anomalies,
+    describe_price_anomaly,
     is_price_anomaly,
 )
 from house_search.scoring.listing_view import ListingView
@@ -103,3 +104,49 @@ def test_採点の経路から実際に呼ばれている() -> None:
     }
     assert "scan.py" in callers, "scan が相場比の異常検出を呼んでいない"
     assert "tasks.py" in callers, "rescore が相場比の異常検出を呼んでいない"
+
+
+class Test売買の表示:
+    """⚠⚠ `rent_total` は生成列（price + 管理費）なので**売買でも値が入る**。
+
+    賃貸前提のまま出すと、中古マンションの警告に「月額6,005,510円」という
+    無意味な数字が並ぶ（→ 課題#4 が `notify/format.py` で塞いだのと同じ形）。
+    """
+
+    def test_売買は月額ではなく価格を出す(self) -> None:
+        view = _view(
+            1,
+            0.184,
+            site_code="SUUMO",
+            property_family="MANSION_BUY",
+            price=6_000_000,
+            rent_total=6_005_510,
+            area_sqm=68.46,
+            layout="3LDK",
+        )
+        text = describe_price_anomaly(view)
+        assert "月額" not in text
+        assert "価格6,000,000円" in text
+        assert "68.46㎡" in text
+
+    def test_戸建ては相場比の分母である延床を出す(self) -> None:
+        """⚠ 別の面積を出すと「なぜこの比になるのか」が読み取れない。"""
+        view = _view(
+            2,
+            0.177,
+            site_code="SUUMO",
+            property_family="KODATE_BUY",
+            price=2_980_000,
+            rent_total=2_980_000,
+            land_area_sqm=120.0,
+            building_area_sqm=95.5,
+        )
+        text = describe_price_anomaly(view)
+        assert "延床95.5㎡" in text
+        assert "120.0㎡" not in text
+
+    def test_ファミリ未設定なら賃貸として表示する(self) -> None:
+        """⚠ 既定を売買に倒すと、渡し忘れた稼働中の経路が黙って売買表示になる。"""
+        view = _view(3, 0.12, rent_total=14_000, area_sqm=42.17, layout="2LDK")
+        text = describe_price_anomaly(view)
+        assert "月額14,000円" in text

@@ -411,9 +411,7 @@ def upsert_listings(
                 "image_url": listing.image_url,
                 "price_min": listing.price_min,
                 "price_max": listing.price_max,
-                "type_specific_attrs": json.dumps(
-                    listing.type_specific_attrs, ensure_ascii=False
-                ),
+                "type_specific_attrs": json.dumps(listing.type_specific_attrs, ensure_ascii=False),
             },
         ).scalar_one()
 
@@ -796,17 +794,32 @@ _PROPERTY_COLUMNS = """
     hz.flood_rank_avg, hz.flood_rank_max, hz.flood_area_ratio,
     hz.landslide_area_ratio, hz.landslide_special_ratio,
     (
-        -- 相場との比較（→ 課題#49）。同じ市区・同じ間取りの相場と比べる。
+        -- 相場との比較（→ 課題#49）。同じ市区の相場と比べる。
+        -- 賃貸は「月額 ÷ 間取りごとの家賃相場」、売買は「㎡単価 ÷ 市区の㎡単価相場」。
         -- ⚠ **最新の period を1つだけ採る。** m_market_rates は履歴を残す設計
         -- （period が違えば別の行）なので、絞らないと古い相場と混ざる。
         -- ⚠ 相場が無いセルは NULL＝未解決。metric は欠損として再正規化される
         -- （0 にすると「相場ちょうど」と区別がつかなくなる）。
-        SELECT p.rent_total::numeric / mr.rate_value
+        -- ⚠⚠ **分子と segment は必ず対にする。** 面積の取り違え（専有↔延床）は
+        -- 例外にならず、比の水準だけが静かにずれる。
+        -- ⚠ 戸建ては**延床**で比べる。土地単価は市区中央値が 7,447〜5,692,308 円/㎡ と
+        -- 765倍に広がり（延床は132倍）、狭小地の都心で跳ねる。順位はどちらでも
+        -- ほぼ同じ（市区の順位相関 r=0.985・2026-09-08 実測）なので安定する方を採る。
+        -- ⚠ 未知のファミリは NULL にする（黙って別の面積で割らない）。
+        SELECT CASE pt.family
+                   WHEN 'CHINTAI' THEN p.rent_total::numeric
+                   WHEN 'MANSION_BUY' THEN p.price::numeric / NULLIF(p.area_sqm, 0)
+                   WHEN 'KODATE_BUY' THEN p.price::numeric / NULLIF(p.building_area_sqm, 0)
+               END / mr.rate_value
         FROM m_market_rates mr
         WHERE mr.family = pt.family
           AND mr.level = 'city'
           AND mr.city_id = p.city_id
-          AND mr.segment = p.layout
+          AND mr.segment = CASE pt.family
+                               WHEN 'CHINTAI' THEN p.layout
+                               WHEN 'MANSION_BUY' THEN 'AREA_SQM'
+                               WHEN 'KODATE_BUY' THEN 'FLOOR_SQM'
+                           END
         ORDER BY mr.period DESC
         LIMIT 1
     ) AS market_rate_ratio

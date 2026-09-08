@@ -109,11 +109,16 @@ def test_全種別にファミリが割り当てられている() -> None:
     assert set(m.FAMILY_OF.values()) == set(m.Family)
 
 
-def test_相場比は賃貸のみ() -> None:
-    """⚠ 売買の相場（国交省API）はまだ入っていない。
+def test_相場比は賃貸と売買4種別だけ() -> None:
+    """⚠ 相場のある種別にだけ許す（→ 課題#49 Step 6・2026-09-08 に売買へ拡張）。
 
-    広げると売買パターンで全件 missing になるだけなので、
-    データが入るまで CHINTAI に閉じる（測っていないものは書かない）。
+    賃貸は SUUMO の家賃相場、売買は国交省「不動産情報ライブラリ」の㎡単価が
+    `m_market_rates` に入っている。⚠ **`ALL_PROPERTY_TYPES` を使わない。**
+    土地（TOCHI・Phase 9）を足した瞬間に意味が変わり、相場が無いのに YAML へ
+    書けてしまう（書けても全件 missing になるだけで例外にならない → 課題#4）。
     """
-    assert m.METRICS_BY_NAME["market_rate_ratio"].property_types == frozenset({m.CHINTAI})
-    assert m.METRICS_BY_NAME["market_rate_ratio"].direction is m.Direction.LOWER_IS_BETTER
+    spec = m.METRICS_BY_NAME["market_rate_ratio"]
+    assert spec.property_types == frozenset({m.CHINTAI}) | m.BUY_TYPES
+    assert spec.direction is m.Direction.LOWER_IS_BETTER
+    # ⚠ 「全種別」と同一集合になっていないこと（TOCHI 追加時に黙って通らないように）
+    assert spec.property_types != m.ALL_PROPERTY_TYPES or len(m.ALL_PROPERTY_TYPES) == 5

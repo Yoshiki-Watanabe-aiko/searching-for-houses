@@ -344,8 +344,7 @@ class SiteSearchParam(TimestampMixin, Base):
         String(20),
         nullable=False,
         comment=(
-            "サイトが受け取る単位（yen / man_yen / sqm / minutes / years）。"
-            "MUST側の値から換算する"
+            "サイトが受け取る単位（yen / man_yen / sqm / minutes / years）。MUST側の値から換算する"
         ),
     )
     value_spec: Mapped[dict] = mapped_column(
@@ -561,8 +560,7 @@ class HazardLevel(TimestampMixin, Base):
         String(10),
         nullable=False,
         comment=(
-            "粒度。chome=丁目 / town=町"
-            "（配下の丁目を集約した値。町名までしか出さないサイト向け）"
+            "粒度。chome=丁目 / town=町（配下の丁目を集約した値。町名までしか出さないサイト向け）"
         ),
     )
     hazard_type: Mapped[str] = mapped_column(
@@ -650,8 +648,9 @@ class MarketRate(TimestampMixin, Base):
         String(20),
         nullable=False,
         comment=(
-            "区分。賃貸は正規化済みの間取り（1LDK・2DK…）。"
-            "⚠ 集計側と採点側で同じ normalize_layout を通す"
+            "区分。賃貸は正規化済みの間取り（1LDK・2DK…）、売買は単価の種類"
+            "（AREA_SQM=マンション専有㎡ / LAND_SQM・FLOOR_SQM=戸建ての土地・延床㎡）。"
+            "⚠ 賃貸は集計側と採点側で同じ normalize_layout を通す"
             "（別の規則を当てると突き合わせ0件の原因を切り分けられない）"
         ),
     )
@@ -659,10 +658,15 @@ class MarketRate(TimestampMixin, Base):
         String(30),
         nullable=False,
         comment=(
-            "何の相場かを行が自己記述する。rent_listed=掲載賃料。"
+            "何の相場かを行が自己記述する。rent_listed_mansion / rent_listed_apart="
+            "SUUMO の掲載賃料（建物種別）、trade_unit_price_01=不動産取引価格情報 / "
+            "trade_unit_price_02=成約価格情報の㎡単価。"
             "⚠ SUUMO の相場ページには管理費の扱いも平均/中央値の別も**書かれていない**。"
             "取り違えると全掲載が一律「相場より高い」と出て例外にならないので、"
-            "best/worst は 1.0 を中心と仮定せず実測した ratio 分布に合わせる"
+            "best/worst は 1.0 を中心と仮定せず実測した ratio 分布に合わせる。"
+            "⚠ 取得元の中で母集団が混ざるのは避けられないので、どちらで測ったかを"
+            "行に残して後から検証できるようにする（実測: 成約÷取引はマンション0.914・"
+            "戸建て1.082 と種別で向きが逆）"
         ),
     )
     rate_value: Mapped[object] = mapped_column(
@@ -674,8 +678,10 @@ class MarketRate(TimestampMixin, Base):
         Integer,
         nullable=True,
         comment=(
-            "集計に使った件数。⚠ **外部の相場では取れないので NULL になる**。"
-            "自前集計に切り替えたときだけ入る（薄いセルを除外する根拠に使う）"
+            "集計に使った件数。⚠ **取得元によって埋まるかが違う**"
+            "（SUUMO の家賃相場ページは母数を出さないので NULL、"
+            "不動産情報ライブラリは明細から数えるので入る）。"
+            "薄いセルを落とす根拠に使う（売買は 10件未満を CSV に書かない）"
         ),
     )
     period: Mapped[str] = mapped_column(

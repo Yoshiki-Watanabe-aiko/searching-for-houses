@@ -60,6 +60,8 @@ uv run house-search re-segment             # 経路の原文から乗車区間�
 uv run house-search re-segment --region 沖縄  # 地方ごと。索引もその地方に合わせる（→ 課題#35）
 uv run house-search commute-stats          # 通勤時間の分布（best/worst を決める材料）
 uv run house-search hazard-stats           # ハザードの解決率と分布（weight・best/worst の材料）
+uv run house-search market-stats           # 相場比の解決率・分布・価格との独立性（→ 課題#49）
+uv run house-search sync-market-rates --buy  # 売買の㎡単価相場（buy_rates.csv）→ DB
 uv run house-search dedup-stats            # サイト別の重複率・ユニーク率（ネットワーク不要）
 uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観測モード
 uv run house-search scan --detail-limit 800         # 詳細取得の上限を上書き（既定40 / --full時400）
