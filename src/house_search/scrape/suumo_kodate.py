@@ -219,9 +219,10 @@ class _SuumoKodateScraper:
     def parse_detail(self, html_text: str) -> ScrapedDetail:
         """詳細ページHTMLから追加情報を取り出す。
 
-        ⚠ 見出しクラスは中古マンションと同じ **``secTitleInnerR``**
-        （新築マンションだけが ``secTitleInnerK`` → 課題#4 手順6-1）。
-        流用を間違えると**設備原文が空になるだけで例外にならない**。
+        ⚠⚠ **設備の見出しクラスは種別では決まらない**（→ 課題#4・2026-09-09）。
+        同じ中古一戸建てでも ``secTitleInnerR`` と ``secTitleInnerK`` の2テンプレートが
+        混在し、**実データの多数派は後者**だった（原文が付いていたのは17%）。
+        ``features_text`` はクラスを見ず見出しの文言で拾う。
         """
         doc = lxml_html.fromstring(html_text)
         values = read_spec_table(doc)

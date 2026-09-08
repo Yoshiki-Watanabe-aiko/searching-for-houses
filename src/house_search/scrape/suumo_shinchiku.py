@@ -63,9 +63,6 @@ _PRICE_SEPARATOR = re.compile(r"[～~〜・]")
 # 「``/nc_数字/`` で終わる」ことまで見る
 _DETAIL_PATH = re.compile(r"/nc_\d+/$")
 _UNDECIDED = "価格未定"
-# 詳細ページの見出しクラス。⚠ **中古は ``secTitleInnerR`` で別物**（実測 2026-09-07）。
-# 流用すると設備原文が空になるだけで例外にならない
-_FEATURE_HEADING_CLASS = "secTitleInnerK"
 # 棟の所在地に付く注記（``板橋１-3001、3002（地番）``）。⚠ **地番は住居表示ではない**
 # ので残すと実在しない住所として正規化される（→ ADR 0020 の番地誤認と同型）
 _CHIBAN_NOTE = re.compile(r"[（(]地番[）)].*$")
@@ -333,7 +330,7 @@ class SuumoNewMansionScraper:
         | | 棟 ``nc_67734880`` | 個別住戸 ``nc_21371763`` |
         |---|---|---|
         | 見出し | ``section_h2-title`` | ``secTitleInnerK`` |
-        | 設備ブロック | **無い**（``secTitleInner*`` が0件） | 特徴ピックアップ35タグ |
+        | 設備ブロック | **無い**（``h3`` に「特徴ピックアップ」が0件） | 特徴ピックアップ35タグ |
         | 管理費・修繕積立金・所在階・築年月 | **無い** | ある |
         | ``th``/``td`` | 9項目だけ | 中古マンションとほぼ同じ |
 
@@ -342,7 +339,8 @@ class SuumoNewMansionScraper:
         キャッチコピーで設備名ではない。辞書照合は本文全体への部分一致なので、
         入れると**その棟に無い設備が拾われて設備数が黙って水増しされる**
         （CHINTAI.net の用語集展開・HOMES の ``sr-only`` と同型 → 課題#37）。
-        棟は ``secTitleInnerK`` が0件なので、何もしなくても原文なしになる。
+        ``features_text`` が見るのは ``h3`` の「特徴ピックアップ」「設備仕様」だけで、
+        棟にはどちらも無いので何もしなくても原文なしになる。
 
         ⚠ 管理費は ``1万9500円／月`` の形。**「万」の後ろの下位桁を落とすと
         10,000 になる**（課題#53 で ``parse_yen`` を直してある）。
@@ -351,7 +349,7 @@ class SuumoNewMansionScraper:
         values = read_spec_table(doc)
         access = values.get("交通")
         return ScrapedDetail(
-            raw_features_text=features_text(doc, _FEATURE_HEADING_CLASS),
+            raw_features_text=features_text(doc),
             # ⚠ **括弧が全角と半角の2種類ある**（同じページに両方が出る）
             built_on=parse_built_on(
                 values.get("完成時期（築年月）") or values.get("完成時期(築年月)")

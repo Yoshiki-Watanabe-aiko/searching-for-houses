@@ -152,6 +152,25 @@ def test_詳細から設備の原文を取る(scraper: SuumoBuyMansionScraper) -
     assert "ピクチャーレール" in text
 
 
+def test_見出しクラスが違うテンプレートでも設備の原文を取る(
+    scraper: SuumoBuyMansionScraper,
+) -> None:
+    """⚠⚠ **見出しのクラスは物件種別では決まらない**（→ 課題#4・2026-09-09）。
+
+    同じ中古マンションでも ``h3.secTitleInnerR`` のページと ``h3.secTitleInnerK`` の
+    ページがある。前者だけを見ていたため、詳細取得済み1,661件のうち原文が付いたのは
+    376件（23%）だった。⚠ **管理費は1,370件に付いている**ので詳細ページ自体は
+    読めており、**件数もエラーも異常を示さない**。
+
+    ⚠ 課題#4 手順6-1 の「中古は R・新築マンションは K」は、**種別ごとに1件ずつ
+    観測して一般化した誤り**（ハウスコムの「号室の伏字＝掲載終了」と同型 → 課題#37）。
+    """
+    text = scraper.parse_detail(_read("detail_chuko_m_alt_heading.html")).raw_features_text
+    assert text is not None
+    assert "システムキッチン" in text
+    assert "浴室乾燥機" in text
+
+
 def test_設備の説明文を原文に入れない(scraper: SuumoBuyMansionScraper) -> None:
     """⚠⚠ **設備仕様は1セルに「設備名＋説明文」が同居する。**
 

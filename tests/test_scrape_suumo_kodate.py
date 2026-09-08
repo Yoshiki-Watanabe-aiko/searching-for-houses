@@ -179,19 +179,50 @@ class Test新築一戸建ての一覧:
 
 class Test詳細ページ:
     def test_設備原文が取れる(self) -> None:
-        """⚠ 見出しクラスは **``secTitleInnerR``**（新築マンションだけが ``…K``）。
+        """⚠⚠ **見出しのクラスは種別では決まらない**（→ 課題#4・2026-09-09）。
 
-        流用を間違えると**原文が空になるだけで例外にならない**（→ 課題#4）。
+        同じ中古一戸建てでも ``secTitleInnerR`` のページと ``secTitleInnerK`` の
+        ページがあり、クラスで決め打ちすると**片方は原文が空になるだけで
+        例外にならない**。下の ``…_alt_heading`` がその実物。
         """
         detail = SuumoChukoKodateScraper().parse_detail(_html("detail_chuko_k"))
         assert detail.raw_features_text
         assert "システムキッチン" in detail.raw_features_text
         assert "浴室乾燥機" in detail.raw_features_text
 
-    def test_新築も同じ見出しクラスで取れる(self) -> None:
+    def test_新築も同じ関数で取れる(self) -> None:
         detail = SuumoShinchikuKodateScraper().parse_detail(_html("detail_shinchiku_k"))
         assert detail.raw_features_text
         assert "システムキッチン" in detail.raw_features_text
+
+    def test_見出しクラスが違うテンプレートでも設備原文が取れる(self) -> None:
+        """⚠⚠ 実データの**多数派がこちら**だった（→ 課題#4・2026-09-09）。
+
+        中古一戸建ては詳細取得済み1,648件のうち原文が付いたのが281件（17%）で、
+        残りは全部このテンプレート。⚠ **詳細ページ自体は読めている**
+        （築年月が1,643件に付いている）ので、件数もエラーも異常を示さない。
+        """
+        detail = SuumoChukoKodateScraper().parse_detail(_html("detail_chuko_k_alt_heading"))
+        assert detail.raw_features_text
+        assert "システムキッチン" in detail.raw_features_text
+        assert "全居室収納" in detail.raw_features_text
+
+    def test_新築も見出しクラスが違うテンプレートで取れる(self) -> None:
+        detail = SuumoShinchikuKodateScraper().parse_detail(_html("detail_shinchiku_k_alt_heading"))
+        assert detail.raw_features_text
+        assert "駐車２台可" in detail.raw_features_text
+
+    def test_広告のキャッチコピーは設備原文に入れない(self) -> None:
+        """⚠ ``h3`` を総なめするので、設備以外の見出しを拾わないことを固定する。
+
+        ``secTitleInnerH3B`` は営業文（``■□内見予約承ります！…``）で、
+        入れると**その物件に無い設備名が拾われて設備数が黙って水増しされる**
+        （CHINTAI.net の用語集展開・HOMES の ``sr-only`` と同型 → 課題#37）。
+        """
+        detail = SuumoChukoKodateScraper().parse_detail(_html("detail_chuko_k"))
+        assert detail.raw_features_text
+        for ng in ("内見予約", "お気軽にお問", "スタッフが対応"):
+            assert ng not in detail.raw_features_text
 
     def test_住所と築年月が取れる(self) -> None:
         detail = SuumoChukoKodateScraper().parse_detail(_html("detail_chuko_k"))
