@@ -1,0 +1,168 @@
+{
+  "source": "mlit_reinfolib_XIT001",
+  "license": "公共データ利用規約（第1.0版）",
+  "attribution": "「不動産情報ライブラリ」（国土交通省）",
+  "inspected_on": "2026-09-08",
+  "files": [
+    {
+      "name": "xit001_2025q2_11.json",
+      "area": "11",
+      "pref": "埼玉県",
+      "year": 2025,
+      "quarter": 2,
+      "records": 7110,
+      "bytes": 6359891,
+      "sha256": "fed48f54ec85083e5ff153166c8627b17b6355b64797a8095f201954e50f9de9"
+    },
+    {
+      "name": "xit001_2025q2_12.json",
+      "area": "12",
+      "pref": "千葉県",
+      "year": 2025,
+      "quarter": 2,
+      "records": 6121,
+      "bytes": 5475916,
+      "sha256": "66825aace2de4e09ba77365025d59ef65f772181c4f9fc0e2b6590b2ae5a839a"
+    },
+    {
+      "name": "xit001_2025q2_13.json",
+      "area": "13",
+      "pref": "東京都",
+      "year": 2025,
+      "quarter": 2,
+      "records": 17154,
+      "bytes": 15136665,
+      "sha256": "2cec141f68b9fc177e606ce6ba868d39727247319c911560ad31adb891d05408"
+    },
+    {
+      "name": "xit001_2025q2_14.json",
+      "area": "14",
+      "pref": "神奈川県",
+      "year": 2025,
+      "quarter": 2,
+      "records": 10157,
+      "bytes": 9114430,
+      "sha256": "5c997d713879320f39330663a721c6a28fef7fbc02fa378d9ffd0603fdbbed15"
+    },
+    {
+      "name": "xit001_2025q3_11.json",
+      "area": "11",
+      "pref": "埼玉県",
+      "year": 2025,
+      "quarter": 3,
+      "records": 7453,
+      "bytes": 6673155,
+      "sha256": "427ded7289698811044e6ab0c7438d238194e8fd75236e690df4054b87650f8e"
+    },
+    {
+      "name": "xit001_2025q3_12.json",
+      "area": "12",
+      "pref": "千葉県",
+      "year": 2025,
+      "quarter": 3,
+      "records": 6404,
+      "bytes": 5729721,
+      "sha256": "0fe16b6e0baa84643d9d692e962590f1a94bca24b00dfbd9e69ed65cbb0f0987"
+    },
+    {
+      "name": "xit001_2025q3_13.json",
+      "area": "13",
+      "pref": "東京都",
+      "year": 2025,
+      "quarter": 3,
+      "records": 17460,
+      "bytes": 15419312,
+      "sha256": "9c855c044fa4fa4fd3ee65877261bae86983fb7139577dbd6e1d9080f2d23312"
+    },
+    {
+      "name": "xit001_2025q3_14.json",
+      "area": "14",
+      "pref": "神奈川県",
+      "year": 2025,
+      "quarter": 3,
+      "records": 10748,
+      "bytes": 9643911,
+      "sha256": "a96523750c756317ac80b441844631e4e9cd8404f846840e4a73587282a7f4a8"
+    },
+    {
+      "name": "xit001_2025q4_11.json",
+      "area": "11",
+      "pref": "埼玉県",
+      "year": 2025,
+      "quarter": 4,
+      "records": 7089,
+      "bytes": 6337260,
+      "sha256": "fe37169d852d848525939b8b9559dee1910bced0f1781c73e43aba6cfc838a9d"
+    },
+    {
+      "name": "xit001_2025q4_12.json",
+      "area": "12",
+      "pref": "千葉県",
+      "year": 2025,
+      "quarter": 4,
+      "records": 6484,
+      "bytes": 5786345,
+      "sha256": "633f920beef4ad0e1e1c674807b8b377cd02f5c85b22cb9053e738fd08a2759e"
+    },
+    {
+      "name": "xit001_2025q4_13.json",
+      "area": "13",
+      "pref": "東京都",
+      "year": 2025,
+      "quarter": 4,
+      "records": 16401,
+      "bytes": 14463208,
+      "sha256": "cb0d7f3fdc38bb025c34593457d3dc3cc1526796a35bda2a82a203f3be742a58"
+    },
+    {
+      "name": "xit001_2025q4_14.json",
+      "area": "14",
+      "pref": "神奈川県",
+      "year": 2025,
+      "quarter": 4,
+      "records": 10583,
+      "bytes": 9483080,
+      "sha256": "147d025108030efa875177515fe26ca605182a3315b861816e5a2f67ea553473"
+    },
+    {
+      "name": "xit001_2026q1_11.json",
+      "area": "11",
+      "pref": "埼玉県",
+      "year": 2026,
+      "quarter": 1,
+      "records": 5410,
+      "bytes": 4802134,
+      "sha256": "e9af699498a5f8ce37394ecbe664f6aeaaf353e8559d3b2caaf8ab8dc96635d7"
+    },
+    {
+      "name": "xit001_2026q1_12.json",
+      "area": "12",
+      "pref": "千葉県",
+      "year": 2026,
+      "quarter": 1,
+      "records": 4639,
+      "bytes": 4116629,
+      "sha256": "5db06a01cbc427678fc64a710cb5f8696aad1ae85f9ad8ef277bbcaca2218a5c"
+    },
+    {
+      "name": "xit001_2026q1_13.json",
+      "area": "13",
+      "pref": "東京都",
+      "year": 2026,
+      "quarter": 1,
+      "records": 11993,
+      "bytes": 10483569,
+      "sha256": "c0e9f4c1099e59de095560061a7bd88bd8dda360a559e5e0fd22de6bda145f24"
+    },
+    {
+      "name": "xit001_2026q1_14.json",
+      "area": "14",
+      "pref": "神奈川県",
+      "year": 2026,
+      "quarter": 1,
+      "records": 8304,
+      "bytes": 7399020,
+      "sha256": "4b86b6d4a8c96c961a58ea8e5309ab9c33c69a7e51f4d5a6f55d791911f1773d"
+    }
+  ]
+}

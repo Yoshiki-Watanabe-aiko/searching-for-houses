@@ -143,9 +143,14 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
-    sub.add_parser(
+    p_market = sub.add_parser(
         "sync-market-rates",
-        help=("data/market_rates/rent_rates.csv を m_market_rates へ同期する（ネットワーク不要）"),
+        help=("data/market_rates/*.csv を m_market_rates へ同期する（ネットワーク不要）"),
+    )
+    p_market.add_argument(
+        "--buy",
+        action="store_true",
+        help=("売買の相場（buy_rates.csv・㎡単価）を同期する。既定は賃貸（rent_rates.csv・月額）"),
     )
 
     sub.add_parser(
@@ -218,6 +223,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="通勤時間の分布を実測する（best/worst と MUST を決める材料・ネットワーク不要）",
     )
     p_cstats.add_argument("--pattern", help="対象を1つの検索パターンに絞る")
+
+    p_mstats = sub.add_parser(
+        "market-stats",
+        help="相場比の解決率・分布・価格との独立性を実測する（ネットワーク不要）",
+    )
+    p_mstats.add_argument("--pattern", help="対象を1つの検索パターンに絞る")
 
     p_hstats = sub.add_parser(
         "hazard-stats",
@@ -759,11 +770,18 @@ def _cmd_sync_hazards(args: argparse.Namespace) -> int:
 def _cmd_sync_market_rates(args: argparse.Namespace) -> int:
     from house_search.config.settings import load_settings
     from house_search.db.session import get_engine
-    from house_search.market.rates import load_rate_rows, sync_market_rates
+    from house_search.market.rates import (
+        load_buy_rate_rows,
+        load_rate_rows,
+        sync_market_rates,
+    )
 
     settings = load_settings()
-    path = settings.data_dir / "market_rates" / "rent_rates.csv"
-    rows = load_rate_rows(path)
+    # ⚠ 賃貸と売買で読み込みを分ける。segment も rate_value の単位も値域も違うので、
+    #    ひとつの検証で通すと片方の値域をもう片方に当てることになる
+    buy = getattr(args, "buy", False)
+    path = settings.data_dir / "market_rates" / ("buy_rates.csv" if buy else "rent_rates.csv")
+    rows = load_buy_rate_rows(path) if buy else load_rate_rows(path)
     engine = get_engine()
     with engine.begin() as conn:
         result = sync_market_rates(conn, rows)
@@ -773,6 +791,14 @@ def _cmd_sync_market_rates(args: argparse.Namespace) -> int:
         f"同期しました: 新規 {result.inserted:,}件 / 更新 {result.updated:,}件"
         f"（{cities}市区・期間 {'/'.join(periods)}）"
     )
+    if buy:
+        # ⚠ どのファミリ・区分・統計基準で何件入ったかを出す。混在の度合いを
+        #    黙って増やさないため（→ ADR 0022 決定2）
+        from collections import Counter
+
+        breakdown = Counter(f"{r.family} / {r.segment} / {r.stat_basis}" for r in rows)
+        for key in sorted(breakdown):
+            print(f"  {key}: {breakdown[key]:,}件")
     # ⚠ 解決できない市区を黙って捨てない。相場が歯抜けのままだと、
     #    その市区の掲載だけ採点軸が1本減った状態で順位が出る（例外にならない）
     if result.unresolved_cities:
@@ -1419,6 +1445,99 @@ _HAZARD_MUST_CANDIDATES: tuple[tuple[str, str, tuple[float, ...]], ...] = (
 )
 
 
+# 課題#49 が定めた「配線してよいか」のゲート。⚠ **通らなければ採点へ配線しない。**
+# ⚠ 解決率の分母は**掲載全体**にする（→ 課題#41。「相場が取れた掲載」を分母にすると
+#    相場の無い市区が分母からも消えて健全に見える）。
+_MARKET_MIN_RESOLVED = 0.80
+# ⚠ 既存の価格 metric の言い換えなら足す意味がない（→ ADR 0022 は自DB集計案の
+#    r=0.787 を「言い換え」として棄却し、r=0.37/0.27 の外部相場を採用した）。
+_MARKET_MAX_RANK_CORR = 0.60
+
+
+def _cmd_market_stats(args: argparse.Namespace) -> int:
+    """相場比の判別力を測る（→ 課題#49 Step 5）。
+
+    ⚠ **`load_listing_views` を通して測る。** 検証が実装と別の経路で値を作ると、
+    正しい実装を「壊れている」と誤診する（→ 課題#46 でハザードの町フォールバックを
+    再現し忘れて実際に踏みかけた）。
+    """
+    from house_search.commute.resolve import resolve_destination_group
+    from house_search.db.session import get_engine
+    from house_search.market.stats import spearman
+    from house_search.pipeline import persist
+    from house_search.scoring.must import evaluate_must
+
+    engine = get_engine()
+    for pattern in _load_patterns(args.pattern):
+        print(f"=== {pattern.name}（{pattern.property_type}）===")
+        with engine.connect() as conn:
+            destination = (
+                resolve_destination_group(conn, pattern.commute) if pattern.commute else None
+            )
+            views = persist.load_listing_views(
+                conn,
+                property_type_code=pattern.property_type,
+                site_codes=list(pattern.sites),
+                city_names=list(pattern.search.cities) or None,
+                commute_destination_g_cd=destination,
+            )
+        if not views:
+            print("  対象の掲載がありません\n")
+            continue
+
+        resolved = [v for v in views.values() if v.market_rate_ratio is not None]
+        share = len(resolved) / len(views)
+        gate1 = "OK" if share >= _MARKET_MIN_RESOLVED else "⚠ NG"
+        print(
+            f"  掲載 {len(views):,}件 / 相場あり {len(resolved):,}件"
+            f"（{share * 100:.1f}%）… ゲート①(>={_MARKET_MIN_RESOLVED:.0%}) {gate1}"
+        )
+
+        passing = [
+            view
+            for view in views.values()
+            if evaluate_must(view, pattern.must).passes(pattern.must.unknown_policy)
+        ]
+        known = sorted(v.market_rate_ratio for v in passing if v.market_rate_ratio is not None)
+        print(f"  母集団: MUST通過 {len(passing):,}件 / うち相場あり {len(known):,}件")
+        if not known:
+            print("  ⚠ 母集団に相場のある掲載がありません\n")
+            continue
+
+        marks = [("10%", 0.10), ("25%", 0.25), ("中央", 0.5), ("75%", 0.75), ("90%", 0.9)]
+        cells = "  ".join(f"{label} {_percentile(known, r):.3f}" for label, r in marks)
+        print(f"  分布: {cells}   最小 {known[0]:.3f} 最大 {known[-1]:.3f}")
+        # ⚠ **best/worst を 1.0 中心に置かない**（→ 課題#31・ADR 0022 決定3）。
+        #    MUST が安い掲載だけを集めているので、母集団は 1.0 の下に寄る
+        print(
+            f"  → best/worst の候補（母集団の p10〜p90）: "
+            f"{_percentile(known, 0.10):.2f} 〜 {_percentile(known, 0.90):.2f}"
+        )
+
+        # ⚠ 価格 metric と同じことを測っているだけなら、足しても分母が増えるだけ
+        price_metric = "rent_total" if pattern.property_type == "CHINTAI" else "price"
+        pairs = [
+            (price, view.market_rate_ratio)
+            for view in passing
+            if view.market_rate_ratio is not None
+            and (price := view.metric_value(price_metric)) is not None
+        ]
+        corr = spearman(pairs)
+        if corr is None:
+            # ⚠ 測れなかったことを「相関なし」と混ぜない
+            print(
+                f"  {price_metric} との順位相関: 測れません（n={len(pairs)}）… ゲート② ⚠ 判定不能"
+            )
+        else:
+            gate2 = "OK" if abs(corr) < _MARKET_MAX_RANK_CORR else "⚠ NG"
+            print(
+                f"  {price_metric} との順位相関: r={corr:+.3f}（n={len(pairs):,}）"
+                f"… ゲート②(|r|<{_MARKET_MAX_RANK_CORR}) {gate2}"
+            )
+        print()
+    return 0
+
+
 def _cmd_hazard_stats(args: argparse.Namespace) -> int:
     from house_search.commute.resolve import resolve_destination_group
     from house_search.config.metrics import METRICS_BY_NAME
@@ -1616,6 +1735,7 @@ _COMMANDS = {
     "re-segment": _cmd_re_segment,
     "commute-stats": _cmd_commute_stats,
     "hazard-stats": _cmd_hazard_stats,
+    "market-stats": _cmd_market_stats,
 }
 
 

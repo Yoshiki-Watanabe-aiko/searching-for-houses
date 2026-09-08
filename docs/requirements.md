@@ -158,7 +158,9 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 | `sync-site-params` | `data/site_search_params.yaml` → `m_site_search_params` | ✅ Phase 5B |
 | `sync-addresses` | `data/address_master/*.csv` → `m_address_points`（住所マスタ） | ✅ Phase 5I |
 | `sync-hazards` | `data/hazard_levels/hazard_levels.csv` → `m_hazard_levels`（ハザード評価） | ✅ Phase 5I |
-| `sync-market-rates` | `data/market_rates/rent_rates.csv` → `m_market_rates`（相場） | ✅ 2026-09-05 |
+| `sync-market-rates` | `data/market_rates/rent_rates.csv` → `m_market_rates`（賃貸の相場） | ✅ 2026-09-05 |
+| `sync-market-rates --buy` | `data/market_rates/buy_rates.csv` → 同（売買の㎡単価相場 → 課題#49） | ✅ 2026-09-08 |
+| `market-stats` | 相場比の解決率・分布・価格との独立性を実測（配線前のゲート） | ✅ 2026-09-08 |
 | `sync-stations` | `data/train_master/*.csv` → `m_stations`（駅マスタ） | ✅ Phase 5C |
 | `resolve-stations` | 掲載の駅表記を駅マスタと突き合わせる（ネットワーク不要） | ✅ Phase 5C |
 | `resolve-commutes` | 駅ペアの通勤所要時間を算出してキャッシュ（ネットワーク不要） | ✅ Phase 5C |
