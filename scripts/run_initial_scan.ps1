@@ -42,6 +42,10 @@ param(
     [int]$DetailLimit = 800,
     # 対象サイトを1つに絞る（例: NIFTY の取り直し）。省略時は全サイト
     [string]$Site = "",
+    # 種別ファミリで絞る（CHINTAI / MANSION_BUY / KODATE_BUY。複数可）。省略時は全パターン。
+    # ⚠ 売買の詳細キューを掃き出すときは賃貸を含めない（賃貸の一覧を1ページ取り直すだけで
+    #   約1時間かかり、取得ロックを握る時間が伸びて定期スキャンを余分に飛ばす → 課題#4）
+    [string[]]$Family = @(),
     # 検索パターンYAMLのディレクトリを差し替える（CONFIGS_DIR）。
     # ⚠ 新しいパターンや市区を広げたパターンは、configs/ 直下へ置く前に
     #   ここへ一時ディレクトリを渡して seed を流す（置いた瞬間から定期スキャンが
@@ -50,6 +54,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# ⚠ -File 経由だと "MANSION_BUY,KODATE_BUY" は分割されず1要素の配列で届く。
+#   ランチャー→ワーカーの引き渡しも -File なので、ここで必ずカンマで割る
+$Family = @($Family | ForEach-Object { $_ -split "," } | Where-Object { $_ } | ForEach-Object { $_.Trim() })
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $Python   = Join-Path $RepoRoot ".venv\Scripts\python.exe"
@@ -77,6 +85,7 @@ if (-not $Worker) {
     )
     if ($Drain) { $childArgs += "-Drain" }
     if ($Site)  { $childArgs += @("-Site", $Site) }
+    if ($Family.Count -gt 0) { $childArgs += @("-Family", ($Family -join ",")) }
     if ($ConfigsDir) { $childArgs += @("-ConfigsDir", "`"$ConfigsDir`"") }
 
     # out と err は必ず別ファイル（5.1 は同一ファイルを指定できない）
@@ -92,6 +101,7 @@ if (-not $Worker) {
     Write-Host "  モード      : $(if ($Drain) { '掃き出し（一覧1ページ）' } else { '初回（一覧5ページ）' })"
     Write-Host "  詳細の上限  : $DetailLimit 件/サイト"
     if ($Site) { Write-Host "  対象サイト  : $Site" }
+    if ($Family.Count -gt 0) { Write-Host "  ファミリ    : $($Family -join ',')" }
     if ($ConfigsDir) { Write-Host "  パターン    : $ConfigsDir（CONFIGS_DIR を差し替え）" }
     Write-Host "  標準出力    : $outLog"
     Write-Host "  標準エラー  : $errLog"
@@ -145,6 +155,7 @@ Write-Step "リポジトリ: $RepoRoot"
 Write-Step "モード    : $(if ($Drain) { '掃き出し（一覧1ページ）' } else { '初回（一覧5ページ）' })"
 Write-Step "詳細上限  : $DetailLimit 件/サイト"
 if ($Site) { Write-Step "対象サイト: $Site" }
+if ($Family.Count -gt 0) { Write-Step "ファミリ  : $($Family -join ',')" }
 if ($ConfigsDir) {
     # 環境変数は .env の値より優先される（pydantic-settings）。子の python にだけ効く
     $env:CONFIGS_DIR = $ConfigsDir
@@ -157,6 +168,9 @@ $scanArgs = @("scan", "--seed", "--detail-limit", "$DetailLimit")
 if (-not $Drain) { $scanArgs += "--full" }
 # 1サイトだけ取り直す逃げ道（NIFTY の405解消後の取り直しで使った）
 if ($Site) { $scanArgs += @("--site", $Site) }
+# 種別ファミリで絞る（-Family MANSION_BUY,KODATE_BUY で売買だけを掃き出す）。
+# ⚠ 絞った結果が空なら scan 側が例外にする（黙って0件で正常終了しない → 課題#4）
+foreach ($fam in $Family) { $scanArgs += @("--family", $fam) }
 Invoke-HouseSearch -Label "全サイトのシードスキャン" -Arguments $scanArgs | Out-Null
 
 Write-Step "==== 初回全件スキャン終了 ===="

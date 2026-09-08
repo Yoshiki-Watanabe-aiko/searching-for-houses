@@ -70,6 +70,7 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
 ```powershell
 .\scripts\run_initial_scan.ps1                # 初回全件スキャン（切り離して起動・約6.5〜9時間）
 .\scripts\run_initial_scan.ps1 -Drain         # 2晩目以降の詳細キュー掃き出し
+.\scripts\run_initial_scan.ps1 -Drain -Family MANSION_BUY,KODATE_BUY   # 売買だけ掃き出す（賃貸を含めない・約3時間）
 .\scripts\run_initial_scan.ps1 -Site NIFTY    # 1サイトだけ取り直す（切り離して起動）
 .\scripts\run_fetch_commutes.ps1              # 通勤時間の実ダイヤ取得（切り離して起動・約4.8時間）
 .\scripts\run_fetch_commutes.ps1 -Regions 北海道,東北  # 複数地方を順に（各地方の後に re-segment まで行う）
@@ -228,6 +229,14 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
   （配置した瞬間から定期スキャンが新規掲載を全件通知する → ADR 0006）
 - ⚠ **新築マンションの棟には設備原文が無いので `want.features` を配点しない**（ユーザー判断
   2026-09-07）。配点すると棟が全件 miss で分母にだけ乗り構造的に沈む（missing ではなく miss）
+- ⚠⚠ **売買の詳細未取得の掲載は設備12〜15項目が全部 `unknown`（0点・分母に残る）で、上限が
+  約62点に固定される**（→ 課題#4・2026-09-08）。4都県 seed 直後は各パターンの 86〜93% がこれで、
+  順位は詳細が取れた約850件の中で決まる。**掃き出しが進むたびに上位が入れ替わる**ので、
+  「上位15件が動いた」を配点の効果と読み違えない。掃き出しは
+  `run_initial_scan.ps1 -Drain -Family MANSION_BUY,KODATE_BUY`（⚠ `-File` 経由の `"A,B"` は
+  分割されないのでスクリプト内でカンマで割っている）
+- ⚠ **売買の best/worst は4都県の母集団（MUST 通過）の p10〜p90 に合わせてある**（2026-09-08）。
+  3市区時代の値だと価格の満点が 22〜60%・築年の0点が 34% で配点が死ぬ（→ 課題#31・#34）
 - 面積の単位は ㎡（U+33A1）・m²・`m<sup>2</sup>` とばらつく。
   `parse_area_sqm` は NFKC 正規化してから読む
 - ⚠ **金額も NFKC 正規化してから読む**（→ 課題#51）。正規表現の `\d` は全角数字に

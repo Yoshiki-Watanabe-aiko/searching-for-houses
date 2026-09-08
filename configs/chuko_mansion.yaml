@@ -1,14 +1,20 @@
 # ============================================================
-# 中古マンション（売買・Phase 6 手順5 の縦切り実測）
+# 中古マンション（売買・Phase 6）
 #
-# ⚠⚠ **weight と best/worst は暫定値である。** 売買の掲載はまだ1件も無いので、
-# 母集団の分布を見てから確定する（→ 課題#31・#34）。賃貸の値を機械的に流用すると
-# 配点が死ぬ（築年数 worst=30 が母集団の9割に張り付いた前例がある）。
+# 2026-09-07 に **東京・千葉・埼玉・神奈川の全域**へ広げ、配点を
+# 「通勤を下げ、設備とハザードを上げる」方向へ付け替えた（ユーザー判断 → 課題#4）。
+#
+# ⚠ **`cities` は空にしてある。** 売買アダプタは `requires_city=True` なので
+#   空なら4都県の全市区へ自動展開され、SUUMO のスラグ（`m_city_site_values`）が
+#   無い市区は黙って落ちる（実測 173/251 市区。無い市区は収集時に掲載が無かった市区）。
+#   ⚠ 賃貸のエリア帯と違い、売買は「相場より安いこと」で見るため帯を持たない。
+# ⚠ **weight・best/worst は暫定。** 4都県の母集団で分布を測ってから確定する
+#   （→ 課題#31・#34）。⚠ 売買の相場（→ 課題#49）が入るまでは価格の絶対額で
+#   採点するので、安い郊外が上位に寄る（→ 課題#24 と同型）ことは承知のうえ。
 #
 # ⚠ **MUST は「広めに取ってから締める」**（ユーザー判断 2026-09-06）。
 # MUST 1段目で fail した掲載はDBに残らないので、**緩める方向は取り直しになる**
-# （エリア帯を決めたときと同じ手順 → ADR 0013・課題#24）。締める方向は
-# `rescore` だけで試せる。
+# （→ ADR 0013・課題#24）。締める方向は `rescore` だけで試せる。
 #
 # ⚠ **`name:` は変えない。** 通知履歴・順位・スコアが `pattern_name` に紐づいており、
 # 変えると全掲載が「未通知」扱いになり new が全件再発火する（→ 課題#4）。
@@ -18,13 +24,10 @@ name: "中古マンション"
 property_type: "CHUKO_MANSION"
 
 # 通知先はファミリ単位で共有する（新築・中古で分けない → 課題#4）。
-# ⚠⚠ `.env` の DISCORD_WEBHOOK_MANSION / _MANSION_DIGEST には**既に値が入っている**
-# （2026-09-07 実測。以前の「キーだけで値が空」という記述は古い）。
-# ⚠ **つまり configs/ 直下に置いた瞬間から、定期スキャン（`--seed` なし）が
-# 新規掲載を通知として飛ばす。** 初回は必ず `scan --seed` でDBへ入れてから
-# 配置すること（→ ADR 0006）。
-# （`scan --seed` は通知しないので通知先の解決も走らない。cli.py の fail-fast は
-# `if not args.seed:`）。
+# ⚠⚠ `.env` の DISCORD_WEBHOOK_MANSION / _MANSION_DIGEST には値が入っている。
+#   configs/ 直下に置いた瞬間から定期スキャンが新規掲載を通知として飛ばすので、
+#   市区を広げるときは **CONFIGS_DIR を一時ディレクトリへ向けて `scan --seed`** を
+#   先に流す（→ ADR 0006）。2026-09-07 の4都県化もこの手順で入れた。
 webhook_ref: "MANSION"
 digest_webhook_ref: "MANSION_DIGEST"
 
@@ -37,19 +40,14 @@ sites:
 search:
   prefectures:
     - "東京都"
-  # ⚠ 手順5 は縦切りの実測なので3市区に絞る。都心（千代田区・バス便0件）と
-  # 郊外（八王子市・バス便3件）を混ぜてあるのは、**バス便を含まないフィクスチャでは
-  # 駅同定の欠陥を検出できない**ため（課題#41・#44 で2度踏んだ形）。
-  # ⚠ 市区を増やす方向は取り直しになる（MUST 1段目で fail した掲載はDBに残らない）が、
-  # 下記の MUST は広めなので、増やした市区が新規に取得されるだけで済む。
-  cities:
-    - "千代田区"
-    - "八王子市"
-    - "足立区"
+    - "千葉県"
+    - "埼玉県"
+    - "神奈川県"
+  # 空＝4都県の全市区（スラグのある173市区）へ自動展開する（上の注記を参照）
+  cities: []
   # ⚠ **価格上限はサイトへ渡さない。** `kt` の単位が万円で選択肢が離散
   # （500/1000/…/8000/9000/10000/12000）であることは手順3で実測したが、
   # **丸めが未実装**なので端数を送ると掲載0件になる（→ 課題#29）。
-  # 実装して実測するまで null のままにする。
   price_max_hint: null
   # サイト側MUST は**効きを実測した2軸だけ**を有効にしてある（→ ADR 0015）。
   # 面積上限 `mt`・築年数 `cn` は選択肢をフォームから採っただけで効きが未測定、
@@ -69,22 +67,22 @@ commute:
 # ---- MUST: 未充足なら除外 ----
 # ⚠ 広めに取る。`monthly_cost_max` / `age_max` / `commute_minutes_max` / `layouts` は
 # **意図的に設定していない**（空リスト・未設定は「制約なし」として MUST 判定から外れる）。
-# 分布を見てから締める。
+# ⚠ 通勤の MUST は置かない（売買は地域を限定しない判断 → 課題#4）
 must:
   price_max: 100000000         # 1億円（円単位）
   area_min: 30.0
   walk_minutes_max: 20
   layouts: []                  # 制約なし。売買の md は部屋数でしか切れない（→ 課題#4）
   features: []
-  # ⚠ drop へ倒さないこと。新築の価格未定・管理費未取得が「情報が無いだけ」で消える
+  # ⚠ drop へ倒さないこと。管理費未取得が「情報が無いだけ」で消える
   unknown_policy: keep
 
 # ---- WANT: 重み付き加点。合計 0〜100点へ正規化される ----
+# 配点の内訳（2026-09-07・ユーザー判断）: 設備 60 / 価格 40 / 面積 20 / 築年 15 /
+# 管理費等 10 / 徒歩 8 / 通勤 10 / ハザード 35（洪水25・土砂10）＝ 198。
+# 通勤 25→10・徒歩 10→8 に下げ、その分を設備（40→60）とハザード（20→35）へ回した。
 want:
-  # ---- 設備 40点（数値140点に対し22%。ユーザー判断 2026-09-07）----
-  # ⚠ **出現率は61掲載（3市区）での実測**。市区を増やすと動くので、
-  # 母集団が増えたら測り直す（→ 課題#31・#4）。まず控えめに入れて効果を測る。
-  #
+  # ⚠ **出現率は61掲載（3市区）での実測**。4都県に広げたら測り直す（→ 課題#31）。
   # ⚠ **出現率が高すぎる条件は入れない。** ほぼ全件が持つと分母 Σw だけ増えて
   # 全掲載が等しく加点され、順位がまったく動かない（→ 課題#15・#31）。
   # 除外: エレベーター95.1% / 2階以上85.2% / システムキッチン83.6%
@@ -92,36 +90,39 @@ want:
     # 購入後の初期費用に直結する。⚠ **リフォーム済みとリノベは排他グループにする**
     # ——リノベ17件のうち15件（88%）がリフォーム済みも持つので、別々に weight を
     # 振ると同じ属性に二重の重みが掛かる（重複が低ければ分けてよい → ADR 0022）
-    - { any_of: [FEAT_REFORMED, FEAT_RENOVATED], weight: 5 }   # 54.1%
+    - { any_of: [FEAT_REFORMED, FEAT_RENOVATED], weight: 7 }   # 54.1%
     # 後から付けられない共用設備・構造
-    - { code: SEC_AUTOLOCK,         weight: 5 }    # 16.4% オートロック
-    - { code: STRUCT_QUAKE,         weight: 4 }    #  8.2% 耐震基準適合（ローン控除の要件）
-    - { code: HVAC_FLOOR_HEAT,      weight: 4 }    #  8.2% 床暖房
-    - { code: EQUIP_DELIVERY_BOX,   weight: 3 }    # 44.3% 宅配ボックス
+    - { code: SEC_AUTOLOCK,         weight: 8 }    # 16.4% オートロック
+    - { code: STRUCT_QUAKE,         weight: 6 }    #  8.2% 耐震基準適合（ローン控除の要件）
+    - { code: HVAC_FLOOR_HEAT,      weight: 6 }    #  8.2% 床暖房
+    - { code: EQUIP_DELIVERY_BOX,   weight: 4 }    # 44.3% 宅配ボックス
     # 後から変えられない住戸の条件
-    - { code: LOC_CORNER,           weight: 3 }    # 34.4% 角部屋
-    - { code: LOC_SOUTH_FACING,     weight: 3 }    # 39.3% 南向き
+    - { code: LOC_CORNER,           weight: 5 }    # 34.4% 角部屋
+    - { code: LOC_SOUTH_FACING,     weight: 5 }    # 39.3% 南向き
     # 住み始めるまでの手間・専有部の設備
-    - { code: FEAT_VACANT,          weight: 3 }    # 47.5% 現況空家（即引渡し可）
-    - { code: KITCHEN_DISHWASHER,   weight: 3 }    # 29.5% 食器洗い乾燥機
-    - { code: STORAGE_WIC,          weight: 3 }    # 16.4% ウォークインクローゼット
+    - { code: FEAT_VACANT,          weight: 4 }    # 47.5% 現況空家（即引渡し可）
+    - { code: KITCHEN_DISHWASHER,   weight: 5 }    # 29.5% 食器洗い乾燥機
+    - { code: STORAGE_WIC,          weight: 4 }    # 16.4% ウォークインクローゼット
     # 出現率が高いので軽め（差が付きにくい）
-    - { code: SEC_MONITOR_INTERCOM, weight: 2 }    # 78.7% TVモニタ付きインターホン
-    - { code: BATH_DRY,             weight: 2 }    # 70.5% 浴室乾燥機
+    - { code: SEC_MONITOR_INTERCOM, weight: 3 }    # 78.7% TVモニタ付きインターホン
+    - { code: BATH_DRY,             weight: 3 }    # 70.5% 浴室乾燥機
   numeric:
-    - { metric: price,                weight: 40, best: 40000000, worst: 100000000 }
-    - { metric: area_sqm,             weight: 20, best: 75,       worst: 30 }
-    - { metric: age_years,            weight: 15, best: 0,        worst: 40 }
-    - { metric: monthly_cost,         weight: 10, best: 15000,    worst: 40000 }
-    - { metric: walk_minutes,         weight: 10, best: 3,        worst: 20 }
-    # ⚠ 通勤の best/worst は母集団（現在の3市区・MUST fail 以外）の下位10%〜上位10%に
-    #   合わせた**暫定値**（ユーザー判断 2026-09-07・課題#4 手順8）。賃貸の 25〜60 を流用すると
-    #   八王子の掲載が0点に張り付き weight 25 が死ぬ（→ 課題#31）。MUST は置かない
-    #   （売買は地域を限定しない判断 → 課題#4）。⚠ 市区を増やしたら付け直すこと。
-    - { metric: commute_minutes,      weight: 25, best: 20,       worst: 80 }
-    # ハザードは全種別で共通に効く（→ ADR 0021）
-    - { metric: flood_rank_avg,       weight: 15, best: 0,        worst: 4 }
-    - { metric: landslide_area_ratio, weight: 5,  best: 0,        worst: 0.1 }
+    # best/worst は 4都県 seed 後の母集団（MUST 通過 12,420件・2026-09-08）の
+    # p10〜p90 に合わせた（→ 課題#31・#34・課題#4「4都県全域への拡大」）。
+    # ⚠ 3市区時代の値（best 4,000万）だと価格の満点が 60%・築年の0点が 34% で配点が死ぬ。
+    # ⚠ 価格は絶対額なので郊外が満点を取り続ける（相場比が入るまでの既知の限界 → 課題#49）
+    - { metric: price,                weight: 40, best: 16000000, worst: 68000000 }   # p10 1,590万 / p90 6,790万
+    - { metric: area_sqm,             weight: 20, best: 85,       worst: 47 }         # p90 85.4 / p10 47.4
+    # 築年は best 0 を保ち worst だけ p90 へ（賃貸の課題#31 と同じ手順）
+    - { metric: age_years,            weight: 15, best: 0,        worst: 50 }         # p90 50
+    - { metric: monthly_cost,         weight: 10, best: 15000,    worst: 40000 }      # p10 1.6万 / p90 3.7万（据え置き）
+    - { metric: walk_minutes,         weight: 8,  best: 3,        worst: 20 }         # 0点 2%・満点 12%（据え置き）
+    # 通勤は 25→10 へ（ユーザー判断 2026-09-07）。best/worst は4都県の母集団の p10〜p90
+    - { metric: commute_minutes,      weight: 10, best: 35,       worst: 80 }         # p10 34 / p90 80
+    # ハザードは全種別で共通に効く（→ ADR 0021）。購入では住み替えが利かないので
+    # 賃貸（15＋5）より重くする。⚠ 0 は「区域外だと確認した」で満点、未解決は欠損
+    - { metric: flood_rank_avg,       weight: 25, best: 0,        worst: 4 }
+    - { metric: landslide_area_ratio, weight: 10, best: 0,        worst: 0.1 }
 
 ranking:
   top_n: 15
