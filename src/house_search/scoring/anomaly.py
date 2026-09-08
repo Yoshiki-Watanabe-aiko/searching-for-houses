@@ -70,13 +70,34 @@ def is_price_anomaly(
     return ratio is not None and ratio < threshold
 
 
+#: 売買の種別ファミリ。⚠ 金額と面積の意味がここで変わる
+_BUY_FAMILIES = frozenset({"MANSION_BUY", "KODATE_BUY"})
+
+
 def describe_price_anomaly(view: ListingView) -> str:
-    """実行サマリ1行ぶんの説明。"""
+    """実行サマリ1行ぶんの説明。
+
+    ⚠⚠ **金額の意味はファミリで変わる。** ``rent_total`` は生成列
+    （``price`` ＋ 管理費）なので**売買でも値が入る**。賃貸前提のまま出すと
+    中古マンションの警告に「月額6,005,510円」という無意味な数字が並ぶ
+    （→ 課題#4 が ``notify/format.py`` で塞いだのとまったく同じ形）。
+    ⚠ **面積も相場比の分母に合わせる**（マンションは専有・戸建ては延床）。
+    別の面積を出すと「なぜこの比になるのか」が読み取れない。
+    ⚠ **既定は賃貸に倒す**（``property_family`` を渡し忘れた経路が
+    黙って売買表示にならないように）。
+    """
     ratio = view.market_rate_ratio
     parts = [f"{view.site_code or '?'} id={view.listing_id}"]
-    if view.rent_total is not None:
+    is_buy = view.property_family in _BUY_FAMILIES
+    if is_buy:
+        if view.price is not None:
+            parts.append(f"価格{view.price:,}円")
+    elif view.rent_total is not None:
         parts.append(f"月額{view.rent_total:,}円")
-    if view.area_sqm is not None:
+    if view.property_family == "KODATE_BUY":
+        if view.building_area_sqm is not None:
+            parts.append(f"延床{view.building_area_sqm}㎡")
+    elif view.area_sqm is not None:
         parts.append(f"{view.area_sqm}㎡")
     if view.layout:
         parts.append(view.layout)

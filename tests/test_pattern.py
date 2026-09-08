@@ -317,10 +317,15 @@ def test_売買パターンは通勤を下げハザードを上げる(filename: 
     """売買の配点は「通勤を下げ、購入で検討すべき材料（ハザード）を上げる」
     （ユーザー判断 2026-09-07 → 課題#4）。4パターン共通の値を固定する。
 
-    ⚠ 売買の相場（→ 課題#49）が無い間は価格の絶対額で採点するので、通勤を下げるほど
-    安い郊外が上位に寄る（→ 課題#24 と同型）ことは承知のうえの判断。
     ⚠ weight を変えると config_hash が変わり、次回の定期スキャンで全件再スコアされる。
     ⚠ best/worst はここでは固定しない（4都県の母集団で付け直す → 課題#31・#34）。
+
+    ⚠⚠ **価格は 40 → 20 へ半分にし、空いた 20 を相場比へ回した**
+    （ユーザー判断 2026-09-08「相場より安いことを重視したい」→ 課題#49 Step 6）。
+    起票時（2026-09-07）は「相場が無い間は価格の絶対額で採点する」前提で 40 を
+    固定していたが、国交省「不動産情報ライブラリ」の㎡単価相場が入ったので前提が変わった。
+    ⚠ **価格軸の合計（20＋20）は据え置き**で、内訳が「絶対額」から
+    「絶対額＋相場比」へ半々に変わっただけ。
     """
     pattern = load_pattern_file(REPO_ROOT / "configs" / filename)
     weights = {item.metric: item.weight for item in pattern.want.numeric}
@@ -328,7 +333,10 @@ def test_売買パターンは通勤を下げハザードを上げる(filename: 
     assert weights["walk_minutes"] == 8, f"{filename}: 徒歩は 10 → 8 へ下げた"
     assert weights["flood_rank_avg"] == 25, f"{filename}: 洪水は 15 → 25 へ上げた"
     assert weights["landslide_area_ratio"] == 10, f"{filename}: 土砂は 5 → 10 へ上げた"
-    assert weights["price"] == 40, f"{filename}: 価格は据え置き"
+    assert weights["price"] == 20, f"{filename}: 価格は 40 → 20（相場比へ半分回した）"
+    assert weights["market_rate_ratio"] == 20, f"{filename}: 相場比（→ 課題#49 Step 6）"
+    # ⚠ 価格軸の合計は変えていない（内訳が変わっただけ）
+    assert weights["price"] + weights["market_rate_ratio"] == 40, f"{filename}: 価格軸の合計"
     # ⚠ 売買は地域を限定しない判断と整合させ、通勤の MUST は置かない（→ 課題#4 手順8）
     assert pattern.must.commute_minutes_max is None, f"{filename}: 通勤の MUST は置かない"
 

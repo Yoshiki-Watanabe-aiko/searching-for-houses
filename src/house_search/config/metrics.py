@@ -187,16 +187,21 @@ METRICS: tuple[MetricSpec, ...] = (
         source_columns=("landslide_area_ratio",),
     ),
     # --- 相場との比較（→ 課題#49） ---------------------------------------
-    # ⚠ t_listings の物理列ではない。city_id × layout で m_market_rates を
-    # 引き、`rent_total ÷ 相場` を出す（同じ市区・同じ間取りの相場と比べる）。
+    # ⚠ t_listings の物理列ではない。市区の相場（m_market_rates）を引いた導出値で、
+    # 賃貸は「月額 ÷ 間取りごとの家賃相場」、売買は「㎡単価 ÷ 市区の㎡単価相場」。
     MetricSpec(
         name="market_rate_ratio",
-        label="相場に対する賃料の比",
+        label="相場に対する価格の比",
         direction=Direction.LOWER_IS_BETTER,
         unit="倍",
-        # ⚠ 賃貸のみ。売買の相場（国交省API）はまだ入っていないので、
-        # 広げると売買パターンで全件 missing になるだけ（測っていないものは書かない）
-        property_types=frozenset({CHINTAI}),
+        # ⚠⚠ **best/worst を 1.0 中心に置かない。** 賃貸は MUST が安い掲載だけを
+        # 集めるので 1.0 未満に固まり（中央 0.53〜0.61）、売買は `price` が売出価格・
+        # 相場が取引価格なので **1.0 をまたぐ**（中央 0.98〜1.96）。母集団の
+        # p10〜p90 に合わせる（→ 課題#31・ADR 0022 決定3）。
+        # ⚠ **新築マンションは中古マンションの相場と比べている**（新築の取引は
+        # 不動産情報ライブラリにほとんど載らない）。パターン内の相対比較としては
+        # 機能するが、水準そのものは高めに出る既知の偏り（→ 課題#49）。
+        property_types=frozenset({CHINTAI}) | BUY_TYPES,
         source_columns=("market_rate_ratio",),
     ),
 )
