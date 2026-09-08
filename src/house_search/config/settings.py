@@ -65,6 +65,28 @@ class Settings(BaseSettings):
         default="house-search/2.0 (personal property watcher)",
         description="スクレイピング時に名乗るUser-Agent",
     )
+    mlit_reinfolib_api_key: str | None = Field(
+        default=None,
+        description=(
+            "国土交通省「不動産情報ライブラリ」APIのキー。売買の相場（市区ごとの㎡単価）を"
+            "取るスクリプトだけが使う。未設定ならそのスクリプトが起動時に止まる"
+        ),
+    )
+
+    def require_reinfolib_api_key(self) -> str:
+        """不動産情報ライブラリのAPIキーを取り出す。未設定なら例外にする。
+
+        ⚠ **キーの値そのものは例外にもログにも出さない**（約款が第三者への公開を禁じている）。
+        ⚠ **空値は ``_drop_empty_values`` が None に倒す**ので、``.env`` に
+        ``MLIT_REINFOLIB_API_KEY=`` とだけ書いた状態もここで弾ける。
+        """
+        key = (self.mlit_reinfolib_api_key or "").strip()
+        if not key:
+            raise RuntimeError(
+                "MLIT_REINFOLIB_API_KEY が未設定です。"
+                ".env に不動産情報ライブラリのAPIキーを設定してください"
+            )
+        return key
 
     @model_validator(mode="before")
     @classmethod
