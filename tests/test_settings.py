@@ -67,3 +67,63 @@ def test_プロセス環境変数がenvファイルより優先される(
         "DISCORD_WEBHOOK_CHINTAI_ALONE=https://discord.com/api/webhooks/1/a\n",
     )
     assert settings.webhook_url("CHINTAI_ALONE") == "https://discord.com/api/webhooks/2/b"
+
+
+def test_不動産情報ライブラリのキーは未設定ならNone(tmp_path: Path) -> None:
+    """キーは相場の取得スクリプトしか使わないので、無くても他の機能は動く。"""
+    settings = _settings(tmp_path, "DATABASE_URL=postgresql+psycopg://u:p@h:5432/db\n")
+    assert settings.mlit_reinfolib_api_key is None
+
+
+def test_不動産情報ライブラリのキーが空値なら要求時に落とす(tmp_path: Path) -> None:
+    """⚠ ``KEY=`` だけの行は「設定した」ように見えるが実質未設定。
+
+    ここで落とさないと、キー無しのまま API を叩いて 401 を受け、
+    「キーが誤っている」のか「そもそも送っていない」のか区別できなくなる。
+    """
+    settings = _settings(
+        tmp_path,
+        "DATABASE_URL=postgresql+psycopg://u:p@h:5432/db\nMLIT_REINFOLIB_API_KEY=\n",
+    )
+    assert settings.mlit_reinfolib_api_key is None
+    with pytest.raises(RuntimeError, match="MLIT_REINFOLIB_API_KEY"):
+        settings.require_reinfolib_api_key()
+
+
+def test_不動産情報ライブラリのキーは前後の空白を落として返す(tmp_path: Path) -> None:
+    settings = _settings(
+        tmp_path,
+        "DATABASE_URL=postgresql+psycopg://u:p@h:5432/db\nMLIT_REINFOLIB_API_KEY= abc123 \n",
+    )
+    assert settings.require_reinfolib_api_key() == "abc123"
+
+
+def test_例外にキーの値を含めない(tmp_path: Path) -> None:
+    """⚠ 約款がキーの第三者提供を禁じているので、値をメッセージへ入れない。
+
+    空白だけのキーは「未設定」として弾かれるが、そのとき値が漏れないことも固定する。
+    """
+    settings = _settings(
+        tmp_path,
+        "DATABASE_URL=postgresql+psycopg://u:p@h:5432/db\nMLIT_REINFOLIB_API_KEY=   \n",
+    )
+    with pytest.raises(RuntimeError) as exc:
+        settings.require_reinfolib_api_key()
+    assert "   " not in str(exc.value).replace("MLIT_REINFOLIB_API_KEY が未設定です。", "")
+
+
+def test_env_exampleの空値行にインラインコメントを書かない() -> None:
+    """⚠ ``KEY=  # コメント`` と書くと python-dotenv が「# コメント」を値として読む。
+
+    実際に別プロジェクトで踏んだ事故なので、雛形の側で機械的に止める。
+    """
+    example = Path(__file__).resolve().parents[1] / ".env.example"
+    offenders = [
+        line
+        for line in example.read_text(encoding="utf-8").splitlines()
+        if "=" in line
+        and not line.lstrip().startswith("#")
+        and not line.split("=", 1)[1].split("#", 1)[0].strip()
+        and "#" in line.split("=", 1)[1]
+    ]
+    assert not offenders, f".env.example の空値行にインラインコメントがある: {offenders}"
