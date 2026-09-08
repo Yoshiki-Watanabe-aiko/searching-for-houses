@@ -150,3 +150,70 @@ class Test売買の表示:
         view = _view(3, 0.12, rent_total=14_000, area_sqm=42.17, layout="2LDK")
         text = describe_price_anomaly(view)
         assert "月額14,000円" in text
+
+
+class Test売買の閾値:
+    """⚠⚠ **同じ閾値でも売買と賃貸で意味が違う**（2026-09-09 実測 → 課題#50）。
+
+    相場比の母集団の中央は次のとおりで、賃貸は 1.0 の下に固まるが
+    売買は 1.0 をまたぐ（うちの ``price`` は売出価格・相場は取引価格のため）。
+
+    ==================  ========  ==========================
+    パターン            中央      0.20 が相当する位置
+    ==================  ========  ==========================
+    東京23区賃貸        0.618     中央の約 1/3
+    近郊60分圏賃貸      0.541     中央の約 1/2.7
+    中古マンション      1.171     中央の約 **1/6**
+    新築マンション      1.962     中央の約 **1/10**
+    ==================  ========  ==========================
+
+    ⚠ そのため売買に 0.20 を当てると**築古の正当な安値**ばかりが並ぶ。
+    実測で該当20件はすべて築44〜82年で、賃貸の課題#50 のような
+    「サイトが単位を取り違えた」掲載は1件も含まれていなかった。
+    """
+
+    def test_売買は相場の10分の1未満だけを疑いとする(self) -> None:
+        """実測値: 中古マンション id=190852（築48年・50万円・36.61㎡）。
+
+        ⚠ 他の19件（0.104〜0.19）から**1桁外れて**いる唯一の掲載で、
+        賃貸で異常掲載を見つけたときと同じ形をしている。
+        """
+        assert is_price_anomaly(_view(1, 0.019, property_family="MANSION_BUY")) is True
+
+    def test_築古の正当な安値は疑いにしない(self) -> None:
+        """⚠ **偽陽性が多いとサマリ自体が読まれなくなる**（→ 課題#45）。
+
+        実測値: 中古一戸建て id=179847（築82年・600万円・延床109.67㎡）。
+        旧閾値 0.20 ではこれを含む20件が毎回サマリに並んでいた。
+        """
+        assert is_price_anomaly(_view(1, 0.106, property_family="KODATE_BUY")) is False
+        assert is_price_anomaly(_view(2, 0.184, property_family="MANSION_BUY")) is False
+
+    def test_賃貸の閾値は変わらない(self) -> None:
+        """⚠ 賃貸は実サイトで誤りを確認済みの5件がこの範囲にある（→ 課題#50）。"""
+        assert is_price_anomaly(_view(1, 0.119, property_family="CHINTAI")) is True
+        assert is_price_anomaly(_view(2, 0.184, property_family="CHINTAI")) is True
+
+    def test_ファミリ未設定は賃貸として扱う(self) -> None:
+        """⚠ 既定を売買（厳しい側）に倒すと、渡し忘れた経路で**検出が黙って止まる**。
+
+        ``describe_price_anomaly`` が既定を賃貸に倒しているのと同じ理由。
+        """
+        assert is_price_anomaly(_view(1, 0.119)) is True
+
+    def test_明示的な閾値はファミリより優先する(self) -> None:
+        """⚠ 実測や切り戻しのために上書きできる余地を残す。"""
+        view = _view(1, 0.119, property_family="MANSION_BUY")
+        assert is_price_anomaly(view, threshold=0.20) is True
+
+    def test_一覧でもファミリごとの閾値が効く(self) -> None:
+        """⚠ **純関数が正しくても一覧側が固定値を使っていれば意味がない。**"""
+        views = [
+            _view(1, 0.019, property_family="MANSION_BUY"),
+            _view(2, 0.106, property_family="KODATE_BUY"),
+            _view(3, 0.119, property_family="CHINTAI"),
+        ]
+
+        result = collect_price_anomalies(views)
+
+        assert [r.split("id=")[1].split(" ")[0] for r in result] == ["1", "3"]
