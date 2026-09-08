@@ -1,11 +1,11 @@
 ﻿# ============================================================
-# 物件検索通知システム v2 - タスクスケジューラ登録（7本）
+# 物件検索通知システム v2 - タスクスケジューラ登録（8本）
 #
 # 使い方:
 #   .\scripts\register_tasks.ps1 -DryRun          # XMLを生成して検証するだけ（権限不要）
 #   .\scripts\register_tasks.ps1                  # 登録する（★管理者権限が要る）
-#   .\scripts\register_tasks.ps1 -EnableScraping  # 取得を伴う5本（Scan・ScanBuy・Sweep・CheckSold・MarketRates）を有効化する
-#   .\scripts\register_tasks.ps1 -Unregister      # 7本とも削除する
+#   .\scripts\register_tasks.ps1 -EnableScraping  # 取得を伴う6本（Scan・ScanBuy・Sweep・CheckSold・MarketRates・BuyMarketRates）を有効化する
+#   .\scripts\register_tasks.ps1 -Unregister      # 8本とも削除する
 #
 # ★ 登録には管理者権限が必要（2026-09-02 に実測して判明）:
 #   LogonType が S4U（＝ログオフ中も実行・パスワード保存なし）のタスクを作るには
@@ -34,6 +34,7 @@
 #   HouseSearch-Digest     毎日 20:00           日次ランキングダイジェスト
 #   HouseSearch-Backup     毎日 03:30           pg_dump（課題#8）
 #   HouseSearch-MarketRates 毎月1日 04:30       家賃相場の更新（課題#49）
+#   HouseSearch-BuyMarketRates 1/4/7/10月2日 04:30  売買相場の四半期更新（課題#49 Step 8）
 #
 # なぜ2時間ごとなのか:
 #   増分スキャンは実測ベースで約72分かかる（一覧1116リクエスト＋詳細320リクエスト・
@@ -71,7 +72,7 @@
 param(
     [switch]$DryRun,
     [switch]$Unregister,
-    # 取得を伴う5本（Scan / ScanBuy / Sweep / CheckSold / MarketRates）を有効化する。
+    # 取得を伴う6本（Scan / ScanBuy / Sweep / CheckSold / MarketRates / BuyMarketRates）を有効化する。
     # 初回全件スキャンが終わってから実行すること（並走すると実効間隔が半分になる）
     [switch]$EnableScraping,
 
@@ -167,12 +168,19 @@ $Tasks = @(
         TaskArg     = "scan-buy"
         Scraping    = $true
         # 毎日 10:25。09:15 の scan（実測55〜60分）が終わったあと、11:15 の scan の前に置く。
-        # 所要は一覧692リクエスト約30分＋詳細約7分＋掲載終了の確認約8分の見込み。
+        # 所要は一覧692リクエスト約30分＋詳細約27分＋掲載終了の確認約8分の見込み。
         # ⚠ 11:15 を越えると 11:15 の scan が pg_advisory_lock でスキップされる
         #   （データは壊れない。新着の検知が2時間遅れるだけ → ADR 0013 決定8）
+        # ⚠⚠ 上限を PT1H10M から PT1H40M へ広げた（→ 課題#4・2026-09-09）。
+        #   詳細を 40 → 200件/パターンへ上げたぶん所要が +20分ほど増えるため。
+        #   ⚠ 上限で強制終了されると終了コードが取れず後処理も飛ぶ
+        #     （課題#26 で check-sold が 267014 で切られた実例がある）。
+        #     上限に当てて切るより、越えて 11:15 の scan を1回飛ばすほうが被害が小さい。
+        #   ⚠ ScanBuy は**まだ一度も走っていない**（タスク登録が未実施）。
+        #     初回の実行ログで所要を実測し、この上限と詳細件数を見直すこと
         StartAt     = "2026-09-08T10:25:00"
         Repeat      = $null
-        TimeLimit   = "PT1H10M"
+        TimeLimit   = "PT1H40M"
     },
     @{
         Name        = "HouseSearch-Sweep"
@@ -225,6 +233,23 @@ $Tasks = @(
         Repeat      = $null
         Monthly     = $true
         TimeLimit   = "PT30M"
+    },
+    @{
+        Name        = "HouseSearch-BuyMarketRates"
+        Description = "物件検索通知システム: 売買相場の四半期更新（国交省「不動産情報ライブラリ」→CSV→m_market_rates・課題#49 Step 8）。"
+        TaskArg     = "buy-market-rates"
+        # 国交省APIを叩くので取得タスク扱い（-EnableScraping で有効化する）
+        Scraping    = $true
+        # 1/4/7/10月の「2日」04:30。⚠ 毎月1日 04:30 の家賃相場と同じ日にしない
+        # （どちらも m_market_rates を全置換するので並走させない）。
+        # 03:30 の backup の後・05:15 の scan の前という位置は家賃相場と同じ。
+        # ⚠ 取得は16リクエスト×10秒＝約3分＋CSV生成1〜2分。この窓に収まる。
+        # ⚠ 国交省の公開は四半期終了後2〜3ヶ月（実測で 2026-09-08 時点の最新が 2026Q1）。
+        #   新しい四半期が無ければCSVもDBも触らずに終わる（空振りは正常）
+        StartAt     = "2026-10-02T04:30:00"
+        Repeat      = $null
+        Quarterly   = $true
+        TimeLimit   = "PT30M"
     }
 )
 
@@ -275,9 +300,20 @@ function New-TaskXml {
     # 初回スキャンの完了後に -EnableScraping で有効化する
     $enabled = if ($Task.Scraping -and -not $EnableScraping) { "false" } else { "true" }
 
-    # 在庫棚卸しだけ週次、相場の更新だけ月次。ScheduleByDay / ByWeek / ByMonth は
-    # 排他なので切り替える
-    $schedule = if ($Task.Monthly) {
+    # 在庫棚卸しだけ週次、家賃相場は月次、売買相場は四半期。
+    # ScheduleByDay / ByWeek / ByMonth は排他なので切り替える。
+    # ⚠ タスクスケジューラに「四半期ごと」という区分は無いので、
+    #   ScheduleByMonth の Months を4つに絞って表現する
+    $schedule = if ($Task.Quarterly) {
+        @"
+      <ScheduleByMonth>
+        <DaysOfMonth><Day>2</Day></DaysOfMonth>
+        <Months>
+          <January /><April /><July /><October />
+        </Months>
+      </ScheduleByMonth>
+"@
+    } elseif ($Task.Monthly) {
         @"
       <ScheduleByMonth>
         <DaysOfMonth><Day>1</Day></DaysOfMonth>

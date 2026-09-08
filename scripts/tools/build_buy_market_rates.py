@@ -71,6 +71,11 @@ SEG_AREA = "AREA_SQM"
 SEG_LAND = "LAND_SQM"
 SEG_FLOOR = "FLOOR_SQM"
 
+# 窓の長さ（四半期）。⚠ `fetch_reinfolib_trades.py` と同じ値にする。
+# 片方だけ変えると、取っていない四半期を待つか古い期を混ぜるかになる
+# （`tests/test_buy_market_window.py` が一致を固定している）
+WINDOW_QUARTERS = 4
+
 MIN_SAMPLES = 10
 # ⚠ 相場としてありえない㎡単価を弾く。桁を1つ間違えたときに気づけるのはここだけ。
 # 実測の市区中央値は 7,447〜5,692,308 円/㎡ に収まっていた
@@ -89,25 +94,45 @@ def _num(value: object) -> float | None:
     return parsed if parsed > 0 else None
 
 
-def _iter_records() -> tuple[list[dict[str, Any]], list[str]]:
-    """保存済みの応答を読む。戻り値は明細と、読んだ四半期の並び。"""
+def _iter_records(quarters: int = WINDOW_QUARTERS) -> tuple[list[dict[str, Any]], list[str]]:
+    """保存済みの応答を読む。戻り値は明細と、読んだ四半期の並び。
+
+    ⚠⚠ **新しい方から `quarters` 期だけ読む。** 定期実行（四半期ごと）に載せると
+    保存済みの四半期は増え続ける（`fetch --fetch` は「既存は飛ばす」ので古い
+    ファイルが残る）。絞らないと窓が単調に広がり、**古い相場が混ざったまま
+    行数と sample_count だけが増える**。⚠ 例外にならず「たくさんデータが取れた」
+    ようにしか見えないので、水準のずれに気づく手立てがない。
+
+    ⚠ **窓の外のファイルは消さない。** 原典を残しておけば過去の窓で作り直せる
+    （ハザード・家賃相場と同じ「原典は残し、生成物だけ作り直す」）。
+    """
     files = sorted(RAW.glob("xit001_*.json"))
     if not files:
         raise SystemExit(
             f"保存済みの応答がありません: {RAW}\n"
             "  先に `fetch_reinfolib_trades.py --fetch` を実行してください"
         )
-    rows: list[dict[str, Any]] = []
-    periods: set[str] = set()
+    by_period: dict[str, list[Path]] = defaultdict(list)
     for path in files:
-        period = path.stem.removeprefix("xit001_").split("_")[0]
-        periods.add(period)
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        data = payload.get("data")
-        if not isinstance(data, list):
-            raise SystemExit(f"{path.name}: 応答の data が配列ではありません")
-        rows.extend(data)
-    return rows, sorted(periods)
+        by_period[path.stem.removeprefix("xit001_").split("_")[0]].append(path)
+
+    ordered = sorted(by_period)
+    periods = ordered[-quarters:]
+    dropped = ordered[: -len(periods)] if len(ordered) > len(periods) else []
+    if dropped:
+        # ⚠ 黙って落とさない。窓の外に何期あるかは、公開の遅れや窓の設定ミスに
+        #    気づく材料になる（消してはいないので `--quarters` で読み直せる）
+        print(f"  窓の外の四半期を読み飛ばしました: {', '.join(dropped)}")
+
+    rows: list[dict[str, Any]] = []
+    for period in periods:
+        for path in sorted(by_period[period]):
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            data = payload.get("data")
+            if not isinstance(data, list):
+                raise SystemExit(f"{path.name}: 応答の data が配列ではありません")
+            rows.extend(data)
+    return rows, periods
 
 
 def _period_label(periods: list[str]) -> str:
@@ -123,9 +148,11 @@ def _period_label(periods: list[str]) -> str:
     return f"{fmt(periods[0])}-{fmt(periods[-1])}" if len(periods) > 1 else fmt(periods[0])
 
 
-def collect() -> tuple[dict[tuple[str, str, str, str], list[float]], dict[str, str], list[str]]:
+def collect(
+    quarters: int = WINDOW_QUARTERS,
+) -> tuple[dict[tuple[str, str, str, str], list[float]], dict[str, str], list[str]]:
     """明細を「ファミリ×市区×区分×統計基準」のセルへ畳む。"""
-    rows, periods = _iter_records()
+    rows, periods = _iter_records(quarters)
     cells: dict[tuple[str, str, str, str], list[float]] = defaultdict(list)
     names: dict[str, str] = {}
     seen: Counter[str] = Counter()
@@ -179,9 +206,17 @@ def collect() -> tuple[dict[tuple[str, str, str, str], list[float]], dict[str, s
     return cells, names, periods
 
 
-def build(period: str, acquired_on: str) -> list[dict[str, object]]:
-    """セルから相場の行を作る。主の区分で足りなければ他方で補完する。"""
-    cells, names, _ = collect()
+def build(
+    period: str | None, acquired_on: str, quarters: int = WINDOW_QUARTERS
+) -> tuple[list[dict[str, object]], str]:
+    """セルから相場の行を作る。主の区分で足りなければ他方で補完する。
+
+    戻り値は行と、実際に読んだ窓から作った期間ラベル。
+    ⚠ **ラベルは `collect()` が返す窓から作る。** 保存済みの全ファイルから作ると、
+    読んでいない古い四半期までラベルに含まれて「どの窓の相場か」が嘘になる。
+    """
+    cells, names, periods = collect(quarters)
+    label = period or _period_label(periods)
     out: list[dict[str, object]] = []
     stats: Counter[str] = Counter()
 
@@ -217,7 +252,7 @@ def build(period: str, acquired_on: str) -> list[dict[str, object]]:
                 "sample_count": len(values),
                 "source": SOURCE,
                 "stat_basis": stat,
-                "period": period,
+                "period": label,
                 "acquired_on": acquired_on,
             }
         )
@@ -229,21 +264,24 @@ def build(period: str, acquired_on: str) -> list[dict[str, object]]:
     adopted = sum(v for k, v in stats.items() if not k.endswith("薄いので不採用"))
     if adopted != len(out):
         raise SystemExit(f"採用 {adopted} と行数 {len(out)} が一致しません")
-    return out
+    return out, label
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--period", default=None, help="期間ラベル（既定は窓から作る）")
+    parser.add_argument(
+        "--quarters",
+        type=int,
+        default=WINDOW_QUARTERS,
+        help="窓の長さ（四半期・既定4）。⚠ fetch 側と揃えること",
+    )
     args = parser.parse_args(argv)
 
-    # ⚠ ここで collect() を呼ばない（150MB の JSON を二度読むことになる）。
-    #    窓の並びはファイル名から分かる
-    periods = sorted(
-        {p.stem.removeprefix("xit001_").split("_")[0] for p in RAW.glob("xit001_*.json")}
-    )
-    period = args.period or _period_label(periods)
-    rows = build(period, dt.date.today().isoformat())
+    # ⚠ 期間ラベルは build() が「実際に読んだ窓」から返す。保存済みの全ファイルから
+    #    作ると、読んでいない古い四半期までラベルに載って嘘になる（JSON の二度読みも
+    #    起きない。collect() は build() の中で1回だけ呼ばれる）
+    rows, period = build(args.period, dt.date.today().isoformat(), args.quarters)
     if not rows:
         raise SystemExit("相場が1件も作れませんでした（応答の形の変更を疑う）")
 
