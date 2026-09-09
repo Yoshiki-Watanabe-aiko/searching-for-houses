@@ -38,6 +38,7 @@ import yaml
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
+from house_search.console import force_utf8_output  # noqa: E402
 from house_search.scrape.prefectures import (  # noqa: E402
     PREFECTURE_JIS,
     PREFECTURE_ROMAJI,
@@ -348,6 +349,9 @@ def build(base: Path, period: str, acquired_on: str) -> int:
 
 
 def main() -> None:
+    # ⚠ 先に UTF-8 へ付け替える。cp932 のままだと ⚠ を含む警告の print が
+    # UnicodeEncodeError になり、**取得は成功しているのに処理全体が落ちる**
+    force_utf8_output()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fetch", action="store_true", help="SUUMO から取得し直す")
     parser.add_argument("--period", default=dt.date.today().strftime("%Y-%m"))

@@ -34,6 +34,7 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
 from house_search.config.settings import Settings  # noqa: E402
+from house_search.console import force_utf8_output  # noqa: E402
 from house_search.scrape.prefectures import PREFECTURE_JIS  # noqa: E402
 
 BASE_URL = "https://www.reinfolib.mlit.go.jp/ex-api/external"
@@ -264,6 +265,9 @@ def inspect(*, write_manifest: bool) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # ⚠ 先に UTF-8 へ付け替える。cp932 のままだと ⚠ を含む警告の print が
+    # UnicodeEncodeError になり、**取得は成功しているのに処理全体が落ちる**
+    force_utf8_output()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fetch", action="store_true", help="APIから取得する（既存は飛ばす）")
     parser.add_argument(
