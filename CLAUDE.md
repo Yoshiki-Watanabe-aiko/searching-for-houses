@@ -77,9 +77,9 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
 .\scripts\run_fetch_commutes.ps1              # 通勤時間の実ダイヤ取得（切り離して起動・約4.8時間）
 .\scripts\run_fetch_commutes.ps1 -Regions 北海道,東北  # 複数地方を順に（各地方の後に re-segment まで行う）
 .\scripts\backup_db.ps1                       # pg_dump（14世代保持）
-.\scripts\update_market_rates.ps1            # 家賃相場の月次更新（取得→CSV→DB・約5分）
+.\scripts\update_market_rates.ps1            # 家賃相場の月次更新（全国・取得→CSV→DB・約90分）
 .\scripts\update_market_rates.ps1 -SkipFetch # 保存済みHTMLから作り直すだけ
-.\scripts\update_buy_market_rates.ps1        # 売買相場の四半期更新（取得→CSV→DB・約5分）
+.\scripts\update_buy_market_rates.ps1        # 売買相場の月次更新（全国・取得→CSV→DB・約31分）
 .\scripts\update_buy_market_rates.ps1 -Force # 新しい四半期が無くても作り直す
 .\scripts\register_tasks.ps1 -DryRun          # タスクXMLの生成と検証（権限不要）
 .\scripts\register_tasks.ps1                  # タスク登録（要管理者。2026-09-04 に登録・有効化済み → 課題#23）

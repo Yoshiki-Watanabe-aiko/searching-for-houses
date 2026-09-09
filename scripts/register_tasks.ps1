@@ -34,7 +34,7 @@
 #   HouseSearch-Digest     毎日 20:00           日次ランキングダイジェスト
 #   HouseSearch-Backup     毎日 03:30           pg_dump（課題#8）
 #   HouseSearch-MarketRates 毎月1日 04:30       家賃相場の更新（課題#49）
-#   HouseSearch-BuyMarketRates 1/4/7/10月2日 04:30  売買相場の四半期更新（課題#49 Step 8）
+#   HouseSearch-BuyMarketRates 毎月2日 04:30    売買相場の月次更新（課題#49 Step 8）
 #
 # なぜ2時間ごとなのか:
 #   増分スキャンは実測ベースで約72分かかる（一覧1116リクエスト＋詳細320リクエスト・
@@ -227,29 +227,38 @@ $Tasks = @(
         TaskArg     = "market-rates"
         # SUUMO を叩くので取得タスク扱い（-EnableScraping で有効化する）
         Scraping    = $true
-        # 毎月1日 04:30。03:30 の backup が終わったあと、05:15 の scan の前に置く
-        # （取得は3秒間隔で約5分なので、この窓に収まる）
+        # 毎月1日 04:30。03:30 の backup が終わったあと、05:15 の scan の前に置く。
+        # ⚠⚠ **全国化で所要が約5分 → 約90分になった**（2026-09-09 ユーザー判断）。
+        #   索引47＋市区1,277＋アパート補完を3秒間隔で回すので 06:07 頃まで走る。
+        #   その間 `scraping_lock` を持つため **05:15 の定期スキャンが1回スキップされる**
+        #   （07:15 には間に合う）。データは壊れず、新着の検知が2時間遅れるだけ
         StartAt     = "2026-10-01T04:30:00"
         Repeat      = $null
         Monthly     = $true
-        TimeLimit   = "PT30M"
+        # ⚠ 上限で強制終了されると終了コードが取れず後処理も飛ぶ（→ 課題#26 で
+        #   check-sold が 267014 で切られた実例がある）。90分の見込みに余裕を足す
+        TimeLimit   = "PT3H"
     },
     @{
         Name        = "HouseSearch-BuyMarketRates"
-        Description = "物件検索通知システム: 売買相場の四半期更新（国交省「不動産情報ライブラリ」→CSV→m_market_rates・課題#49 Step 8）。"
+        Description = "物件検索通知システム: 売買相場の月次更新（国交省「不動産情報ライブラリ」→CSV→m_market_rates・課題#49 Step 8）。"
         TaskArg     = "buy-market-rates"
         # 国交省APIを叩くので取得タスク扱い（-EnableScraping で有効化する）
         Scraping    = $true
-        # 1/4/7/10月の「2日」04:30。⚠ 毎月1日 04:30 の家賃相場と同じ日にしない
-        # （どちらも m_market_rates を全置換するので並走させない）。
+        # 毎月「2日」04:30。⚠ 毎月1日 04:30 の家賃相場と同じ日にしない
+        # （どちらも m_market_rates へ書き込むうえ、家賃相場は97分かかる）。
         # 03:30 の backup の後・05:15 の scan の前という位置は家賃相場と同じ。
-        # ⚠ 取得は16リクエスト×10秒＝約3分＋CSV生成1〜2分。この窓に収まる。
-        # ⚠ 国交省の公開は四半期終了後2〜3ヶ月（実測で 2026-09-08 時点の最新が 2026Q1）。
-        #   新しい四半期が無ければCSVもDBも触らずに終わる（空振りは正常）
+        # ⚠⚠ **四半期 → 毎月チェックへ変えた**（2026-09-09 ユーザー判断）。国交省の公開は
+        #   四半期終了後2〜3ヶ月で時期が読めないので、毎月見に行って公開されていれば
+        #   その場で取り込む。四半期に絞ると最大3ヶ月反映が遅れる。
+        # ⚠ **新しい四半期が無ければCSVもDBも触らずに終わる**（起点探索の数リクエストで
+        #   終わる空振り。これは正常な状態であってエラーではない）。
+        # ⚠ 取得があるときは全国47都道府県 × 4四半期 = 188リクエスト×10秒＝約31分＋CSV生成
         StartAt     = "2026-10-02T04:30:00"
         Repeat      = $null
-        Quarterly   = $true
-        TimeLimit   = "PT30M"
+        Monthly     = $true
+        MonthlyDay  = 2
+        TimeLimit   = "PT1H"
     }
 )
 
@@ -300,23 +309,15 @@ function New-TaskXml {
     # 初回スキャンの完了後に -EnableScraping で有効化する
     $enabled = if ($Task.Scraping -and -not $EnableScraping) { "false" } else { "true" }
 
-    # 在庫棚卸しだけ週次、家賃相場は月次、売買相場は四半期。
+    # 在庫棚卸しだけ週次、相場の更新（家賃・売買）は月次。
     # ScheduleByDay / ByWeek / ByMonth は排他なので切り替える。
-    # ⚠ タスクスケジューラに「四半期ごと」という区分は無いので、
-    #   ScheduleByMonth の Months を4つに絞って表現する
-    $schedule = if ($Task.Quarterly) {
+    # ⚠ 月内の日は MonthlyDay で指定する（家賃相場=1日・売買相場=2日）。
+    #   どちらも m_market_rates へ書き込むので同じ日に走らせない
+    $schedule = if ($Task.Monthly) {
+        $day = if ($Task.MonthlyDay) { $Task.MonthlyDay } else { 1 }
         @"
       <ScheduleByMonth>
-        <DaysOfMonth><Day>2</Day></DaysOfMonth>
-        <Months>
-          <January /><April /><July /><October />
-        </Months>
-      </ScheduleByMonth>
-"@
-    } elseif ($Task.Monthly) {
-        @"
-      <ScheduleByMonth>
-        <DaysOfMonth><Day>1</Day></DaysOfMonth>
+        <DaysOfMonth><Day>$day</Day></DaysOfMonth>
         <Months>
           <January /><February /><March /><April /><May /><June />
           <July /><August /><September /><October /><November /><December />

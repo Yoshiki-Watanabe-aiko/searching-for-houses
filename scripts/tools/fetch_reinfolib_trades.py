@@ -34,14 +34,21 @@ REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
 
 from house_search.config.settings import Settings  # noqa: E402
+from house_search.scrape.prefectures import PREFECTURE_JIS  # noqa: E402
 
 BASE_URL = "https://www.reinfolib.mlit.go.jp/ex-api/external"
 API_ID = "XIT001"
 RAW = REPO / "data" / "market_rates" / "raw" / "reinfolib"
 MANIFEST = REPO / "data" / "market_rates" / "reinfolib_manifest.json"
 
-# 対象4都県（JIS2桁）。売買4パターンの対象範囲と同じ
-AREAS = {"13": "東京都", "11": "埼玉県", "12": "千葉県", "14": "神奈川県"}
+# 対象は全国47都道府県（JIS2桁 → 都道府県名）。
+# ⚠ **2026-09-09 に4都県から全国へ広げた**（ユーザー判断）。API は都道府県単位で
+# その四半期の全件を1リクエストで返すので市区ごとに叩く必要がなく、
+# 47都道府県 × 4四半期 = 188リクエスト（10秒間隔で約31分）で済む。
+# ⚠ **いまの掲載は4都県にしかないので相場比には効かない。** 効くのは検索パターンを
+# 他県へ広げたときで、そのとき相場が無いと `market_rate_ratio` が未解決のまま
+# 順位に効かない（例外にならない → 課題#49）
+AREAS = {jis: name for name, jis in PREFECTURE_JIS.items()}
 
 # 窓の長さ（四半期）。⚠ Step 1 の実測では1四半期でも 47/48 市区が n>=10 を
 # 満たすが、不動産取引価格情報（priceClassification=01）は全体の22%しかない。
@@ -228,10 +235,10 @@ def inspect(*, write_manifest: bool) -> int:
         )
         missing = sorted(set(AREAS) - areas)
         mark = "" if not missing else f"  ⚠ 欠け: {[AREAS[a] for a in missing]}"
-        print(f"  {year}Q{quarter}: {len(areas)}/{len(AREAS)}都県 / {rows:,}件{mark}")
+        print(f"  {year}Q{quarter}: {len(areas)}/{len(AREAS)}都道府県 / {rows:,}件{mark}")
 
     complete = [q for q, areas in by_quarter.items() if areas == set(AREAS)]
-    print(f"4都県そろっている四半期: {len(complete)} / 窓の想定 {WINDOW_QUARTERS}")
+    print(f"全都道府県そろっている四半期: {len(complete)} / 窓の想定 {WINDOW_QUARTERS}")
 
     if write_manifest:
         MANIFEST.write_text(
@@ -294,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
             )
 
         targets = window(*latest, args.quarters)
-        print(f"\n取得: {len(AREAS)}都県 × {len(targets)}四半期")
+        print(f"\n取得: {len(AREAS)}都道府県 × {len(targets)}四半期")
         failures: list[str] = []
         for year, quarter in targets:
             for area in AREAS:
