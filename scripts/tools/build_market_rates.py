@@ -77,6 +77,11 @@ APART_SUFFIX = "_ts2"
 # 全国だと1ヶ月あたり約100MBになるため、残し続けると年1.2GBになる。
 KEEP_MONTHS = 2
 
+# 「相場表が無いページ」の許容割合。これを超えたら止める。
+# ⚠ 実測は 8/1,277＝0.6%（掲載の少ない郡部）。構造が変われば全件がこれになるので、
+# 低すぎる閾値にすると正常な郡部で止まり、高すぎると構造変更に気づけない
+MISSING_LIMIT = 0.10
+
 _MONTH_DIR = re.compile(r"\d{4}-\d{2}")
 
 # 索引の JSON: "121":{"name":"足立区","url":"/chintai/tokyo/sc_adachi/..."}
@@ -89,6 +94,24 @@ def _user_agent() -> str:
     from house_search.config.settings import load_settings
 
     return load_settings().user_agent
+
+
+def safe_parse_soba(text: str) -> list:
+    """相場ページを解析する。⚠ **相場表が無いページは空リストにする**。
+
+    ⚠⚠ **全国化して初めて出た**（実測 2026-09-09・1,277市区中8件）。掲載の少ない
+    郡部（積丹郡・土佐郡・土佐清水市など）は**タイトルは正常なのに相場表が無い**。
+    4都県では全市区に表があったため表面化しなかった。
+    ⚠ `parse_soba` の例外文言は「ページ構造が変わった可能性」だが、実態は
+    **その市区に相場が無い**だけ。ここで吸収し、件数は呼び出し側が報告する
+    （握りつぶすと構造変更に気づけなくなるので、`build` が割合で見張る）。
+    """
+    from house_search.market.soba import SobaParseError, parse_soba
+
+    try:
+        return parse_soba(text)
+    except SobaParseError:
+        return []
 
 
 def month_dir(period: str) -> Path:
@@ -225,15 +248,15 @@ def fetch_cities(slugs: dict[str, dict[str, str]], ua: str, base: Path) -> None:
 
 def fetch_apartments(slugs: dict[str, dict[str, str]], ua: str, base: Path) -> None:
     """マンション相場に MUST の間取りが欠けている市区だけ ``ts=2`` を取る。"""
-    from house_search.market.soba import parse_soba
-
     want = _must_layouts()
     by_jis = {jis: (v["name"], v["slug"]) for jis, v in slugs.items()}
     targets: list[str] = []
     for path in sorted(base.glob("*.html")):
         if path.stem.endswith(APART_SUFFIX):
             continue
-        have = {r.layout for r in parse_soba(path.read_text(encoding="utf-8", errors="replace"))}
+        have = {
+            r.layout for r in safe_parse_soba(path.read_text(encoding="utf-8", errors="replace"))
+        }
         if want - have:
             targets.append(path.stem)
 
@@ -256,7 +279,7 @@ def fetch_apartments(slugs: dict[str, dict[str, str]], ua: str, base: Path) -> N
 
 
 def build(base: Path, period: str, acquired_on: str) -> int:
-    from house_search.market.soba import STAT_BASIS_APART, merge_rates, parse_soba
+    from house_search.market.soba import STAT_BASIS_APART, merge_rates
 
     if not base.exists():
         raise SystemExit(f"取得結果がありません: {base.relative_to(REPO)}（--fetch を先に実行）")
@@ -264,7 +287,7 @@ def build(base: Path, period: str, acquired_on: str) -> int:
     by_jis = {jis: v["name"] for jis, v in slugs.items()}
 
     def _rates(path: Path) -> list:
-        return parse_soba(path.read_text(encoding="utf-8", errors="replace"))
+        return safe_parse_soba(path.read_text(encoding="utf-8", errors="replace"))
 
     rows: list[dict[str, object]] = []
     missing: list[str] = []
@@ -299,9 +322,17 @@ def build(base: Path, period: str, acquired_on: str) -> int:
     # 「相場が無いまま採点が続く」状態になり、例外にならない
     cities = {r["city_jis"] for r in rows}
     if missing:
-        print(f"⚠ 相場を取れなかった市区: {len(missing)}件 {sorted(missing)[:10]}")
+        print(f"⚠ 相場表が無かった市区: {len(missing)}件 {sorted(missing)[:10]}")
     if not rows:
         raise SystemExit("相場が1件も作れませんでした（ページ構造の変更を疑う）")
+    # ⚠ 相場表が無い市区は正常にありうる（掲載の少ない郡部。実測 8/1,277＝0.6%）が、
+    # **ページ構造が変わると全件がこれになる**。割合で見張って区別する
+    ratio = len(missing) / (len(missing) + len(cities))
+    if ratio > MISSING_LIMIT:
+        raise SystemExit(
+            f"相場表が無いページが多すぎます（{len(missing)}/{len(missing) + len(cities)}"
+            f"＝{ratio:.1%} > {MISSING_LIMIT:.0%}）。ページ構造の変更を疑う"
+        )
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
     with OUT.open("w", encoding="utf-8", newline="") as fh:
