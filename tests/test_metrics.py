@@ -56,6 +56,7 @@ def test_metrics_forの並びは決定的() -> None:
         "flood_rank_avg",
         "flood_area_ratio",
         "landslide_area_ratio",
+        "liquefaction_rank_avg",
         "market_rate_ratio",
     ]
 

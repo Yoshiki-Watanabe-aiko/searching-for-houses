@@ -106,6 +106,13 @@ want:
     # ハザード（→ ADR 0021）。戸建ては崖地の土砂災害が効くので土砂も 5→10 へ
     - { metric: flood_rank_avg,       weight: 25, best: 0,        worst: 4 }
     - { metric: landslide_area_ratio, weight: 10, best: 0,        worst: 0.1 }
+    # 液状化（→ ADR 0023・課題#59）。⚠ **値は「危険ランク」で原典のレベルとは向きが逆**
+    #   （生成側で rank = 6 − level と反転済み）。⚠ **best は 0 ではなく 1**
+    #   ＝丁目の全面が「液状化しにくい」。0 は出ない値（レベル6＝評価対象外は除外）。
+    # ⚠ weight が洪水より小さいのは、洪水との順位相関が 0.49〜0.57 で
+    #   半分ほど重なるため（土砂と同格の 10 → 課題#59 決定5）。
+    # ⚠ 賃貸2帯には入れない（帯が低地に集中し相関 0.70〜0.77 でゲート不通過）。
+    - { metric: liquefaction_rank_avg, weight: 10, best: 1, worst: 4.5 }
 
 ranking:
   top_n: 15
