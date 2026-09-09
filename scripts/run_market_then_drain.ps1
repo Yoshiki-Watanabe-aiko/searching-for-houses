@@ -106,8 +106,18 @@ if (-not $SkipDrain) {
     Write-Step "---- 2. 売買の掃き出し ----"
     # ⚠ -Worker を付けて同期実行する（付けないとランチャーが切り離して即座に戻り、
     #   相場の直後に起動して取得ロックの取り合いになる）
-    $drainArgs = @("-Worker", "-Drain", "-DetailLimit", $DetailLimit)
-    if ($Family.Count -gt 0) { $drainArgs += @("-Family", ($Family -join ",")) }
+    # ⚠⚠ **ハッシュテーブルで渡す。配列にしてはいけない。**
+    #   PowerShell の配列 splatting（@配列）は中身を**すべて位置引数**として展開するため、
+    #   "-Worker" が [int]$DetailLimit の値に食われて型変換で落ちる。
+    #   2026-09-09 に実際に起きた（→ 課題#4）:
+    #     「パラメーター 'DetailLimit' の引数変換を処理できません。
+    #       値 "-Worker" を型 "System.Int32" に変換できません」
+    #   ⚠ ランチャーは子の失敗を検知しないので、**呼び出し側は終了コード0で正常終了する**。
+    #     ログを読まないと気づけない。
+    $drainArgs = @{ Worker = $true; Drain = $true; DetailLimit = $DetailLimit }
+    # ⚠ Family は文字列で渡す（run_initial_scan.ps1 が -File 経由の "A,B" を
+    #   カンマで割る実装に合わせてある）
+    if ($Family.Count -gt 0) { $drainArgs["Family"] = ($Family -join ",") }
     & (Join-Path $PSScriptRoot "run_initial_scan.ps1") @drainArgs
     if ($LASTEXITCODE -ne 0) {
         Write-Step "⚠ 掃き出しが失敗しました（終了コード $LASTEXITCODE）"

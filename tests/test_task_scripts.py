@@ -100,7 +100,18 @@ def test_夜間バッチは掃き出しを同期実行で呼ぶ() -> None:
     """
     text = _read(NIGHTLY)
 
-    assert '$drainArgs = @("-Worker"' in text, "掃き出しの呼び出しに -Worker が無い"
+    # ⚠⚠ **配列 splatting（@("-Worker", ...)）にしてはいけない。**
+    # PowerShell は配列を**すべて位置引数**として展開するので、"-Worker" が
+    # [int]$DetailLimit の値に食われて型変換で落ちる（2026-09-09 に実際に起きた）。
+    # ⚠ 旧テストは `$drainArgs = @("-Worker"` という文字列を検査しており、
+    #   **壊れた実装をむしろ固定していた**。
+    assert '$drainArgs = @{' in text, (
+        "掃き出しの引数はハッシュテーブルで渡す（配列だと -Worker が位置引数に食われる）"
+    )
+    assert '@("-Worker"' not in text, (
+        "配列 splatting に戻っている（-Worker が -DetailLimit の値として渡ってしまう）"
+    )
+    assert "Worker = $true" in text, "掃き出しの呼び出しに -Worker が無い"
 
 
 def test_売買相場は毎月チェックする(register_text: str) -> None:
