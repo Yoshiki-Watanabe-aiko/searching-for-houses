@@ -34,6 +34,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "src"))
 
 from house_search.config.settings import Settings  # noqa: E402
+from house_search.console import force_utf8_output  # noqa: E402
 
 BASE_URL = "https://www.reinfolib.mlit.go.jp/ex-api/external"
 CACHE_DIR = REPO_ROOT / "data" / "probe" / "reinfolib"
@@ -170,6 +171,9 @@ def unit_prices(rows: list[dict[str, Any]], type_name: str, area_key: str) -> li
 
 
 def main() -> int:
+    # ⚠ 先に UTF-8 へ付け替える。cp932 のままだと ⚠ を含む報告の print が
+    # UnicodeEncodeError になり、**調べた結果ごと失われる**（→ 課題#49）
+    force_utf8_output()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--from-cache", action="store_true", help="保存済み応答から解析だけ行う")
     parser.add_argument("--limit", type=int, default=12, help="リクエストの上限（既定12）")

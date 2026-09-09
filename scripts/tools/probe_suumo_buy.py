@@ -41,6 +41,7 @@ from lxml import html as lxml_html
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from house_search.config.settings import Settings  # noqa: E402
+from house_search.console import force_utf8_output  # noqa: E402
 from house_search.scrape.fetch import merge_robots_groups  # noqa: E402
 
 BASE_URL = "https://suumo.jp"
@@ -279,6 +280,9 @@ def stage_listing(cache_dir: Path, label: str) -> None:
 
 
 def main() -> int:
+    # ⚠ 先に UTF-8 へ付け替える。cp932 のままだと ⚠ を含む報告の print が
+    # UnicodeEncodeError になり、**調べた結果ごと失われる**（→ 課題#49）
+    force_utf8_output()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--stage",

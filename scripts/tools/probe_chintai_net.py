@@ -39,6 +39,7 @@ import lxml.html
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from house_search.config.settings import Settings  # noqa: E402
+from house_search.console import force_utf8_output  # noqa: E402
 
 BASE = "https://www.chintai.net"
 CACHE = Path("data/probe/chintai_net")
@@ -290,6 +291,9 @@ def stage_overlap() -> None:
 
 
 def main() -> int:
+    # ⚠ 先に UTF-8 へ付け替える。cp932 のままだと ⚠ を含む報告の print が
+    # UnicodeEncodeError になり、**調べた結果ごと失われる**（→ 課題#49）
+    force_utf8_output()
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--stage",

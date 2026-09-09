@@ -43,6 +43,10 @@ from dotenv import dotenv_values
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RAW_DIR = PROJECT_ROOT / "data" / "odpt" / "raw"
 
+sys.path.insert(0, str(PROJECT_ROOT / "src"))
+
+from house_search.console import force_utf8_output  # noqa: E402
+
 # ⚠ ホストは2つある可能性がある。旧「東京公共交通オープンデータチャレンジ」の
 # api-tokyochallenge.odpt.org から api.odpt.org へ移行した経緯があり、
 # 事業者によって片方にしか無いことがある。既定で両方試して、どちらが返すかを記録する。
@@ -204,6 +208,9 @@ def inspect_train_timetable(records: list[dict[str, Any]]) -> None:
 
 
 def main() -> int:
+    # ⚠ 先に UTF-8 へ付け替える。cp932 のままだと ⚠ を含む報告の print が
+    # UnicodeEncodeError になり、**調べた結果ごと失われる**（→ 課題#49）
+    force_utf8_output()
     parser = argparse.ArgumentParser(description="ODPT の実レスポンスを調べる（Phase 5D 第0歩）")
     parser.add_argument("--operator", default="Toei", help="事業者（例: Toei / TokyoMetro / JR-East）")
     parser.add_argument("--railway", default=None, help="列車時刻表を絞る路線ID（既定は先頭の路線）")
