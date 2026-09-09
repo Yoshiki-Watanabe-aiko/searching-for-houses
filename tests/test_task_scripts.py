@@ -78,6 +78,31 @@ def test_委譲先のスクリプトが実在する(runner_text: str) -> None:
         assert (SCRIPTS / name).exists(), f"委譲先が見つかりません: {name}"
 
 
+NIGHTLY = SCRIPTS / "run_market_then_drain.ps1"
+
+
+def test_夜間バッチの委譲先が実在する() -> None:
+    """相場の更新 → 売買の掃き出しを順に呼ぶ。⚠ 名前を間違えると実行時に落ちる。"""
+    text = _read(NIGHTLY)
+    names = re.findall(r'Join-Path \$PSScriptRoot "([^"]+\.ps1)"', text)
+
+    assert names, "委譲先が読めません（呼び出しの書き方が変わった？）"
+    for name in names:
+        assert (SCRIPTS / name).exists(), f"委譲先が見つかりません: {name}"
+
+
+def test_夜間バッチは掃き出しを同期実行で呼ぶ() -> None:
+    """⚠⚠ `-Worker` を付けないと `run_initial_scan.ps1` はランチャーとして働き、
+
+    Start-Process で切り離して**即座に戻る**。すると相場の直後に掃き出しが
+    起動して取得ロックの取り合いになり、片方が「他の取得処理が実行中」で
+    何もせずに終わる（⚠ 終了コードは 0 なので気づけない）。
+    """
+    text = _read(NIGHTLY)
+
+    assert '$drainArgs = @("-Worker"' in text, "掃き出しの呼び出しに -Worker が無い"
+
+
 def test_売買相場は毎月チェックする(register_text: str) -> None:
     """課題#49 Step 8 → 2026-09-09 に四半期から毎月へ（ユーザー判断）。
 
