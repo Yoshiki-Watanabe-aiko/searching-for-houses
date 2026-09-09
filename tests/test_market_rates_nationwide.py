@@ -173,3 +173,22 @@ class Test古い月の削除:
 
         assert builder.prune_old_months("2026-10", keep=2) == []
         assert [p.name for p in tmp_path.iterdir()] == ["2026-10"]
+
+
+class Test相場表が無いページ:
+    """⚠⚠ 全国化して初めて出た（実測 2026-09-09・1,277市区中8件）。
+
+    掲載の少ない郡部（積丹郡・土佐郡・土佐清水市など）は**タイトルは正常なのに
+    相場表が無い**。4都県では全市区に表があったため表面化せず、`parse_soba` の
+    例外で `--fetch` が丸ごと落ちていた（市区ページは1,277件とも取得済みだった）。
+    """
+
+    def test_例外にせず空リストにする(self) -> None:
+        assert builder.safe_parse_soba("<html><body>相場の情報はありません</body></html>") == []
+
+    def test_実測の欠落率は閾値を下回る(self) -> None:
+        """⚠ 閾値を下げすぎると正常な郡部で止まり、上げすぎると構造変更に気づけない。"""
+        assert builder.MISSING_LIMIT > 8 / 1277
+
+    def test_全件が欠落する構造変更は閾値で捕まる(self) -> None:
+        assert builder.MISSING_LIMIT < 1.0

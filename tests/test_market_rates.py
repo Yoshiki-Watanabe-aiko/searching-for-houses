@@ -61,22 +61,31 @@ def test_空のCSVを黙って受け入れない(tmp_path: Path) -> None:
 
 
 def test_同梱の相場CSVが読める() -> None:
-    """実データ（82市区・1,038行）が検証を通ること。"""
+    """実データ（全国1,269市区・14,195行）が検証を通ること。
+
+    ⚠⚠ **2026-09-09 に全国化した**（82市区 → 1,269市区）。掲載のある市区だけが
+    相場ページを持ち、**毎月の取り直しで増減する**ので固定値では固められない。
+    範囲で見張る（構造が壊れれば桁で外れる → 課題#49）。
+    """
     path = Path(__file__).resolve().parents[1] / "data" / "market_rates" / "rent_rates.csv"
     rows = load_rate_rows(path)
-    assert len({r.city_jis for r in rows}) == 82
+    cities = len({r.city_jis for r in rows})
+    assert 1000 <= cities <= 1400, f"全国の市区数が {cities} に変わった"
     assert {r.source for r in rows} == {"suumo_soba"}
     # ⚠ 2DK は DB で最多の間取り（9,387件）だが、相場ページの既定（賃貸マンション）
-    # では 56市区にしか載らない。アパート相場（ts=2）で補完して 71市区にした。
-    # 件数が急に変わったら気づけるよう固定する（→ 課題#49）
+    # では載らない市区が多い。アパート相場（ts=2）で補完する（→ 課題#49）。
+    # ⚠⚠ 現在の CSV は**アパート補完が4都県ぶんしか取れていない**（全国の補完は
+    # 未取得）。全国ぶんを取ると 692 から増えるので、そのとき下限を上げ直す
     cities_with_2dk = len({r.city_jis for r in rows if r.segment == "2DK"})
-    assert cities_with_2dk == 71, f"2DK の相場がある市区が {cities_with_2dk} に変わった"
+    assert cities_with_2dk >= 600, f"2DK の相場がある市区が {cities_with_2dk} に減った"
     # ⚠ 補完した行がどの建物種別の相場かを残していること。混ざったまま
     # 記録が無いと「どちらと比べた割安さか」を後から検証できない
-    assert Counter(r.stat_basis for r in rows) == {
-        "rent_listed_mansion": 991,
-        "rent_listed_apart": 47,
-    }
+    basis = Counter(r.stat_basis for r in rows)
+    assert set(basis) == {"rent_listed_mansion", "rent_listed_apart"}
+    assert basis["rent_listed_mansion"] > basis["rent_listed_apart"]
+    # ⚠ 補完は「マンション相場に MUST の間取りが無いセル」だけなので少数にとどまる。
+    # ⚠⚠ 全国の補完はまだ取れていない（4都県ぶんの47行のみ）。取れたら数百行になる
+    assert basis["rent_listed_apart"] >= 40
 
 
 def test_想定外のstat_basisを弾く(tmp_path: Path) -> None:
