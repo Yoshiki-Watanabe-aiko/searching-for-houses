@@ -104,6 +104,9 @@ class ListingView:
     flood_area_ratio: float | None = None
     """丁目の面積のうち浸水域が占める割合（0〜1）。"""
     landslide_area_ratio: float | None = None
+    # ⚠ 危険ランク（1〜5）。原典のレベルとは向きが逆で、生成側で反転済み
+    #    （→ ADR 0023 決定1）。⚠ None は未解決で、分母から外れる
+    liquefaction_rank_avg: float | None = None
     """丁目の面積のうち土砂災害警戒区域（警戒＋特別警戒）が占める割合（0〜1）。"""
     landslide_special_ratio: float | None = None
     """同 特別警戒区域（レッドゾーン）だけの割合（0〜1）。MUST の足切りに使う。"""

@@ -45,6 +45,8 @@ CACHE_DIR = REPO_ROOT / "data" / "probe" / "liquefaction"
 # ⚠ レート制限は非公開。probe_reinfolib.py と同じく10秒空ける。
 #    429/403 を受けたら即停止しリトライしない（→ 課題#17）。
 INTERVAL_SEC = 10.0
+# 対象4都県（東京・埼玉・千葉・神奈川）のおおよその外接矩形（西, 南, 東, 北）
+PREF_BBOX = (138.85, 34.85, 141.00, 36.35)
 
 
 def deg2tile(lat: float, lon: float, zoom: int) -> tuple[int, int]:
@@ -384,6 +386,20 @@ def correlate() -> int:
     return 0
 
 
+def full_tiles(zoom: int) -> list[tuple[int, int, int]]:
+    """4都県の外接矩形を穴なく覆うタイルを返す。
+
+    ⚠ 恒等式（対象キーすべてに全 hazard_type × aggregation の行がある → 課題#46）を
+    満たすには掲載のある丁目だけでは足りず、4都県の丁目すべてに値が要る。
+    ⚠ 海上など features=0 のタイルも「取りに行った」記録として保存する
+    （保存しないと次回また取りに行く）。
+    """
+    west, south, east, north = PREF_BBOX
+    x0, y0 = deg2tile(north, west, zoom)
+    x1, y1 = deg2tile(south, east, zoom)
+    return [(zoom, x, y) for x in range(x0, x1 + 1) for y in range(y0, y1 + 1)]
+
+
 def main() -> int:
     force_utf8_output()
     parser = argparse.ArgumentParser(description="液状化（XKT025）の着手前実測")
@@ -395,6 +411,11 @@ def main() -> int:
         "--cover",
         action="store_true",
         help="掲載のある丁目を覆う z11 タイルを取る（相関測定のサンプル）",
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="4都県を穴なく覆う（本採用の生成に要る168枚）",
     )
     parser.add_argument(
         "--correlate",
@@ -424,6 +445,10 @@ def main() -> int:
         tiles = covering_tiles(11)
         print(f"掲載のある丁目を覆う z11 タイル: {len(tiles)}枚")
         targets = [(f"cover_{i:03d}", z, x, y) for i, (z, x, y) in enumerate(tiles, 1)]
+    elif args.full:
+        tiles = full_tiles(11)
+        print(f"4都県を穴なく覆う z11 タイル: {len(tiles)}枚")
+        targets = [(f"full_{i:03d}", z, x, y) for i, (z, x, y) in enumerate(tiles, 1)]
 
     client: httpx.Client | None = None
     if args.fetch:
@@ -457,7 +482,7 @@ def main() -> int:
     # 4都県を覆うタイル数の見積もり。⚠ 実測した z ごとに出す
     print("\n=== 4都県を覆うタイル数（見積もり） ===")
     # 4都県のおおよその外接矩形
-    west, south, east, north = 138.85, 34.85, 141.00, 36.35
+    west, south, east, north = PREF_BBOX
     for zoom in (11, 12, 13, 14, 15):
         x0, y0 = deg2tile(north, west, zoom)
         x1, y1 = deg2tile(south, east, zoom)

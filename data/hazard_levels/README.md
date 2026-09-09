@@ -9,6 +9,9 @@
   <https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-A31-v4_0.html>
 - 「国土数値情報（土砂災害警戒区域データ A33）」（国土交通省）
   <https://nlftp.mlit.go.jp/ksj/gml/datalist/KsjTmplt-A33-v1_4.html>
+- 「国土交通省都市局（地形区分に基づく液状化の発生傾向図）」
+  不動産情報ライブラリ API の XKT025 経由
+  <https://www.reinfolib.mlit.go.jp/help/apiManual/xkt025/>
 - 「令和2年国勢調査 町丁・字等別境界データ」（総務省統計局・e-Stat）
   <https://www.e-stat.go.jp/gis>
 
@@ -21,11 +24,17 @@
 ## 作り方
 
 ```powershell
-uv run python scripts/tools/fetch_hazard_sources.py --fetch   # 原典を取得（約1.1GB・Git管理外）
-uv run python scripts/tools/build_hazard_levels.py --datasets a33 a31
+uv run python scripts/tools/fetch_hazard_sources.py --fetch      # 洪水・土砂の原典（約1.1GB・Git管理外）
+uv run python scripts/tools/fetch_liquefaction_tiles.py --fetch  # 液状化のタイル（119枚・約20分）
+uv run python scripts/tools/build_hazard_levels.py               # 既定で a33 a31 xkt025
 uv run house-search sync-hazards
 uv run house-search rescore
 ```
+
+⚠ **液状化のタイルは API キー（`MLIT_REINFOLIB_API_KEY`）が要る。**
+⚠ **タイル集合は丁目境界の bbox から導く**（矩形で決め打ちしない）。
+4都県の外接矩形には**島嶼部（小笠原・大島・八丈島など404丁目）が入らない**ので、
+矩形で取ると恒等式を満たせないまま「取れたつもり」になる。
 
 - 原典は `data/hazard_sources/`（**Git 管理外**。サイズが理由で、再配布が
   禁じられているからではない）。版は同ディレクトリの `manifest.json` に

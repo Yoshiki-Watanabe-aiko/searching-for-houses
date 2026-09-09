@@ -115,8 +115,51 @@ def test_災害種別が欠けたら例外にする(tmp_path: Path) -> None:
             _row("東京都北区志茂4丁目", "landslide", area_ratio=0.4),
         ],
     )
-    with pytest.raises(HazardLevelError, match="恒等式"):
+    # ⚠ 文言は「その種別に行の無いキーが N 件」（種別ごとの検査になったため → 課題#59）
+    with pytest.raises(HazardLevelError, match="行の無いキー"):
         load_hazard_rows(data_dir)
+
+
+def test_液状化だけは欠けてよい(tmp_path: Path) -> None:
+    """⚠ 原典が評価していない丁目（湖沼・河道だけ）に値を作るのは捏造（→ ADR 0023 決定4）。
+
+    洪水・土砂が全キーに揃っていれば、液状化が一部で欠けても読める。
+    ⚠ 逆に洪水が欠けたら例外（上のテスト）。この非対称が要点。
+    """
+    keys = [f"東京都北区浮間{i}丁目" for i in range(1, 201)]
+    rows = []
+    for index, key in enumerate(keys):
+        rows.append(_row(key, "landslide"))
+        rows.append(_row(key, "landslide_special"))
+        rows.append(_row(key, "flood"))
+        # 200件中1件（0.5%）だけ液状化を欠けさせる
+        if index > 0:
+            rows.append(_row(key, "liquefaction", rank_avg=1.0, rank_max=1.0))
+    loaded = load_hazard_rows(_write(tmp_path, rows))
+    assert dict(loaded.missing_by_type) == {"liquefaction": 1}
+
+
+def test_液状化の欠落が多すぎたら例外にする(tmp_path: Path) -> None:
+    """⚠ 島嶼タイルの取り忘れ（1.9%）と原典の未評価（0.1%未満）を分ける線。"""
+    keys = [f"東京都北区浮間{i}丁目" for i in range(1, 101)]
+    rows = []
+    for index, key in enumerate(keys):
+        rows.append(_row(key, "flood"))
+        # 100件中2件（2%）を欠けさせる＝上限 0.5% 超
+        if index > 1:
+            rows.append(_row(key, "liquefaction", rank_avg=1.0, rank_max=1.0))
+    with pytest.raises(HazardLevelError, match="欠落が多すぎます"):
+        load_hazard_rows(_write(tmp_path, rows))
+
+
+def test_液状化のランクは1未満を弾く(tmp_path: Path) -> None:
+    """⚠⚠ 0 は「評価対象外（原典のレベル6）が 6−6=0 として漏れている」印。
+
+    そのまま入れると水域の多い丁目が満点を取る（→ ADR 0023 決定2）。
+    """
+    rows = [_row("東京都北区浮間5丁目", "liquefaction", rank_avg=0.0, rank_max=0.0)]
+    with pytest.raises(HazardLevelError, match="rank_avg が域外"):
+        load_hazard_rows(_write(tmp_path, rows))
 
 
 def test_未知の災害種別を弾く(tmp_path: Path) -> None:

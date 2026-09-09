@@ -137,11 +137,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="data/address_master/*.csv を m_address_points へ同期する（ネットワーク不要）",
     )
 
-    sub.add_parser(
+    p_hazards = sub.add_parser(
         "sync-hazards",
         help=(
             "data/hazard_levels/hazard_levels.csv を m_hazard_levels へ同期する（ネットワーク不要）"
         ),
+    )
+    p_hazards.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="災害種別が揃っていないCSVでも同期する（⚠ 全置換なので欠けた種別は消える）",
     )
 
     p_market = sub.add_parser(
@@ -744,10 +749,31 @@ def _cmd_sync_site_params(args: argparse.Namespace) -> int:
 def _cmd_sync_hazards(args: argparse.Namespace) -> int:
     from house_search.config.settings import load_settings
     from house_search.db.session import get_engine
-    from house_search.hazard.levels import load_hazard_rows, sync_hazard_levels
+    from house_search.hazard.levels import (
+        HAZARD_TYPES,
+        load_hazard_rows,
+        sync_hazard_levels,
+    )
 
     settings = load_settings()
     loaded = load_hazard_rows(settings.data_dir)
+
+    # ⚠⚠ **CSVに全種別が揃っているかはここで見る。** `sync-hazards` は全置換なので、
+    #    生成を `--datasets a33` だけで回した CSV を流すと**洪水が丸ごと消える**
+    #    （行が無い＝未解決になるので採点から外れ、例外にならない）。
+    #    ⚠ 読み込み側（load_hazard_rows）ではなく CLI に置くのは、テストが
+    #    一部の種別だけのCSVを書くため。
+    absent_types = sorted(HAZARD_TYPES - set(loaded.hazard_types))
+    if absent_types and not args.allow_partial:
+        print(
+            f"✗ CSVに無い災害種別があります: {absent_types}\n"
+            "  生成を全データセットで回してください"
+            "（uv run python scripts/tools/build_hazard_levels.py）。\n"
+            "  一部だけを承知で入れ替えるなら --allow-partial を付けてください。",
+            file=sys.stderr,
+        )
+        return 1
+
     engine = get_engine()
     applied, deleted = sync_hazard_levels(engine, loaded.rows)
     print(
@@ -756,6 +782,15 @@ def _cmd_sync_hazards(args: argparse.Namespace) -> int:
         f"・対象キー {loaded.key_count:,}・入れ替え前 {deleted:,}件）"
     )
     print(f"  災害種別: {' / '.join(loaded.hazard_types)}")
+    # ⚠ 部分カバーを許した種別（液状化）の欠落は黙って飲み込まず件数を出す
+    #    （→ ADR 0023 決定4。原典が評価していない丁目は値を作らない）
+    for hazard_type, absent in loaded.missing_by_type:
+        print(
+            f"  ⚠ {hazard_type}: 行が無いキー {absent:,} 件"
+            f"（原典が評価していない丁目。値は作らない）"
+        )
+    if absent_types:
+        print(f"  ⚠ CSVに無い災害種別: {absent_types}（--allow-partial 指定）")
     # ⚠ 全置換なのでデータが静かに痩せうる（生成スクリプトが一部の
     #    データセットしか読まなかった場合など、エラーにならないまま行が減る）。
     if deleted and applied < deleted * 0.8:
@@ -1434,12 +1469,22 @@ def _cmd_commute_stats(args: argparse.Namespace) -> int:
 # WANT の numeric に載せる候補と、MUST の足切りに使う値。
 # ⚠ 主力は flood_rank_avg。rank_max は外れ値に引っ張られる（水路際のランク6が
 # ごく一部でも丁目全体が最悪扱いになる → 課題#46 の実測）ので MUST 専用にする。
-_HAZARD_WANT_METRICS = ("flood_rank_avg", "flood_area_ratio", "landslide_area_ratio")
+_HAZARD_WANT_METRICS = (
+    "flood_rank_avg",
+    "flood_area_ratio",
+    "landslide_area_ratio",
+    "liquefaction_rank_avg",
+)
 _HAZARD_WORST_CANDIDATES: dict[str, tuple[float, ...]] = {
     "flood_rank_avg": (1.0, 2.0, 3.0, 4.0),
     "flood_area_ratio": (0.25, 0.5, 0.75, 1.0),
     "landslide_area_ratio": (0.05, 0.1, 0.25, 0.5),
+    "liquefaction_rank_avg": (3.0, 3.5, 4.0, 4.5, 5.0),
 }
+# ⚠⚠ **best は metric ごとに違う。** 洪水・土砂は 0（区域外＝満点）だが、
+# 液状化は **1**（丁目の全面が「液状化しにくい」）で 0 は出ない値
+# （原典のレベル6＝評価対象外は集計から除外してある → ADR 0023 決定2・決定7）。
+_HAZARD_BEST: dict[str, float] = {"liquefaction_rank_avg": 1.0}
 _HAZARD_MUST_CANDIDATES: tuple[tuple[str, str, tuple[float, ...]], ...] = (
     ("flood_rank_max", "flood_rank_max", (1.0, 2.0, 3.0, 4.0, 5.0)),
     ("landslide_special_ratio_max", "landslide_special_ratio", (0.0, 0.05, 0.1, 0.25)),
@@ -1601,19 +1646,41 @@ def _cmd_hazard_stats(args: argparse.Namespace) -> int:
             if not known:
                 print("    値のある掲載がありません")
                 continue
-            zero = sum(1 for value in known if value == 0.0)
+            best = _HAZARD_BEST.get(metric, 0.0)
+            zero = sum(1 for value in known if value == best)
+            label = "区域外(0.0)" if best == 0.0 else f"最も安全({best:g})"
             print(
-                f"    値あり {len(known)}件 / 区域外(0.0) {zero}件"
+                f"    値あり {len(known)}件 / {label} {zero}件"
                 f"（{zero / len(known) * 100:.1f}%）"
             )
             marks = [("25%", 0.25), ("中央", 0.5), ("75%", 0.75), ("90%", 0.9)]
             cells = "  ".join(f"{label} {_percentile(known, r):.3g}" for label, r in marks)
             print(f"    分布: {cells}  最大 {known[-1]:.3g}")
             # ⚠ 0点が母集団の大半に張り付くと weight がまるごと死ぬ（→ 課題#31）。
-            print("    worst 候補ごとの0点張り付き率（best=0 固定）:")
+            print(f"    worst 候補ごとの0点張り付き率（best={best:g} 固定）:")
             for worst in _HAZARD_WORST_CANDIDATES[metric]:
                 stuck = sum(1 for value in known if value >= worst)
                 print(f"      worst={worst:<5g}: {stuck / len(known) * 100:>5.1f}%")
+
+        # ⚠⚠ **洪水との重なりを実値で確かめる**（→ ADR 0023 決定6）。
+        #    ゲート実測（r=-0.560）は丁目の代表点で引いた値だったので、
+        #    面積加重にした本番の値でも |r| < 0.6 かを見る。
+        pairs = [
+            (flood, liq)
+            for v in passing
+            if (flood := v.metric_value("flood_rank_avg")) is not None
+            and (liq := v.metric_value("liquefaction_rank_avg")) is not None
+        ]
+        if len(pairs) >= 3:
+            from house_search.market.stats import spearman
+
+            corr = spearman(pairs)
+            if corr is not None:
+                verdict = "通過" if abs(corr) < _MARKET_MAX_RANK_CORR else "⚠ 不通過"
+                print(
+                    f"  [液状化 × 洪水] 順位相関 r={corr:+.3f}（n={len(pairs)}）"
+                    f" ゲート |r| < {_MARKET_MAX_RANK_CORR}: {verdict}"
+                )
 
         print("  MUST 上限候補ごとの通過件数（値のある掲載が分母）:")
         for must_name, field, limits in _HAZARD_MUST_CANDIDATES:

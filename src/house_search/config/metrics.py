@@ -186,6 +186,19 @@ METRICS: tuple[MetricSpec, ...] = (
         # 洪水（該当72.9%）とは分布が正反対なので、同じ best/worst を流用しない。
         source_columns=("landslide_area_ratio",),
     ),
+    MetricSpec(
+        name="liquefaction_rank_avg",
+        label="液状化リスクの低さ（危険ランクの面積加重平均）",
+        direction=Direction.LOWER_IS_BETTER,
+        unit="ランク",
+        property_types=ALL_PROPERTY_TYPES,
+        # ⚠⚠ **値は「危険ランク」で、原典のレベルとは向きが逆**（→ ADR 0023 決定1）。
+        # 生成側で rank = 6 − level と反転してあるので、ここでは他のハザードと同じく
+        # LOWER_IS_BETTER でよい。⚠ best は 0 ではなく **1**（丁目の全面が
+        # 「液状化しにくい」＝最も安全）。0 は出ない値なので、来たら読み込みが弾く。
+        # ⚠ 原典のレベル6（評価対象外＝湖沼・河道）は集計から除外済み（→ 決定2）。
+        source_columns=("liquefaction_rank_avg",),
+    ),
     # --- 相場との比較（→ 課題#49） ---------------------------------------
     # ⚠ t_listings の物理列ではない。市区の相場（m_market_rates）を引いた導出値で、
     # 賃貸は「月額 ÷ 間取りごとの家賃相場」、売買は「㎡単価 ÷ 市区の㎡単価相場」。

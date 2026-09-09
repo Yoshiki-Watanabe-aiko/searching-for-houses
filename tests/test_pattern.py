@@ -340,6 +340,42 @@ def test_売買パターンは通勤を下げハザードを上げる(filename: 
     # ⚠ 売買は地域を限定しない判断と整合させ、通勤の MUST は置かない（→ 課題#4 手順8）
     assert pattern.must.commute_minutes_max is None, f"{filename}: 通勤の MUST は置かない"
 
+    # ⚠⚠ **液状化は売買4本にだけ配点する**（→ 課題#59・ADR 0023）。
+    # 賃貸2帯は帯が低地に集中していて洪水との順位相関が 0.70〜0.77 とゲート不通過
+    # （ユーザー判断 2026-09-10）。賃貸に混ざっていないことは別のテストで固定する。
+    assert weights["liquefaction_rank_avg"] == 10, f"{filename}: 液状化は土砂と同格の 10"
+    # ⚠ **洪水より小さいこと。** 洪水との相関が 0.49〜0.57 で半分ほど重なるので、
+    #    同格以上にすると「低地であること」への重みが二重に掛かる
+    assert weights["liquefaction_rank_avg"] < weights["flood_rank_avg"], (
+        f"{filename}: 液状化は洪水より小さくする（重なりがあるため）"
+    )
+    liquefaction = next(
+        item for item in pattern.want.numeric if item.metric == "liquefaction_rank_avg"
+    )
+    # ⚠⚠ **best は 0 ではなく 1**（丁目の全面が「液状化しにくい」）。
+    #    0 は出ない値で、来たら「評価対象外（原典のレベル6）が漏れている」（→ ADR 0023 決定2）。
+    assert liquefaction.best == 1, f"{filename}: 液状化の best は 1（0 は出ない値）"
+    # ⚠ **向き**。best < worst でなければ安全な丘陵が最下位になる
+    assert liquefaction.best < liquefaction.worst, f"{filename}: 液状化の向き"
+    assert liquefaction.worst == 4.5, f"{filename}: 0点張り付き率から 4.5（→ 課題#59）"
+
+
+@pytest.mark.parametrize("filename", ("chintai_23ku.yaml", "chintai_suburb60.yaml"))
+def test_賃貸には液状化を配点しない(filename: str) -> None:
+    """⚠ 賃貸2帯は洪水との相関が 0.70〜0.77 でゲート不通過（→ 課題#59）。
+
+    帯が低地（23区・近郊60分圏）に集中しており、液状化は洪水の言い換えに近い。
+    足すと分母 Σw だけ増えて順位が動かない（→ 課題#15・#31）。
+    """
+    pattern = load_pattern_file(REPO_ROOT / "configs" / filename)
+    metrics = {item.metric for item in pattern.want.numeric}
+    assert "liquefaction_rank_avg" not in metrics, (
+        f"{filename}: 賃貸に液状化を配点しない（ゲート不通過 → 課題#59）"
+    )
+    # ⚠ 洪水・土砂は従来どおり効いていること（液状化の追加で崩していない）
+    assert "flood_rank_avg" in metrics
+    assert "landslide_area_ratio" in metrics
+
 
 @pytest.mark.parametrize("filename", ("chuko_kodate.yaml", "shinchiku_kodate.yaml"))
 def test_戸建てパターンの設備は50点(filename: str) -> None:

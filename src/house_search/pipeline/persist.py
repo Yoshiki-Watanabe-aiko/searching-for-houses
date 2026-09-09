@@ -792,7 +792,7 @@ _PROPERTY_COLUMNS = """
           AND sc.status = 'ok'
     )) AS commute_minutes,
     hz.flood_rank_avg, hz.flood_rank_max, hz.flood_area_ratio,
-    hz.landslide_area_ratio, hz.landslide_special_ratio,
+    hz.landslide_area_ratio, hz.landslide_special_ratio, hz.liquefaction_rank_avg,
     (
         -- 相場との比較（→ 課題#49）。同じ市区の相場と比べる。
         -- 賃貸は「月額 ÷ 間取りごとの家賃相場」、売買は「㎡単価 ÷ 市区の㎡単価相場」。
@@ -906,7 +906,10 @@ _HAZARD_LATERAL = """
             ) AS landslide_area_ratio,
             max(h.value) FILTER (
                 WHERE h.hazard_type = 'landslide_special' AND h.aggregation = 'area_ratio'
-            ) AS landslide_special_ratio
+            ) AS landslide_special_ratio,
+            max(h.value) FILTER (
+                WHERE h.hazard_type = 'liquefaction' AND h.aggregation = 'rank_avg'
+            ) AS liquefaction_rank_avg
         FROM m_hazard_levels h
         WHERE h.normalized_key = hzk.key AND h.level = hzk.level
     ) hz ON TRUE
@@ -998,6 +1001,7 @@ def _to_view(
         flood_rank_max=_opt_float(row.flood_rank_max),
         flood_area_ratio=_opt_float(row.flood_area_ratio),
         landslide_area_ratio=_opt_float(row.landslide_area_ratio),
+        liquefaction_rank_avg=_opt_float(row.liquefaction_rank_avg),
         landslide_special_ratio=_opt_float(row.landslide_special_ratio),
         property_family=row.property_family,
         prefecture=row.prefecture,
