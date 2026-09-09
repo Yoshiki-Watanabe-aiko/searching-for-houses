@@ -94,7 +94,29 @@ HAZARD_SPECS: dict[str, tuple[str, tuple[tuple[str, int | None], ...]]] = {
     "flood": ("mlit_a31-22", (("a31_10", None), ("a31_20", None))),
 }
 # 引数のデータセット → 作る hazard_type。
-DATASET_TYPES = {"a33": ("landslide", "landslide_special"), "a31": ("flood",)}
+DATASET_TYPES = {
+    "a33": ("landslide", "landslide_special"),
+    "a31": ("flood",),
+    "xkt025": ("liquefaction",),
+}
+
+# ⚠⚠ **液状化は集計の仕方が洪水・土砂と違う**（→ ADR 0023）。
+# ① 原典の値は「小さいほど危険」なので **rank = 6 − level** へ反転して持つ
+# ② **level 6 は「評価対象外」（湖沼・河道）**なので分子にも分母にも入れない
+# ③ 分母は丁目の全面積ではなく **level 1〜5 の交差面積の合計**
+#    （液状化は全面にレベルが付くので「区域外」が存在しない）
+LIQUEFACTION_TYPE = "liquefaction"
+LIQUEFACTION_DATASET = "xkt025"
+# 原典が使うレベル。⚠ 6（評価対象外）を含む。集計側で 1〜5 だけを使う
+XKT025_LEVELS = frozenset({1, 2, 3, 4, 5, 6})
+XKT025_EXCLUDED_LEVEL = 6
+# 危険ランク 4〜5（原典の level 1〜2＝「液状化しやすい」以上）を area_ratio の分子にする
+LIQUEFACTION_RISKY_RANKS = frozenset({4, 5})
+# ⚠ 恒等式の緩和幅。原典が評価していない丁目（実測16件＝0.1%未満）は通し、
+#    島嶼タイルの取り忘れ（404件＝1.9%）は止める位置に線を引く（→ ADR 0023 決定4）
+LIQUEFACTION_MAX_MISSING_RATIO = 0.005
+# 全キーに行があることを要求する種別。⚠ 液状化だけ部分カバーを許す
+FULL_COVERAGE_TYPES = frozenset({"flood", "landslide", "landslide_special"})
 
 
 _CHOME_SUFFIX = re.compile(r"\d+丁目$")
@@ -244,10 +266,82 @@ def _iter_a31(kind: str):
             )
 
 
+def mesh_bounds(code: str) -> tuple[float, float, float, float]:
+    """5次メッシュコード（10桁）から (西, 南, 東, 北) を度で返す（JIS X 0410）。
+
+    1次(4桁) 緯度 2/3度 × 経度 1度 ／ 2次(+2) 8×8分割 ／ 3次(+2) 10×10分割 ／
+    4次(+1) 2×2分割 ／ 5次(+1) 2×2分割（1=南西 2=南東 3=北西 4=北東）。
+    """
+    if len(code) != 10 or not code.isdigit():
+        raise ValueError(f"5次メッシュコードではありません: {code}")
+    lat = int(code[0:2]) * 2 / 3
+    lon = int(code[2:4]) + 100
+    lat += int(code[4]) * (2 / 3) / 8
+    lon += int(code[5]) / 8
+    lat += int(code[6]) * (2 / 3) / 80
+    lon += int(code[7]) / 80
+    for digit, divisor in ((int(code[8]), 160), (int(code[9]), 320)):
+        if digit in (3, 4):
+            lat += (2 / 3) / divisor
+        if digit in (2, 4):
+            lon += 1 / divisor
+    return lon, lat, lon + 1 / 320, lat + (2 / 3) / 320
+
+
+def _iter_xkt025():
+    """液状化タイルから (level, geometry) を返す。
+
+    ⚠⚠ **geometry は API の値をそのまま使わず、mesh_code から矩形を再構成する。**
+    ベクトルタイルの geometry は**タイル境界で切り取られ、しかもバッファで隣接タイルへ
+    はみ出す**（実測 2026-09-10: 断片 3.4%・最大はみ出し 0.7725″）。そのまま使うと
+    ①先勝ちの重複排除で断片だけを採る ②断片を全部使うとバッファ分が二重計上される、
+    のどちらかになり、**例外にならないまま面積加重が狂う**。
+    ⚠ 再構成した矩形は満寸の geometry 70,228件すべてと一致することを実測で確かめてある
+    （最大ずれ 0.077″≒2m）。
+    ⚠ **level はここでは反転しない**（キャッシュは原典に近い形で持ち、
+    反転は集計の1箇所に閉じる → ADR 0023 決定1）。
+    """
+    from shapely.geometry import box
+
+    tiles = sorted((SOURCES / "liquefaction").glob("z*.json"))
+    if not tiles:
+        raise RuntimeError(
+            "液状化タイルがありません。"
+            "scripts/tools/fetch_liquefaction_tiles.py --fetch を先に実行してください"
+        )
+    seen: set[str] = set()
+    dropped: Counter[int] = Counter()
+    for path in tiles:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        for feature in payload.get("features", []):
+            props = feature.get("properties") or {}
+            raw_level = props.get("liquefaction_tendency_level")
+            if raw_level is None:
+                continue
+            level = int(raw_level)
+            if level not in XKT025_LEVELS:
+                dropped[level] += 1
+                continue
+            mesh = str(props.get("mesh_code"))
+            if mesh in seen:
+                continue
+            seen.add(mesh)
+            # ⚠ feature["geometry"] は使わない（上記の docstring 参照）
+            yield level, box(*mesh_bounds(mesh))
+    if dropped:
+        print(f"  ⚠ 想定外のレベルを捨てた: {dict(sorted(dropped.items()))}")
+    print(f"  xkt025: ユニークな mesh_code {len(seen):,}件")
+
+
 def _cache_datasets(datasets: tuple[str, ...]) -> tuple[str, ...]:
     """引数のデータセットから、中間キャッシュに現れる名前を導く。"""
     names: list[str] = []
     for dataset in datasets:
+        if dataset == LIQUEFACTION_DATASET:
+            # HAZARD_SPECS には載せない（集計方法が違うので別経路 → ADR 0023）
+            if LIQUEFACTION_DATASET not in names:
+                names.append(LIQUEFACTION_DATASET)
+            continue
         for hazard_type in DATASET_TYPES[dataset]:
             for cache_name, _ in HAZARD_SPECS[hazard_type][1]:
                 if cache_name not in names:
@@ -265,7 +359,12 @@ def intersect(chome: dict[str, object], datasets: tuple[str, ...]) -> None:
 
     acc: dict[tuple[str, str, int], float] = defaultdict(float)
     for dataset in _cache_datasets(datasets):
-        source = _iter_a33() if dataset == "a33" else _iter_a31(dataset.split("_")[1])
+        if dataset == "a33":
+            source = _iter_a33()
+        elif dataset == LIQUEFACTION_DATASET:
+            source = _iter_xkt025()
+        else:
+            source = _iter_a31(dataset.split("_")[1])
         count = 0
         for rank, geometry in source:
             count += 1
@@ -283,12 +382,18 @@ def intersect(chome: dict[str, object], datasets: tuple[str, ...]) -> None:
                     acc[(keys[index], dataset, rank)] += area
         print(f"  {dataset}: {count:,} ポリゴン（完了）", flush=True)
 
+    # ⚠⚠ **データセット別のファイルへ書く。** 1つのファイルへまとめると
+    #    `--datasets xkt025` の単独実行で洪水・土砂の交差が消え、続く `--from-cache` で
+    #    **洪水が全件0（＝「区域外と確認」）に化ける**（例外にならない → 課題#59）。
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    with (CACHE_DIR / "intersections.csv").open("w", encoding="utf-8", newline="") as fh:
-        writer = csv.writer(fh)
-        writer.writerow(("normalized_key", "dataset", "rank", "area"))
-        for (key, dataset, rank), area in sorted(acc.items()):
-            writer.writerow((key, dataset, rank, f"{area:.12g}"))
+    for dataset in _cache_datasets(datasets):
+        path = CACHE_DIR / f"intersections_{dataset}.csv"
+        with path.open("w", encoding="utf-8", newline="") as fh:
+            writer = csv.writer(fh)
+            writer.writerow(("normalized_key", "dataset", "rank", "area"))
+            for (key, ds, rank), area in sorted(acc.items()):
+                if ds == dataset:
+                    writer.writerow((key, ds, rank, f"{area:.12g}"))
     with (CACHE_DIR / "chome_area.csv").open("w", encoding="utf-8", newline="") as fh:
         writer = csv.writer(fh)
         writer.writerow(("normalized_key", "area"))
@@ -297,25 +402,83 @@ def intersect(chome: dict[str, object], datasets: tuple[str, ...]) -> None:
     print(f"中間キャッシュ: {CACHE_DIR}（交差 {len(acc):,} 行）")
 
 
-def _load_cache() -> tuple[dict[str, float], dict[tuple[str, str], dict[int, float]]]:
+def cache_paths(dataset: str) -> list[Path]:
+    """あるデータセットの交差キャッシュとして読むファイル。
+
+    ⚠ **データセット別ファイルを優先し、無ければ旧 `intersections.csv` を読む。**
+    分割前に作った洪水・土砂の交差（11分かかる）を捨てないための後方互換。
+    """
+    split = CACHE_DIR / f"intersections_{dataset}.csv"
+    if split.exists():
+        return [split]
+    legacy = CACHE_DIR / "intersections.csv"
+    return [legacy] if legacy.exists() else []
+
+
+def _load_cache(
+    datasets: tuple[str, ...],
+) -> tuple[dict[str, float], dict[tuple[str, str], dict[int, float]]]:
     areas: dict[str, float] = {}
     with (CACHE_DIR / "chome_area.csv").open(encoding="utf-8", newline="") as fh:
         for row in csv.DictReader(fh):
             areas[row["normalized_key"]] = float(row["area"])
     inter: dict[tuple[str, str], dict[int, float]] = defaultdict(dict)
     dropped: Counter[int] = Counter()
-    with (CACHE_DIR / "intersections.csv").open(encoding="utf-8", newline="") as fh:
-        for row in csv.DictReader(fh):
-            rank = int(row["rank"])
-            # ⚠ **キャッシュ側にも想定外の区分が残りうる**（--from-cache で
-            #    取り込み時のフィルタを通らないため）。ここでも弾く。
-            if row["dataset"] == "a33" and rank not in A33_ZONE_CODES:
-                dropped[rank] += 1
-                continue
-            inter[(row["normalized_key"], row["dataset"])][rank] = float(row["area"])
+    for cache_name in _cache_datasets(datasets):
+        seen_rows = 0
+        for path in cache_paths(cache_name):
+            with path.open(encoding="utf-8", newline="") as fh:
+                for row in csv.DictReader(fh):
+                    if row["dataset"] != cache_name:
+                        continue
+                    rank = int(row["rank"])
+                    # ⚠ **キャッシュ側にも想定外の区分が残りうる**（--from-cache で
+                    #    取り込み時のフィルタを通らないため）。ここでも弾く。
+                    if cache_name == "a33" and rank not in A33_ZONE_CODES:
+                        dropped[rank] += 1
+                        continue
+                    if cache_name == LIQUEFACTION_DATASET and rank not in XKT025_LEVELS:
+                        dropped[rank] += 1
+                        continue
+                    inter[(row["normalized_key"], cache_name)][rank] = float(row["area"])
+                    seen_rows += 1
+        # ⚠⚠ **交差が0行なら止める。** ここを通すと「区域外と確認した」という意味の
+        #    0 が全丁目に書かれ、危険な丁目が満点を取る（例外にならない → 課題#59）。
+        if seen_rows == 0:
+            raise RuntimeError(
+                f"✗ {cache_name} の交差キャッシュが0行です。"
+                "--from-cache を外して交差からやり直してください"
+            )
     if dropped:
-        print(f"  ⚠ キャッシュ内の想定外の区域区分を捨てた: {dict(sorted(dropped.items()))}")
+        print(f"  ⚠ キャッシュ内の想定外の区分を捨てた: {dict(sorted(dropped.items()))}")
     return areas, inter
+
+
+def compute_liquefaction_values(by_level: dict[int, float]) -> dict[str, float] | None:
+    """液状化の3方式を出す。評価対象の面積が無ければ None（＝行を作らない）。
+
+    ⚠⚠ **level 6（評価対象外＝湖沼・河道）を分子にも分母にも入れない**（→ ADR 0023 決定2）。
+    含めると水域の多い丁目が「安全」として順位を上げ、**例外にならない**。
+    ⚠ **分母は丁目の全面積ではなく「評価対象の面積」**（→ 決定3）。液状化は全面に
+    レベルが付くので「区域外」が存在せず、全面積で割ると河川の多い丁目が安全側へ寄る。
+    ⚠ **rank = 6 − level で反転する**（→ 決定1）。既存のハザードと向きを揃える。
+    """
+    graded = {
+        level: area
+        for level, area in by_level.items()
+        if level != XKT025_EXCLUDED_LEVEL and level in XKT025_LEVELS
+    }
+    total = sum(graded.values())
+    if total <= 0:
+        return None
+    by_rank = {6 - level: area for level, area in graded.items()}
+    weighted = sum(rank * area for rank, area in by_rank.items())
+    risky = sum(area for rank, area in by_rank.items() if rank in LIQUEFACTION_RISKY_RANKS)
+    return {
+        "area_ratio": round(risky / total, 4),
+        "rank_avg": round(weighted / total, 4),
+        "rank_max": float(max(by_rank)),
+    }
 
 
 def compute_values(total_area: float, by_rank: dict[int, float]) -> dict[str, float]:
@@ -345,18 +508,31 @@ def aggregate(
     chome_keys: list[str],
     towns: dict[str, list[str]],
     datasets: tuple[str, ...],
-    acquired_on: str,
-) -> tuple[list[dict[str, object]], int]:
-    """中間キャッシュから出力行を組み立てる。戻り値は (行, 対象キー数)。"""
-    areas, inter = _load_cache()
+    sources: dict[str, tuple[str, str]],
+) -> tuple[list[dict[str, object]], int, int]:
+    """中間キャッシュから出力行を組み立てる。
+
+    戻り値は (行, 対象キー数, 液状化の欠落キー数)。``sources`` は
+    hazard_type → (source ラベル, acquired_on)。
+    """
+    areas, inter = _load_cache(datasets)
     town_keys = sorted(
         k for k, members in towns.items() if any(areas.get(m, 0.0) > 0 for m in members)
     )
 
     rows: list[dict[str, object]] = []
+    missing_liquefaction = 0
     for dataset in datasets:
+        if dataset == LIQUEFACTION_DATASET:
+            label, acquired = sources[LIQUEFACTION_TYPE]
+            liq_rows, missing_liquefaction = _aggregate_liquefaction(
+                chome_keys, towns, town_keys, inter, label, acquired
+            )
+            rows.extend(liq_rows)
+            continue
         for hazard_type in DATASET_TYPES[dataset]:
-            label, specs = HAZARD_SPECS[hazard_type]
+            label, acquired = sources[hazard_type]
+            _, specs = HAZARD_SPECS[hazard_type]
             per_chome: dict[str, dict[str, float]] = {}
             for key in chome_keys:
                 total_area = areas.get(key, 0.0)
@@ -381,7 +557,7 @@ def aggregate(
                         "hazard_type": hazard_type,
                         **{a: values[a] for a in AGGREGATIONS},
                         "source": label,
-                        "acquired_on": acquired_on,
+                        "acquired_on": acquired,
                     }
                 )
             # 町行は配下の丁目から作る。
@@ -412,10 +588,64 @@ def aggregate(
                         "hazard_type": hazard_type,
                         **{a: merged[a] for a in AGGREGATIONS},
                         "source": label,
-                        "acquired_on": acquired_on,
+                        "acquired_on": acquired,
                     }
                 )
-    return rows, len(chome_keys) + len(town_keys)
+    return rows, len(chome_keys) + len(town_keys), missing_liquefaction
+
+
+def _aggregate_liquefaction(
+    chome_keys: list[str],
+    towns: dict[str, list[str]],
+    town_keys: list[str],
+    inter: dict[tuple[str, str], dict[int, float]],
+    label: str,
+    acquired: str,
+) -> tuple[list[dict[str, object]], int]:
+    """液状化の行を作る。戻り値は (行, 値を作れなかったキー数)。
+
+    ⚠ **町行は「配下丁目の値を面積加重」ではなく、配下丁目のレベル別面積を
+    合算してから同じ関数へ通す**（→ ADR 0023 決定3）。分母が評価対象面積なので、
+    合算するだけで自然に加重される。
+    """
+    rows: list[dict[str, object]] = []
+    missing = 0
+    for key in chome_keys:
+        values = compute_liquefaction_values(dict(inter.get((key, LIQUEFACTION_DATASET), {})))
+        if values is None:
+            # ⚠ **値を作らない**（原典が評価していない丁目に値を書くのは捏造 → ADR 0023 決定4）
+            missing += 1
+            continue
+        rows.append(
+            {
+                "normalized_key": key,
+                "level": "chome",
+                "hazard_type": LIQUEFACTION_TYPE,
+                **{a: values[a] for a in AGGREGATIONS},
+                "source": label,
+                "acquired_on": acquired,
+            }
+        )
+    for town_key in town_keys:
+        merged_levels: dict[int, float] = defaultdict(float)
+        for member in towns[town_key]:
+            for level, area in inter.get((member, LIQUEFACTION_DATASET), {}).items():
+                merged_levels[level] += area
+        values = compute_liquefaction_values(dict(merged_levels))
+        if values is None:
+            missing += 1
+            continue
+        rows.append(
+            {
+                "normalized_key": town_key,
+                "level": "town",
+                "hazard_type": LIQUEFACTION_TYPE,
+                **{a: values[a] for a in AGGREGATIONS},
+                "source": label,
+                "acquired_on": acquired,
+            }
+        )
+    return rows, missing
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -426,9 +656,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--datasets",
         nargs="+",
-        default=["a33"],
-        choices=["a33", "a31"],
-        help="対象データセット（既定: a33。洪水を含めるなら a33 a31）",
+        default=["a33", "a31", "xkt025"],
+        choices=["a33", "a31", "xkt025"],
+        help="対象データセット（既定: 全部）",
     )
     parser.add_argument(
         "--from-cache",
@@ -438,8 +668,24 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     datasets = tuple(dict.fromkeys(args.datasets))
 
+    # ⚠ **出典と取得日は種別ごとに違う**（液状化は別の manifest・別の日に取る）。
+    #    ひとつの acquired_on を全種別へ書くと「いつの版で採点したか」を後から言えない。
     manifest = json.loads((SOURCES / "manifest.json").read_text(encoding="utf-8"))
-    acquired_on = manifest["acquired_on"]
+    sources: dict[str, tuple[str, str]] = {
+        hazard_type: (label, manifest["acquired_on"])
+        for hazard_type, (label, _specs) in HAZARD_SPECS.items()
+    }
+    if LIQUEFACTION_DATASET in datasets:
+        liq_manifest_path = SOURCES / "liquefaction" / "manifest.json"
+        if not liq_manifest_path.exists():
+            print(
+                "✗ 液状化の manifest がありません"
+                "（scripts/tools/fetch_liquefaction_tiles.py を先に実行してください）",
+                file=sys.stderr,
+            )
+            return 1
+        liq_manifest = json.loads(liq_manifest_path.read_text(encoding="utf-8"))
+        sources[LIQUEFACTION_TYPE] = (liq_manifest["source"], liq_manifest["acquired_on"])
 
     chome, towns, _master_total, coverage = load_chome_polygons()
     if coverage < MIN_COVERAGE:
@@ -451,22 +697,42 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.from_cache:
-        if not (CACHE_DIR / "intersections.csv").exists():
+        missing_cache = [d for d in _cache_datasets(datasets) if not cache_paths(d)]
+        if missing_cache:
             print(
-                "✗ 中間キャッシュがありません（--from-cache を外して実行してください）",
+                f"✗ 中間キャッシュがありません: {missing_cache}"
+                "（--from-cache を外して実行してください）",
                 file=sys.stderr,
             )
             return 1
     else:
         intersect(chome, datasets)
 
-    rows, key_count = aggregate(sorted(chome), towns, datasets, acquired_on)
+    rows, key_count, missing_liquefaction = aggregate(sorted(chome), towns, datasets, sources)
 
     # ⚠ 恒等式の検査。対象キーのすべてに、全 hazard_type × aggregation の行が
     # 揃っていなければならない。1つでも欠けると「区域外（安全と確認した）」と
     # 「未解決（情報が無い）」が混ざり、危険な丁目が黙って減点されなくなる。
-    type_count = sum(len(DATASET_TYPES[d]) for d in datasets)
-    expected = key_count * type_count
+    # ⚠⚠ **液状化だけは部分カバーを許す**（→ ADR 0023 決定4）。原典が評価していない
+    #    丁目（湖沼・河道だけの丁目）に値を作るのは捏造になる。ただし取り忘れと
+    #    区別するため、欠落が 0.5% を超えたら止める。
+    full_types = [t for d in datasets for t in DATASET_TYPES[d] if t in FULL_COVERAGE_TYPES]
+    expected = key_count * len(full_types)
+    if LIQUEFACTION_TYPE in [t for d in datasets for t in DATASET_TYPES[d]]:
+        expected += key_count - missing_liquefaction
+        ratio = missing_liquefaction / key_count if key_count else 0.0
+        print(
+            f"  液状化の欠落キー: {missing_liquefaction:,} / {key_count:,}"
+            f"（{ratio:.2%}・上限 {LIQUEFACTION_MAX_MISSING_RATIO:.1%}）"
+        )
+        if ratio > LIQUEFACTION_MAX_MISSING_RATIO:
+            print(
+                f"✗ 液状化の欠落が多すぎます（{ratio:.2%}）。"
+                "タイルの取り忘れを疑ってください"
+                "（4都県の外接矩形の外に島嶼部があります → ADR 0023 決定4）",
+                file=sys.stderr,
+            )
+            return 1
     if len(rows) != expected:
         print(f"✗ 行数が恒等式と合いません: {len(rows):,} != {expected:,}", file=sys.stderr)
         return 1
