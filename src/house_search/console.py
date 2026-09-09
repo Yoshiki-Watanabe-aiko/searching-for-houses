@@ -14,6 +14,14 @@
 ⚠ **コンソール判定には頼れない。** `scripts/*.ps1` は stdout をファイルへ向けるので
 `isatty()` は偽になり、それでもエンコーディングは cp932 のままである。
 **入口で明示的に付け替える**のが唯一確実な手当てになる。
+
+⚠⚠ **「手で叩けば通る」でもない**（2026-09-10 実測）。Claude Code の Bash ツールから
+`python` を起動したときの ``sys.stdout.encoding`` も **cp932** だった
+（`scripts/tools/` の調査に使ったスクリプト自身が落ちて分かった）。
+UTF-8 になるのは Git Bash の対話ターミナルなど限られた条件だけで、
+**タスク・運用スクリプト・エージェントの調査実行はいずれも cp932** である。
+→ `scripts/tools/*.py` は ps1 から呼ばれるものに限らず、
+cp932 で書けない文字を print するなら全て付け替える（`tests/test_console_utf8.py`）。
 """
 
 from __future__ import annotations

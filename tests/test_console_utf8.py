@@ -6,8 +6,12 @@
 2026-09-09 に実害が出た（→ 課題#49）。`build_market_rates.py` が
 「相場表が無かった市区: 8件」を報告する行で落ち、**52分かけた取得は成功しているのに
 CSV も DB も更新されないまま終了コード1**になった。
-⚠ **手で叩くと通る**（Git Bash のパイプは UTF-8）ので、
-**タスク・運用スクリプト経由でしか再現しない**のが厄介な点である。
+⚠⚠ **当初「手で叩くと通る（Git Bash のパイプは UTF-8）ので運用経路でしか再現しない」と
+記録したが、2026-09-10 の実測で覆った。** Claude Code の Bash ツールから `python` を
+起動したときの `sys.stdout.encoding` も **cp932** で、`scripts/tools/` の調査に使った
+スクリプト自身が `UnicodeEncodeError` で落ちた。
+⚠ **つまり ps1 に載っていない `probe_*` も、エージェントが実測に使う時点で落ちる。**
+UTF-8 になるのは Git Bash の対話ターミナルなど限られた条件だけである。
 """
 
 from __future__ import annotations
@@ -100,6 +104,10 @@ class Test運用経路:
         市区名がそのまま出力へ載る経路があるので、警告文言を1つ足しただけで
         条件を満たしてしまう。ここでは「いま落ちうるもの」だけを必須にし、
         足したときに気づけるようにしてある。
+
+        ⚠ **付け替えそのものは `test_調査ツールも付け替えを行う` が
+        `scripts/tools/` 全体で見る**（そちらが上位集合）。こちらに固有の関心事は
+        **ps1 が呼ぶのに実体が無い**ツールの検出のほうである。
         """
         violations: list[str] = []
         for name, callers in sorted(_tools_used_by_ps1().items()):
@@ -115,6 +123,30 @@ class Test運用経路:
                 )
         assert not violations, "運用から走るツールで UTF-8 付け替えが漏れている:\n" + "\n".join(
             violations
+        )
+
+    def test_調査ツールも付け替えを行う(self) -> None:
+        """⚠⚠ **ps1 から呼ばれなくても cp932 で落ちる。**
+
+        2026-09-10 の実測で、`scripts/tools/*.py` を **Claude Code の Bash ツールから
+        実行したときの `sys.stdout.encoding` は cp932** だった（この調査そのものに
+        使ったスクリプトが `UnicodeEncodeError` で落ちて分かった）。
+        ⚠ **「手で叩くと通る」は Git Bash の対話ターミナルに限った話**で、
+        エージェントの調査実行も PowerShell からの実行も cp932 になる。
+
+        `probe_*` は**まさにエージェントが実測に使う**ツールなので、ps1 に
+        載っていなくても実害が出る。⚠ しかも落ちるのは**調べた結果を報告する行**
+        （件数の警告など）なので、**取得は成功しているのに結論だけ失われる**。
+        → `scripts/tools/` 全体を対象にする。
+        """
+        violations: list[str] = []
+        for tool in sorted((SCRIPTS / "tools").glob("*.py")):
+            source = _read_text(tool)
+            if _has_non_cp932_output(source) and "force_utf8_output()" not in source:
+                violations.append(tool.name)
+        assert not violations, (
+            "cp932 で書けない文字を print するのに force_utf8_output() を呼んでいない:\n"
+            + "\n".join(f"  - scripts/tools/{name}" for name in violations)
         )
 
     def test_落ちた実物が対象に入っている(self) -> None:

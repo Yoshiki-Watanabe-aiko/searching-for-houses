@@ -30,6 +30,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from house_search.config.settings import load_settings  # noqa: E402
+from house_search.console import force_utf8_output  # noqa: E402
 from house_search.scrape.prefectures import PREFECTURE_ROMAJI  # noqa: E402
 
 SITEMAP = "https://www.leopalace21.com/sitemap_rent_room_list_map_ja.xml"
@@ -109,6 +110,9 @@ ON CONFLICT (city_id, site_id) DO UPDATE SET value = EXCLUDED.value, updated_at 
 
 
 def main() -> int:
+    # ⚠ 先に UTF-8 へ付け替える。cp932 のままだと ⚠ を含む報告の print が
+    # UnicodeEncodeError になり、**調べた結果ごと失われる**（→ 課題#49）
+    force_utf8_output()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--from-cache", action="store_true", help="保存済みのサイトマップを使う")
     args = parser.parse_args()
