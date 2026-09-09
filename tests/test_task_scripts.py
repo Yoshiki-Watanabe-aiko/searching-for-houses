@@ -78,17 +78,36 @@ def test_委譲先のスクリプトが実在する(runner_text: str) -> None:
         assert (SCRIPTS / name).exists(), f"委譲先が見つかりません: {name}"
 
 
-def test_売買相場の四半期タスクが登録される(register_text: str) -> None:
-    """課題#49 Step 8。⚠ 家賃相場（毎月1日）と同じ日に置かない。"""
+def test_売買相場は毎月チェックする(register_text: str) -> None:
+    """課題#49 Step 8 → 2026-09-09 に四半期から毎月へ（ユーザー判断）。
+
+    ⚠ 国交省の公開は四半期終了後2〜3ヶ月で時期が読めない。四半期に絞ると
+    公開から**最大3ヶ月**反映が遅れる。毎月見に行き、新しい四半期が無ければ
+    CSVもDBも触らずに終わる（空振りは正常であってエラーではない）。
+    """
     assert "HouseSearch-BuyMarketRates" in register_text
     assert "buy-market-rates" in _registered_args(register_text)
-    # 1/4/7/10月の2日（タスクスケジューラに「四半期ごと」の区分は無いので月で表す）
-    assert "<January /><April /><July /><October />" in register_text
-    assert "<DaysOfMonth><Day>2</Day></DaysOfMonth>" in register_text
+    # ⚠ 四半期に絞る書き方（Months を4つだけ並べる）へ戻っていないこと
+    assert "<January /><April /><July /><October />" not in register_text
+    assert "MonthlyDay  = 2" in register_text
+
+
+def test_家賃相場の上限は全国取得に足りる(register_text: str) -> None:
+    """⚠ 全国化で所要が約5分 → 約97分になった（2026-09-09）。
+
+    ⚠ 上限で強制終了されると終了コードが取れず後処理も飛ぶ
+    （→ 課題#26 で check-sold が 267014 で切られた実例がある）。
+    """
+    block = re.search(
+        r'Name\s*=\s*"HouseSearch-MarketRates".*?TimeLimit\s*=\s*"([^"]+)"', register_text, re.S
+    )
+    assert block, "MarketRates の TimeLimit が読めません"
+
+    assert block.group(1) == "PT3H", "全国取得（約97分）に対して上限が短すぎます"
 
 
 def test_相場の更新タスクどうしは同じ日に走らない(register_text: str) -> None:
-    """⚠ どちらも m_market_rates を全置換するので並走させない。"""
+    """⚠ どちらも m_market_rates へ書き込むうえ、家賃相場は全国で約97分かかる。"""
     starts = dict(
         zip(
             re.findall(r'Name\s*=\s*"([^"]+)"', register_text),
@@ -104,7 +123,5 @@ def test_相場の更新タスクどうしは同じ日に走らない(register_t
 
 def test_取得を伴うタスクは無効で登録される(register_text: str) -> None:
     """⚠ 国交省APIを叩くので取得タスク扱い（-EnableScraping の対象に入れる）。"""
-    block = re.search(
-        r'Name\s*=\s*"HouseSearch-BuyMarketRates".*?TimeLimit', register_text, re.S
-    )
+    block = re.search(r'Name\s*=\s*"HouseSearch-BuyMarketRates".*?TimeLimit', register_text, re.S)
     assert block and "Scraping    = $true" in block.group(0)
