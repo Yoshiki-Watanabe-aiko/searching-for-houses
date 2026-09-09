@@ -39,6 +39,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
+from house_search.console import force_utf8_output  # noqa: E402
 from house_search.dedup.address import normalize_base  # noqa: E402
 from house_search.dedup.address_master import load_address_rows  # noqa: E402
 
@@ -418,6 +419,9 @@ def aggregate(
 
 
 def main(argv: list[str] | None = None) -> int:
+    # ⚠ 先に UTF-8 へ付け替える。cp932 のままだと ⚠ を含む警告の print が
+    # UnicodeEncodeError になり、**取得は成功しているのに処理全体が落ちる**
+    force_utf8_output()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--datasets",

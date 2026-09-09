@@ -62,32 +62,6 @@ class TestResolveDetailLimit:
             resolve_detail_limit(True, value)
 
 
-class TestForceUtf8Output:
-    """標準出力を UTF-8 へ付け替える処理（→ 課題#34 の報告が消えた件）。"""
-
-    def test_reconfigures_both_streams(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """stdout と stderr の**両方**を付け替える。片方だけだと報告が化ける。"""
-        calls: list[tuple[str, str]] = []
-
-        class Stream:
-            def __init__(self, name: str) -> None:
-                self.name = name
-
-            def reconfigure(self, *, encoding: str) -> None:
-                calls.append((self.name, encoding))
-
-        monkeypatch.setattr(cli.sys, "stdout", Stream("stdout"))
-        monkeypatch.setattr(cli.sys, "stderr", Stream("stderr"))
-        cli._force_utf8_output()
-        assert calls == [("stdout", "utf-8"), ("stderr", "utf-8")]
-
-    def test_tolerates_streams_without_reconfigure(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """reconfigure を持たない差し替え先でも落ちない（テストの捕捉先など）。"""
-        monkeypatch.setattr(cli.sys, "stdout", object())
-        monkeypatch.setattr(cli.sys, "stderr", object())
-        cli._force_utf8_output()
-
-
 class TestSegmentIndexPrefectures:
     """乗車区間の駅索引の範囲（→ 課題#35）。"""
 

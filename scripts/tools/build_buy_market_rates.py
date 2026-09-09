@@ -43,6 +43,7 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "src"))
+from house_search.console import force_utf8_output  # noqa: E402
 
 RAW = REPO / "data" / "market_rates" / "raw" / "reinfolib"
 OUT = REPO / "data" / "market_rates" / "buy_rates.csv"
@@ -268,6 +269,9 @@ def build(
 
 
 def main(argv: list[str] | None = None) -> int:
+    # ⚠ 先に UTF-8 へ付け替える。cp932 のままだと ⚠ を含む警告の print が
+    # UnicodeEncodeError になり、**取得は成功しているのに処理全体が落ちる**
+    force_utf8_output()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--period", default=None, help="期間ラベル（既定は窓から作る）")
     parser.add_argument(
