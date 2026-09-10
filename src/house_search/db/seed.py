@@ -18,7 +18,9 @@ SEED_DIR = PROJECT_ROOT / "db" / "seed"
 
 # 件数検証の対象。シード後にこの行数以上あることを確認する。
 EXPECTED_MIN_ROWS = {
-    "m_property_types": 5,
+    # 土地（TOCHI）を足して6種別（→ 課題#61）。⚠ 5 のままだと、seed を当て忘れても
+    # `>=` の判定で黙って通る（tests/test_property_type_seed.py がシードSQLと突き合わせる）
+    "m_property_types": 6,
     "m_sites": 12,
     "m_condition_categories": 19,
     "m_conditions": 148,

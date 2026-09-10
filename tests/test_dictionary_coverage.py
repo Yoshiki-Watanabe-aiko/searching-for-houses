@@ -17,18 +17,15 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text as sql_text
 
-from house_search.config.metrics import FAMILY_OF
 from house_search.config.pattern import load_patterns
 from house_search.extract.dictionary import FeatureDictionary, load_dictionary
 from house_search.extract.extractor import extract_from_text
+from house_search.extract.pattern_check import unknown_condition_codes
 
 REPO = Path(__file__).resolve().parents[1]
 DICTIONARY_PATH = REPO / "data" / "feature_dictionary.yaml"
 CONFIGS_DIR = REPO / "configs"
-
-#: 型付き列から導出するので辞書に表記が無くてよい条件
-#: （``extract/extractor.py`` の ``derive_features`` が作る）
-DERIVED_CODES = frozenset({"LOC_FLOOR_1", "LOC_FLOOR_2UP", "LOC_TOP_FLOOR", "FEAT_NEW"})
+EXAMPLES_DIR = CONFIGS_DIR / "examples"
 
 
 @pytest.fixture(scope="module")
@@ -36,27 +33,25 @@ def dictionary() -> FeatureDictionary:
     return load_dictionary(DICTIONARY_PATH)
 
 
-def _want_feature_codes(pattern) -> list[str]:
-    """検索パターンの WANT が参照している条件コード（``any_of`` も展開する）。"""
-    codes: list[str] = []
-    for item in pattern.want.features:
-        if getattr(item, "any_of", None):
-            codes.extend(item.any_of)
-        elif getattr(item, "code", None):
-            codes.append(item.code)
-    return codes
-
-
 def _patterns():
-    return load_patterns(CONFIGS_DIR)
+    """実運用の6本に加えて雛形も対象にする（→ 課題#61）。
+
+    ⚠ 雛形はコピーして実パターンの出発点になるので、辞書に無い条件を
+    書いた雛形はそのまま事故の種になる。
+    """
+    return [*load_patterns(CONFIGS_DIR), *load_patterns(EXAMPLES_DIR)]
 
 
 @pytest.mark.parametrize("pattern", _patterns(), ids=lambda p: p.name)
-def test_WANTの条件はすべて抽出できる(pattern, dictionary: FeatureDictionary) -> None:
+def test_WANTとMUSTの条件はすべて抽出できる(pattern, dictionary: FeatureDictionary) -> None:
     """⚠ **これが本ファイルの主目的**（実際に1件見つかった → 課題#15）。
 
     辞書にも DERIVED にも無い条件を WANT に書くと、weight が死ぬだけでなく
     **他の項目の満点も相対的に下がる**（分母に乗り続けるため）。
+    MUST に書くと、詳細取得済みの掲載が**全件 fail**になる（→ 課題#61）。
+
+    照合は ``validate-config`` と同じ関数（``unknown_condition_codes``）を通す。
+    ⚠ 検証の側が実装と別の規則を持つと、正しい実装を誤診する（→ 課題#46）。
     """
     # ⚠⚠ **照合先はパターンのファミリで決める。** 初版は "CHINTAI" 固定で、
     # 売買パターンの条件を賃貸の辞書と突き合わせていた（→ 課題#4 の
@@ -64,14 +59,12 @@ def test_WANTの条件はすべて抽出できる(pattern, dictionary: FeatureDi
     # 実際に売買固有の4条件（FEAT_VACANT・STRUCT_QUAKE ほか）が
     # **抽出できているのに落ちる**という偽陽性が出た。
     # ⚠ 逆向き（賃貸に無い条件を賃貸パターンに書く）は依然として検出できる。
-    family = FAMILY_OF[pattern.property_type]
-    known = {e.code for e in dictionary.entries if e.family == family} | DERIVED_CODES
-    missing = sorted(set(_want_feature_codes(pattern)) - known)
+    missing = unknown_condition_codes(pattern, dictionary)
     assert not missing, (
-        f"WANT に書いてあるのに抽出できない条件: {missing}\n"
+        f"WANT / MUST に書いてあるのに抽出できない条件: {list(missing)}\n"
         "  辞書（data/feature_dictionary.yaml）に表記を足すか、"
         "型付き列からの導出（DERIVED）にする。\n"
-        "  ⚠ 放置すると永久に miss になり、分母だけを押し上げる。"
+        "  ⚠ 放置すると WANT は永久に miss、MUST は詳細取得済みが全件 fail になる。"
     )
 
 

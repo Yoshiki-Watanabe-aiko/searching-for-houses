@@ -27,6 +27,11 @@ SOURCE_DERIVED = "DERIVED"
 # FEAT_NEW（新築・築浅）とみなす築年数の上限。
 NEW_BUILDING_MAX_AGE = 3
 
+# ``derive_features`` が型付き列から作る条件コード。辞書に表記が無くてよい。
+# ⚠ 導出の条件を足したらここも直す（validate-config が「辞書に無い条件」として
+#   偽陽性を出す。tests/test_tochi_skeleton.py が導出関数の出力と突き合わせる）
+DERIVED_CODES = frozenset({"FEAT_NEW", "LOC_FLOOR_1", "LOC_FLOOR_2UP", "LOC_TOP_FLOOR"})
+
 
 @dataclass(frozen=True, slots=True)
 class ExtractedFeature:
