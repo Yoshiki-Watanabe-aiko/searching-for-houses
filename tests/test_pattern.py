@@ -17,6 +17,7 @@ from house_search.config.pattern import (
     ChintaiPattern,
     KodateBuyPattern,
     MansionBuyPattern,
+    TochiBuyPattern,
     load_pattern_file,
     parse_pattern,
 )
@@ -204,6 +205,8 @@ def test_同梱の雛形YAMLが読める() -> None:
         # ⚠ 新築は ``age_years`` が適用外。中古からコピーして残すとここで落ちる
         ("shinchiku_mansion_v2.yaml", MansionBuyPattern, "SHINCHIKU_MANSION"),
         ("kodate_buy_v2.yaml", KodateBuyPattern, "CHUKO_KODATE"),
+        # 土地（Phase 9a → 課題#61）。⚠ 建物系の項目を残すとここで落ちる
+        ("tochi_buy_v2.yaml", TochiBuyPattern, "TOCHI"),
     ],
 )
 def test_売買の雛形YAMLが読める(filename: str, expected_cls: type, expected_type: str) -> None:
@@ -552,7 +555,7 @@ def test_config_hashはany_ofの記法を区別する() -> None:
 # 素通りさせる。前者は明示エラーだが、後者は**設定したのに効かない**まま通る。
 # 種別を足すときに黙って古くならないよう機械的に固定する（→ 課題#4）。
 
-_PATTERN_CLASSES = (ChintaiPattern, MansionBuyPattern, KodateBuyPattern)
+_PATTERN_CLASSES = (ChintaiPattern, MansionBuyPattern, KodateBuyPattern, TochiBuyPattern)
 
 # レジストリに対応する MustSpec を持たない制御項目。
 _CONTROL_FIELDS = frozenset({"unknown_policy"})

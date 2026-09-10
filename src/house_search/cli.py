@@ -359,12 +359,24 @@ def _cmd_validate_config(args: argparse.Namespace) -> int:
 
     from house_search.config.pattern import load_pattern_file
     from house_search.config.settings import load_settings
+    from house_search.extract.dictionary import load_dictionary
+    from house_search.extract.pattern_check import unknown_condition_codes
+    from house_search.pipeline.runtime import DICTIONARY_FILENAME
 
     settings = load_settings()
     configs_dir = Path(args.configs_dir) if args.configs_dir else settings.configs_dir
     files = sorted(configs_dir.glob("*.yaml"))
     if not files:
         print(f"検索パターンYAMLが見つかりません: {configs_dir}", file=sys.stderr)
+        return 1
+
+    # 条件コードの照合先（→ ADR 0024 決定3）。⚠ 読めなければ検証そのものを止める
+    # （照合を黙って飛ばすと、辞書に無い条件を書いたパターンが OK と出る）
+    dictionary_path = settings.data_dir / DICTIONARY_FILENAME
+    try:
+        dictionary = load_dictionary(dictionary_path)
+    except (OSError, ValueError) as exc:
+        print(f"設備抽出辞書を読めません: {dictionary_path}\n{exc}", file=sys.stderr)
         return 1
 
     failures = 0
@@ -375,6 +387,19 @@ def _cmd_validate_config(args: argparse.Namespace) -> int:
         except (ValidationError, ValueError) as exc:
             failures += 1
             print(f"NG  {path.name}\n{exc}", file=sys.stderr)
+            continue
+
+        # ⚠ 辞書に無い条件コードは、WANT なら永久に miss、MUST なら詳細取得済みが
+        #   全件 fail になる（例外にならない）。辞書が空の土地で起きやすい → 課題#61
+        unknown_codes = unknown_condition_codes(pattern, dictionary)
+        if unknown_codes:
+            failures += 1
+            print(
+                f"NG  {path.name}: {pattern.family.value} の設備抽出辞書に無い条件コード "
+                f"{list(unknown_codes)}。data/feature_dictionary.yaml に表記を足すか、"
+                "パターンから外してください",
+                file=sys.stderr,
+            )
             continue
 
         if not args.skip_webhook:
@@ -397,7 +422,13 @@ def _cmd_validate_config(args: argparse.Namespace) -> int:
         )
         known_names.append(pattern.name)
 
-    failures += _warn_orphan_scores(known_names)
+    # ⚠ 実運用の configs 以外（雛形だけを置いた一時dirなど）を検証したときは確かめない。
+    #   比べる相手が違うので、稼働中の全パターンが「孤児」と出て DELETE 文まで案内してしまう
+    #   （2026-09-11 に実際に出た。従うと約5.7万行の採点が消える → 課題#61）
+    if configs_dir.resolve() == settings.configs_dir.resolve():
+        failures += _warn_orphan_scores(known_names)
+    else:
+        print(f"（{configs_dir} は実運用の configs ではないので、孤児スコアの確認は省きます）")
     return 1 if failures else 0
 
 

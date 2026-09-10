@@ -31,10 +31,10 @@ from house_search.db.base import Base, TimestampMixin
 
 
 class PropertyType(TimestampMixin, Base):
-    """物件種別マスタ。賃貸＋売買4種別の計5種別。"""
+    """物件種別マスタ。賃貸＋建物を伴う売買4種別＋土地の計6種別（→ 課題#61）。"""
 
     __tablename__ = "m_property_types"
-    __table_args__ = {"comment": "物件種別マスタ（賃貸・新築M・中古M・新築K・中古K）"}
+    __table_args__ = {"comment": "物件種別マスタ（賃貸・新築M・中古M・新築K・中古K・土地）"}
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, comment="物件種別ID")
     code: Mapped[str] = mapped_column(
@@ -46,7 +46,8 @@ class PropertyType(TimestampMixin, Base):
         nullable=False,
         comment=(
             "種別ファミリ。metric体系・dedup_key構成要素・YAMLスキーマの分岐単位。"
-            "CHINTAI=賃貸 / MANSION_BUY=マンション売買 / KODATE_BUY=戸建て売買"
+            "CHINTAI=賃貸 / MANSION_BUY=マンション売買 / KODATE_BUY=戸建て売買 / "
+            "TOCHI_BUY=土地売買（建物を伴わない）"
         ),
     )
     sort_order: Mapped[int] = mapped_column(
@@ -224,8 +225,9 @@ class ConditionSynonym(TimestampMixin, Base):
     property_family: Mapped[str | None] = mapped_column(
         String(20),
         comment=(
-            "適用する種別ファミリ（CHINTAI / MANSION_BUY / KODATE_BUY）。NULL=全ファミリ。"
-            "売買の証明書・性能評価系の語彙は賃貸と別体系のため辞書を2部構成にする"
+            "適用する種別ファミリ（CHINTAI / MANSION_BUY / KODATE_BUY / TOCHI_BUY）。"
+            "NULL=全ファミリ。辞書YAMLのセクション（chintai / common / buy）から機械的に展開する。"
+            "⚠ TOCHI_BUY の辞書はまだ無い（土地の設備条件は validate-config が弾く）"
         ),
     )
     pattern: Mapped[str] = mapped_column(
@@ -623,7 +625,9 @@ class MarketRate(TimestampMixin, Base):
     family: Mapped[str] = mapped_column(
         String(20),
         nullable=False,
-        comment="種別ファミリ。CHINTAI / MANSION_BUY / KODATE_BUY",
+        comment=(
+            "種別ファミリ。CHINTAI / MANSION_BUY / KODATE_BUY（TOCHI_BUY の相場はまだ入れていない）"
+        ),
     )
     source: Mapped[str] = mapped_column(
         String(30),

@@ -32,6 +32,10 @@ DEDUP_KEY_VERSION = "v2"
 FAMILY_CHINTAI = "CHINTAI"
 FAMILY_MANSION_BUY = "MANSION_BUY"
 FAMILY_KODATE_BUY = "KODATE_BUY"
+# 土地（Phase 9 → ADR 0024 決定2・課題#61）。⚠ 版（DEDUP_KEY_VERSION）は上げない。
+# 土地のキーは `v2|TOCHI_BUY|…` という新しい名前空間なので既存のキーと交わらず、
+# 上げると全掲載の regroup が要る。
+FAMILY_TOCHI_BUY = "TOCHI_BUY"
 
 
 def _area(value: object) -> str | None:
@@ -61,17 +65,27 @@ def dedup_components(
 
     ハッシュ化前の値を返すので、名寄せがなぜ一致した／しなかったかを
     テストやデバッグで目視できる。
-    """
-    if not address_normalized:
-        return None
 
+    ⚠ **知らないファミリは例外にする**（住所の有無より先に判定する）。
+    黙って既存の分岐へ落とすと、土地のように要素が合わないファミリでは
+    **キーが常に None になり、例外も出ずに名寄せされない**（→ 課題#61）。
+    """
     if family == FAMILY_KODATE_BUY:
         # 戸建ては専有面積が存在せず土地・建物の2軸になる。
         # area_sqm を流用すると名寄せ事故になるので別の要素で組む。
         parts = [_area(land_area_sqm), _area(building_area_sqm), normalize_layout(layout)]
-    else:
+    elif family == FAMILY_TOCHI_BUY:
+        # 建物が無いので住所（丁目まで）＋土地面積だけ。
+        # ⚠ 分譲地の同一丁目・同一面積の隣接区画は1グループに潰れる（既知の限界。
+        # 賃貸の「同一仕様の別住戸」→ 課題#13 と同型の判断 → ADR 0024 決定2）
+        parts = [_area(land_area_sqm)]
+    elif family in (FAMILY_CHINTAI, FAMILY_MANSION_BUY):
         parts = [normalize_layout(layout), _area(area_sqm), _int(floor_num)]
+    else:
+        raise ValueError(f"名寄せキーを組めない未知のファミリです: {family!r}")
 
+    if not address_normalized:
+        return None
     if any(part is None for part in parts):
         return None
     return [DEDUP_KEY_VERSION, family, address_normalized, *parts]  # type: ignore[list-item]

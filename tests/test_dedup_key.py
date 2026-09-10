@@ -200,6 +200,83 @@ def test_戸建ては土地と建物の2軸で組む() -> None:
     )
 
 
+# --- 既存キーの基準値（→ 課題#61） ----------------------------------------
+#
+# ⚠ 土地（TOCHI_BUY）の分岐を足すとき、**既存3ファミリのキーが1ビットでも
+# 変わると全掲載の名寄せが崩れる**（新旧キーが混在して半端に一致する）。
+# 例外にも件数の減少にもならず、グループが静かに割れるだけなので、
+# 2026-09-11 の HEAD（65d6e5b）で計算した sha256 をそのまま焼き込んで固定する。
+# ⚠ 意図して正規化ルールを変えるときは DEDUP_KEY_VERSION を上げ、ここも作り直す。
+
+_BASELINE_KEYS = [
+    (
+        "CHINTAI",
+        {
+            "address_normalized": "東京都足立区東和5丁目",
+            "layout": "1K",
+            "area_sqm": "25.64",
+            "floor_num": 4,
+        },
+        "ac9ef6550a8c6047c2cf230ca2feb400cd1d0b98655e887abe7eea7e87c8f651",
+    ),
+    (
+        "CHINTAI",
+        {
+            "address_normalized": "東京都八王子市東中野",
+            "layout": "1LDK",
+            "area_sqm": "44.99",
+            "floor_num": 1,
+        },
+        "0186ecefbc95b2b82e4199b4c58d78e9257177769a6520d8a9cb373874b45c84",
+    ),
+    (
+        "MANSION_BUY",
+        {
+            "address_normalized": "東京都千代田区神田多町2丁目",
+            "layout": "1LDK",
+            "area_sqm": "30.17",
+            "floor_num": 3,
+        },
+        "1fd90fb76951b8d91127259ffe6335d1b6e473a02c18098fccd99bf80dedfde8",
+    ),
+    (
+        "MANSION_BUY",
+        {
+            "address_normalized": "東京都港区芝浦4丁目",
+            "layout": "2LDK",
+            "area_sqm": "58.44",
+            "floor_num": 12,
+        },
+        "7fda46dcc7a090cface14fc80d1d5845c229609fe3387a2257d84c1eba2dc0ea",
+    ),
+    (
+        "KODATE_BUY",
+        {
+            "address_normalized": "埼玉県比企郡川島町上伊草",
+            "layout": "3LDK",
+            "land_area_sqm": "120.00",
+            "building_area_sqm": "84.02",
+        },
+        "3e2c74c9becdd22eb94338b57d9015cd13a13d28a31f65c50b49eca9eaf2983f",
+    ),
+    (
+        "KODATE_BUY",
+        {
+            "address_normalized": "東京都八王子市めじろ台2丁目",
+            "layout": "4LDK",
+            "land_area_sqm": "100.90",
+            "building_area_sqm": "79.32",
+        },
+        "b28e080d448af676f4c2d334671d7d80a4e67c05d1c2fe0c8f85c5ad17a4ec96",
+    ),
+]
+
+
+@pytest.mark.parametrize(("family", "kwargs", "expected"), _BASELINE_KEYS)
+def test_既存ファミリのキーは基準値から変わらない(family, kwargs, expected) -> None:
+    assert compute_dedup_key(family=family, **kwargs) == expected
+
+
 def test_キーはバージョンタグ付きのsha256() -> None:
     components = dedup_components(
         family=FAMILY_CHINTAI,

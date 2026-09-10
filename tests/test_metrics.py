@@ -6,6 +6,15 @@ import pytest
 
 from house_search.config import metrics as m
 
+# ⚠ 物件種別は**リテラル**で書く。`m.ALL_PROPERTY_TYPES` や `m.BUY_TYPES` を右辺に使うと、
+# 定数の中身が変わったとき左右が同時に変わり**検出できない**（→ 課題#61）。
+_R = "CHINTAI"
+_SM = "SHINCHIKU_MANSION"
+_CM = "CHUKO_MANSION"
+_SK = "SHINCHIKU_KODATE"
+_CK = "CHUKO_KODATE"
+_T = "TOCHI"
+
 
 def test_全metricが少なくとも1種別に紐づく() -> None:
     for spec in m.METRICS:
@@ -37,12 +46,13 @@ def test_新築には築年数metricを使わせない() -> None:
 
 
 def test_賃料metricは賃貸のみ_価格metricは売買のみ() -> None:
-    assert m.METRICS_BY_NAME["rent_total"].property_types == frozenset({m.CHINTAI})
-    assert m.METRICS_BY_NAME["price"].property_types == m.BUY_TYPES
+    assert m.METRICS_BY_NAME["rent_total"].property_types == {_R}
+    # 土地も売買なので価格を使う（→ 課題#61）
+    assert m.METRICS_BY_NAME["price"].property_types == {_SM, _CM, _SK, _CK, _T}
 
 
 def test_徒歩分数は全種別で使える() -> None:
-    assert m.METRICS_BY_NAME["walk_minutes"].property_types == m.ALL_PROPERTY_TYPES
+    assert m.METRICS_BY_NAME["walk_minutes"].property_types == {_R, _SM, _CM, _SK, _CK, _T}
 
 
 def test_metrics_forの並びは決定的() -> None:
@@ -119,7 +129,68 @@ def test_相場比は賃貸と売買4種別だけ() -> None:
     書けてしまう（書けても全件 missing になるだけで例外にならない → 課題#4）。
     """
     spec = m.METRICS_BY_NAME["market_rate_ratio"]
-    assert spec.property_types == frozenset({m.CHINTAI}) | m.BUY_TYPES
+    assert spec.property_types == {_R, _SM, _CM, _SK, _CK}
     assert spec.direction is m.Direction.LOWER_IS_BETTER
-    # ⚠ 「全種別」と同一集合になっていないこと（TOCHI 追加時に黙って通らないように）
-    assert spec.property_types != m.ALL_PROPERTY_TYPES or len(m.ALL_PROPERTY_TYPES) == 5
+    # ⚠ 土地には相場が無い（→ 課題#61）。旧版の
+    # 「`!= ALL or len(ALL) == 5`」は TOCHI 追加の前後どちらでも通り、ガードになっていなかった
+    assert "TOCHI" not in spec.property_types
+
+
+# --- レジストリのスナップショット（→ 課題#61） --------------------------------
+#
+# 全 metric・全 MUST 項目の「使える種別の集合」を**リテラルで**丸ごと固定する。
+# ⚠ 参照箇所をコメントで1つずつ判定するだけでは、`ALL_PROPERTY_TYPES` や
+# `BUY_TYPES` の中身が変わったとき**どの項目が土地へ開いたか**がレビューに現れない。
+# ここに固定しておけば、種別を足すと必ず落ち、差分がこの表の書き換えとして見える。
+
+# ⚠ `_ALL` は土地を含む6種別、`_BUY` は**建物を伴う**売買4種別（土地を含まない）。
+_ALL = {_R, _SM, _CM, _SK, _CK, _T}
+_BUY = {_SM, _CM, _SK, _CK}
+_MANSION = {_SM, _CM}
+_KODATE = {_SK, _CK}
+
+EXPECTED_METRIC_TYPES: dict[str, set[str]] = {
+    "rent_total": {_R},
+    "price": _BUY | {_T},
+    "monthly_cost": _MANSION,
+    "area_sqm": {_R} | _MANSION,
+    "building_area_sqm": _KODATE,
+    "land_area_sqm": _KODATE | {_T},
+    "age_years": {_R, _CM, _CK},
+    "walk_minutes": _ALL,
+    "commute_minutes": _ALL,
+    "flood_rank_avg": _ALL,
+    "flood_area_ratio": _ALL,
+    "landslide_area_ratio": _ALL,
+    "liquefaction_rank_avg": _ALL,
+    "market_rate_ratio": {_R} | _BUY,
+}
+
+EXPECTED_MUST_TYPES: dict[str, set[str]] = {
+    "rent_total_max": {_R},
+    "price_max": _BUY | {_T},
+    "monthly_cost_max": _MANSION,
+    "layouts": {_R} | _BUY,
+    "area_min": {_R} | _MANSION,
+    "area_max": {_R} | _MANSION,
+    "land_area_min": _KODATE | {_T},
+    "building_area_min": _KODATE,
+    "age_max": {_R, _CM, _CK},
+    "walk_minutes_max": _ALL,
+    "commute_minutes_max": _ALL,
+    "flood_rank_max": _ALL,
+    "landslide_special_ratio_max": _ALL,
+    "market_rate_ratio_min": {_R},
+    "floor_min": {_R} | _MANSION,
+    "features": _ALL,
+}
+
+
+def test_metricの適用種別はスナップショットどおり() -> None:
+    actual = {spec.name: set(spec.property_types) for spec in m.METRICS}
+    assert actual == EXPECTED_METRIC_TYPES
+
+
+def test_MUST項目の適用種別はスナップショットどおり() -> None:
+    actual = {spec.name: set(spec.property_types) for spec in m.MUST_ITEMS}
+    assert actual == EXPECTED_MUST_TYPES

@@ -21,13 +21,19 @@ SHINCHIKU_MANSION = "SHINCHIKU_MANSION"
 CHUKO_MANSION = "CHUKO_MANSION"
 SHINCHIKU_KODATE = "SHINCHIKU_KODATE"
 CHUKO_KODATE = "CHUKO_KODATE"
+TOCHI = "TOCHI"
 
 ALL_PROPERTY_TYPES = frozenset(
-    {CHINTAI, SHINCHIKU_MANSION, CHUKO_MANSION, SHINCHIKU_KODATE, CHUKO_KODATE}
+    {CHINTAI, SHINCHIKU_MANSION, CHUKO_MANSION, SHINCHIKU_KODATE, CHUKO_KODATE, TOCHI}
 )
+# ⚠⚠ **建物を伴う売買4種別。TOCHI を入れない**（→ ADR 0024 決定1・課題#61）。
+# 入れると `layouts`（間取り）と `market_rate_ratio`（相場比）が黙って土地にも開き、
+# 土地パターンに書けてしまう（書けても全件 unknown / missing になるだけで例外にならない）。
+# 土地へ広げたい項目は `BUY_TYPES | TOCHI_TYPES` と明示的に書く。
 BUY_TYPES = frozenset({SHINCHIKU_MANSION, CHUKO_MANSION, SHINCHIKU_KODATE, CHUKO_KODATE})
 MANSION_TYPES = frozenset({SHINCHIKU_MANSION, CHUKO_MANSION})
 KODATE_TYPES = frozenset({SHINCHIKU_KODATE, CHUKO_KODATE})
+TOCHI_TYPES = frozenset({TOCHI})
 
 
 class Family(StrEnum):
@@ -36,6 +42,7 @@ class Family(StrEnum):
     CHINTAI = "CHINTAI"
     MANSION_BUY = "MANSION_BUY"
     KODATE_BUY = "KODATE_BUY"
+    TOCHI_BUY = "TOCHI_BUY"
 
 
 FAMILY_OF: dict[str, Family] = {
@@ -44,6 +51,7 @@ FAMILY_OF: dict[str, Family] = {
     CHUKO_MANSION: Family.MANSION_BUY,
     SHINCHIKU_KODATE: Family.KODATE_BUY,
     CHUKO_KODATE: Family.KODATE_BUY,
+    TOCHI: Family.TOCHI_BUY,
 }
 
 
@@ -89,7 +97,7 @@ METRICS: tuple[MetricSpec, ...] = (
         label="物件価格",
         direction=Direction.LOWER_IS_BETTER,
         unit="円",
-        property_types=BUY_TYPES,
+        property_types=BUY_TYPES | TOCHI_TYPES,
         source_columns=("price",),
     ),
     MetricSpec(
@@ -122,7 +130,7 @@ METRICS: tuple[MetricSpec, ...] = (
         label="土地面積",
         direction=Direction.HIGHER_IS_BETTER,
         unit="㎡",
-        property_types=KODATE_TYPES,
+        property_types=KODATE_TYPES | TOCHI_TYPES,
         source_columns=("land_area_sqm",),
     ),
     MetricSpec(
@@ -214,6 +222,8 @@ METRICS: tuple[MetricSpec, ...] = (
         # ⚠ **新築マンションは中古マンションの相場と比べている**（新築の取引は
         # 不動産情報ライブラリにほとんど載らない）。パターン内の相対比較としては
         # 機能するが、水準そのものは高めに出る既知の偏り（→ 課題#49）。
+        # ⚠ 土地（TOCHI）は含めない。土地の取引相場は市区の中央値が約1万倍に広がり、
+        # 入れるかは相関ゲートを実測してから決める（→ 課題#61 の 9d）。
         property_types=frozenset({CHINTAI}) | BUY_TYPES,
         source_columns=("market_rate_ratio",),
     ),
@@ -240,7 +250,7 @@ class MustSpec:
 
 MUST_ITEMS: tuple[MustSpec, ...] = (
     MustSpec("rent_total_max", "賃料＋管理費の上限", frozenset({CHINTAI}), ("rent_total",), True),
-    MustSpec("price_max", "物件価格の上限", BUY_TYPES, ("price",), True),
+    MustSpec("price_max", "物件価格の上限", BUY_TYPES | TOCHI_TYPES, ("price",), True),
     MustSpec(
         "monthly_cost_max",
         "管理費＋修繕積立金の上限",
@@ -252,10 +262,10 @@ MUST_ITEMS: tuple[MustSpec, ...] = (
     MustSpec(
         "layouts",
         "間取り",
-        # ⚠ ALL_PROPERTY_TYPES を使わない。土地（Phase 9）を足すとその瞬間に
-        # 間取りが土地へも適用可能になり、土地パターンに間取りMUSTが書けてしまう
-        # （validate は通り、実行時に全件 unknown になるだけで例外にならない）。
-        # 現時点の値は ALL_PROPERTY_TYPES と同一集合（→ 課題#4）。
+        # ⚠ ALL_PROPERTY_TYPES を使わない。土地（TOCHI）には間取りの概念が無いのに
+        # 全種別へ開くと、土地パターンに間取りMUSTが書けてしまう
+        # （validate は通り、実行時に全件 unknown になるだけで例外にならない → 課題#4・#61）。
+        # ⚠ BUY_TYPES が TOCHI を含まないことに依存している（→ 定義のコメント）。
         frozenset({CHINTAI}) | BUY_TYPES,
         ("layout",),
         True,
@@ -266,7 +276,9 @@ MUST_ITEMS: tuple[MustSpec, ...] = (
     MustSpec(
         "area_max", "専有面積の上限", frozenset({CHINTAI}) | MANSION_TYPES, ("area_sqm",), True
     ),
-    MustSpec("land_area_min", "土地面積の下限", KODATE_TYPES, ("land_area_sqm",), True),
+    MustSpec(
+        "land_area_min", "土地面積の下限", KODATE_TYPES | TOCHI_TYPES, ("land_area_sqm",), True
+    ),
     MustSpec("building_area_min", "建物面積の下限", KODATE_TYPES, ("building_area_sqm",), True),
     MustSpec(
         "age_max",
@@ -326,6 +338,9 @@ MUST_ITEMS: tuple[MustSpec, ...] = (
     MustSpec(
         "features",
         "必須の設備・条件コード",
+        # ⚠ 全種別に置くが、そのファミリの辞書に無い条件コードは validate-config が
+        # NG にする（→ ADR 0024 決定3）。判定は「詳細取得済みで抽出結果に無ければ fail」
+        # なので、辞書が空の土地に1つでも書くと**詳細取得済みが全件 fail**になる。
         ALL_PROPERTY_TYPES,
         ("raw_features_text",),
         # 設備は詳細ページの本文からしか判定できない。

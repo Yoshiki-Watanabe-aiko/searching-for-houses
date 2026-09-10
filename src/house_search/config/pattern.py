@@ -1,11 +1,11 @@
 """検索パターンYAML（v2スキーマ）の型定義と読み込み。
 
-物件種別を discriminator にして3ファミリ粒度の discriminated union へ分岐する。
-5種別を5クラスに割らないのは、新築/中古の差が age_years・価格未定・リノベ関連の
+物件種別を discriminator にして4ファミリ粒度の discriminated union へ分岐する。
+6種別を6クラスに割らないのは、新築/中古の差が age_years・価格未定・リノベ関連の
 数項目だけで、クラスを分けるほどの構造差がないため。
 
-売買ファミリ（``MansionBuyPattern`` / ``KodateBuyPattern``）は Phase 0 時点では
-骨格のみ。Phase 6 で売買metricの実装と併せて肉付けする。
+土地（``TochiBuyPattern``・Phase 9）は建物を伴わないので、間取り・専有面積・
+建物面積・築年数・所在階を MUST にもクラスにも置かない（→ ADR 0024・課題#61）。
 """
 
 from __future__ import annotations
@@ -219,6 +219,18 @@ class KodateBuyMust(MustBase):
     land_area_min: float | None = Field(default=None, description="土地面積の下限（㎡）")
     building_area_min: float | None = Field(default=None, description="建物面積の下限（㎡）")
     age_max: int | None = Field(default=None, description="築年数の上限（年・中古のみ）")
+
+
+class TochiBuyMust(MustBase):
+    """土地売買のMUST条件。
+
+    ⚠ 建物の概念が無いので、間取り・専有面積・建物面積・築年数・所在階は置かない。
+    書くと ``extra="forbid"`` で読み込みの段で弾かれる（書けてしまうと判定されず
+    全件 unknown になるだけで例外にならない → 課題#61）。
+    """
+
+    price_max: int | None = Field(default=None, description="物件価格の上限（円）")
+    land_area_min: float | None = Field(default=None, description="土地面積の下限（㎡）")
 
 
 class FeatureWant(Strict):
@@ -438,8 +450,15 @@ class KodateBuyPattern(PatternBase):
     must: KodateBuyMust = Field(default_factory=KodateBuyMust)
 
 
+class TochiBuyPattern(PatternBase):
+    """土地売買の検索パターン（Phase 9 → 課題#61）。"""
+
+    property_type: Literal["TOCHI"]
+    must: TochiBuyMust = Field(default_factory=TochiBuyMust)
+
+
 SearchPattern = Annotated[
-    ChintaiPattern | MansionBuyPattern | KodateBuyPattern,
+    ChintaiPattern | MansionBuyPattern | KodateBuyPattern | TochiBuyPattern,
     Field(discriminator="property_type"),
 ]
 

@@ -4,7 +4,8 @@
 欠陥である（例外にならず、件数も減らず、値だけが狂う）。賃貸だけで動かしている
 限り表面化しないので、**売買アダプタを書く前に**塞いでおく（→ 課題#4）。
 
-1. 既存2パターンの ``config_hash`` が変わらないこと（売買追加で賃貸を壊さない担保）
+1. 既存6パターンの ``config_hash`` が変わらないこと（種別の追加で稼働中の採点を壊さない担保。
+   2026-09-11 に賃貸2本から売買を含む6本へ広げた → 課題#61）
 2. 再抽出が**掲載ごとの種別**で辞書を選ぶこと（固定だと売買が賃貸辞書で抽出される）
 3. 売買辞書がマンション・戸建ての**両ファミリ**へ展開されること（戸建てが抽出0件になる）
 4. 通知の金額欄が**ファミリで意味を変える**こと（売買で物件価格が賃料として出る）
@@ -16,6 +17,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from sqlalchemy import text
 
 from house_search.config.pattern import load_patterns
@@ -25,28 +27,42 @@ from house_search.notify.format import NotifiableListing, price_field, price_sum
 from house_search.pipeline import tasks
 from house_search.scrape import SCRAPERS, get_scraper
 
-# 2026-09-05 に実測した現在値。⚠ **売買の追加でこれが変わってはいけない。**
-# 変わったら「賃貸パターンの採点が変わった」ということなので、
+# 実測した現在値。⚠ **種別の追加でこれが変わってはいけない。**
+# 変わったら「稼働中のパターンの採点が変わった」ということなので、
 # `rescore` が全件走り、通知と順位が動く。
 # 意図してスコア設定（want / commute / property_type）を変えたときだけ更新する。
+#
+# ⚠ `WantSpec` / `NumericWant` / `FeatureWant` / `CommuteSpec` にフィールドを足すと、
+# **既定値付きでも `model_dump` の出力に現れるので6本すべてが変わる**（→ 課題#61）。
 BASELINE_CONFIG_HASH = {
     # 2026-09-06: 2面採光・クローゼット（各 weight 3）を want へ追加した（→ 課題#15）。
     # 直前は 2026-09-05 の相場との比較（market_rate_ratio・weight 15 → 課題#49）。
     # ⚠ どちらも意図した変更なので基準値を更新している
     "東京23区賃貸": "80a59af050a2306bab541e025a28ff0e23a9199f9c649fbb8d8f4da0c5bfef2a",
     "近郊60分圏賃貸": "2c3869bd61f9cfc4aa604cde11b172f9fc07ebe7733619a380c43067e53bd096",
+    # 売買4本は 2026-09-11（Phase 9 の着手時）に固定した。それまでは賃貸2本しか
+    # 固定しておらず、土地を足す変更で売買の採点が変わっても検出できなかった。
+    # 直前の意図した変更は 2026-09-10 の液状化の配点（→ 課題#59）。
+    "中古一戸建て": "fa3cadaacfdc31490f3f5807e1b3d749a89f7ecc1f1437f32d38cd64d319bf43",
+    "中古マンション": "00a8612c09683689d01cdee36a84b02a612a67b9b977bf592c7794fb32fccef3",
+    "新築一戸建て": "fd6be1af039a4c4ff619f36883959a3726a260cdfb3b897ff400dd79edd9589f",
+    "新築マンション": "3738c14dc49540ba97f6f5a4160df0c549554358a871f63d78bba30127dcebee",
 }
 
 
-def test_既存2パターンのconfig_hashが変わらない() -> None:
-    """稼働中の賃貸2パターンのスコア設定が変わっていないことを固定する。"""
+@pytest.mark.parametrize(("name", "expected"), sorted(BASELINE_CONFIG_HASH.items()))
+def test_既存6パターンのconfig_hashが変わらない(name: str, expected: str) -> None:
+    """稼働中の6パターン（賃貸2・売買4）のスコア設定が変わっていないことを固定する。
+
+    ⚠ パターンごとに分けて報告する。1関数でループすると最初の不一致で止まり、
+    「何本変わったか」が読めない（全本が変わるならモデル側、1本ならその YAML を疑う）。
+    """
     patterns = {p.name: p for p in load_patterns(load_settings().configs_dir)}
-    for name, expected in BASELINE_CONFIG_HASH.items():
-        assert name in patterns, f"検索パターン '{name}' が見つかりません"
-        assert patterns[name].config_hash() == expected, (
-            f"'{name}' の config_hash が変わっています。"
-            "スコア設定を意図して変えたのでなければ、賃貸を壊す変更が入っています"
-        )
+    assert name in patterns, f"検索パターン '{name}' が見つかりません"
+    assert patterns[name].config_hash() == expected, (
+        f"'{name}' の config_hash が変わっています。"
+        "スコア設定を意図して変えたのでなければ、稼働中のパターンを壊す変更が入っています"
+    )
 
 
 def test_売買辞書はマンションと戸建ての両ファミリへ展開される(tmp_path: Path) -> None:
