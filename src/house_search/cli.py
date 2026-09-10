@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from house_search import __version__
@@ -54,7 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p_scan = sub.add_parser("scan", help="一覧取得 → MUST判定 → 詳細 → 抽出 → スコア → 通知")
-    p_scan.add_argument("--pattern", help="対象の検索パターン名（省略時は全件）")
+    p_scan.add_argument(
+        "--pattern",
+        action="append",
+        help="対象の検索パターン名（複数指定可。省略時は全件）",
+    )
     p_scan.add_argument("--site", help="対象サイトコード（省略時はパターンの全サイト）")
     p_scan.add_argument(
         "--family",
@@ -83,7 +87,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p_sold = sub.add_parser("check-sold", help="成約・掲載終了の確認")
-    p_sold.add_argument("--pattern", help="対象の検索パターン名")
+    p_sold.add_argument(
+        "--pattern", action="append", help="対象の検索パターン名（複数指定可）"
+    )
     p_sold.add_argument(
         "--family",
         action="append",
@@ -99,11 +105,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p_digest = sub.add_parser("digest", help="日次ランキングダイジェストの送信")
-    p_digest.add_argument("--pattern", help="対象の検索パターン名")
+    p_digest.add_argument(
+        "--pattern", action="append", help="対象の検索パターン名（複数指定可）"
+    )
     p_digest.add_argument("--dry-run", action="store_true", help="送信せず件数だけ確認する")
 
     p_rescore = sub.add_parser("rescore", help="DB内の物件属性から再採点（ネットワーク不要）")
-    p_rescore.add_argument("--pattern", help="対象の検索パターン名")
+    p_rescore.add_argument(
+        "--pattern", action="append", help="対象の検索パターン名（複数指定可）"
+    )
 
     p_sync = sub.add_parser("sync-dict", help="data/feature_dictionary.yaml → m_condition_synonyms")
     p_sync.add_argument("--test-db", action="store_true", help="テストDBへ同期する")
@@ -244,18 +254,59 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def select_patterns(patterns, *, name: str | None = None, families: Sequence[str] | None = None):
+def detect_config_drift(before: Mapping[str, str], after: Mapping[str, str]) -> list[str]:
+    """scan の実行中に採点設定（``config_hash``）が変わっていないかを調べる（純関数）。
+
+    ⚠⚠ **切り離し起動した長時間の scan は、起動時に読んだ YAML を保持したまま走る。**
+    その最中に YAML を編集して ``rescore`` を流しても、scan が後から
+    **起動時の（古い）設定で採点を上書きする**。
+    ⚠ **例外にならず件数も減らない**ので、``config_hash`` の不一致だけが手がかりになる。
+    実測（2026-09-10）では、3時間54分の掃き出しの最中に液状化の配点を入れたため、
+    掃き出しが後から採点した売買3本で**配点がまるごと失われていた**（→ 課題#59）。
+
+    ⚠ 実行中に増えた／消えたパターンは、この scan の採点対象ではないので黙る。
+    ⚠ 出力は名前順に固定する（実行ごとに並びが揺れると差分が読めない）。
+    """
+    lines: list[str] = []
+    for pattern_name in sorted(set(before) & set(after)):
+        if before[pattern_name] == after[pattern_name]:
+            continue
+        lines.append(
+            f"⚠ 実行中に検索パターン「{pattern_name}」の採点設定が変わりました"
+            f"（{before[pattern_name][:12]} → {after[pattern_name][:12]}）。"
+            "この scan は**起動時の設定で採点している**ので、"
+            f"`house-search rescore --pattern {pattern_name}` で採点し直してください。"
+        )
+    return lines
+
+
+def select_patterns(
+    patterns,
+    *,
+    name: str | Sequence[str] | None = None,
+    families: Sequence[str] | None = None,
+):
     """読み込んだ検索パターンを ``--pattern`` / ``--family`` で絞る（純関数）。
 
     ⚠ **絞った結果が空なら例外にする。** 黙って空を返すと、タスクが「対象0件で正常終了」
     を繰り返して気づけない（--family の綴り違いは argparse の choices が弾くが、
     configs/ にそのファミリのパターンが1本も無い状態は検出できない）。
+
+    ⚠ ``name`` は**複数指定できる**（``--pattern`` を繰り返す）。argparse は同じ
+    オプションの繰り返しを既定で**最後の値に上書き**するので、``action="append"``
+    が無いと「3本指定したのに1本しか採点されない」ことが
+    **エラーにも警告にもならない**（2026-09-10 に実際に踏んだ）。
+    ⚠ **1つでも見つからなければ例外にする。** 綴り違いを黙って捨てると、
+    指定したパターンが採点されないまま正常終了して同じ形に戻る。
     """
     selected = list(patterns)
     if name:
-        selected = [p for p in selected if p.name == name]
-        if not selected:
-            raise ValueError(f"検索パターン '{name}' が見つかりません")
+        wanted_names = [name] if isinstance(name, str) else list(name)
+        selected = [p for p in selected if p.name in set(wanted_names)]
+        found = {p.name for p in selected}
+        missing = [n for n in wanted_names if n not in found]
+        if missing:
+            raise ValueError(f"検索パターンが見つかりません: {', '.join(missing)}")
     if families:
         wanted = {str(f) for f in families}
         selected = [p for p in selected if p.family.value in wanted]
@@ -264,7 +315,7 @@ def select_patterns(patterns, *, name: str | None = None, families: Sequence[str
     return selected
 
 
-def _load_patterns(name: str | None, families: Sequence[str] | None = None):
+def _load_patterns(name: str | Sequence[str] | None, families: Sequence[str] | None = None):
     """検索パターンを読み込む。``--pattern`` / ``--family`` 指定があれば絞る。"""
     from house_search.config.pattern import load_patterns
     from house_search.config.settings import load_settings
@@ -433,6 +484,10 @@ def _run_scan(args: argparse.Namespace) -> int:
         )
 
     patterns = _load_patterns(args.pattern, args.family)
+    # ⚠ 実行の前後で採点設定が変わっていないかを見るための基準（→ detect_config_drift）。
+    #   掃き出しのような長時間の scan は数時間走るので、その最中に YAML を編集すると
+    #   **この scan が後から古い設定で採点を上書きする**。
+    config_before = {pattern.name: pattern.config_hash() for pattern in patterns}
 
     # ⚠ 通知先は**取得を始める前に**解決しておく。`_notify` は
     #   `scan_pattern` の最後にあるので、ここで確かめないと
@@ -513,8 +568,32 @@ def _run_scan(args: argparse.Namespace) -> int:
             run_errors.append(f"[{summary.pattern_name}] {message}")
             exit_code = 1
 
+    _warn_config_drift(config_before, args)
     _send_run_errors(runtime, run_errors)
     return exit_code
+
+
+def _warn_config_drift(before: dict[str, str], args: argparse.Namespace) -> None:
+    """実行中に YAML が変わっていたら実行サマリへ警告を出す（→ detect_config_drift）。
+
+    ⚠ **エラーにはしない。** 取得も採点も成功しており、ここで終了コードを非0にすると
+    タスクの「前回の結果」＝唯一の異常検知経路に本物の失敗が埋もれる（→ 課題#45・#56）。
+    ⚠ **エラーチャンネルへも送らない。** 稀な事象なので実行サマリとログで足りる。
+    """
+    try:
+        after = {
+            pattern.name: pattern.config_hash()
+            for pattern in _load_patterns(args.pattern, args.family)
+        }
+    except Exception as exc:  # noqa: BLE001 - 読み直せない理由は問わない
+        # ⚠ 読み直せなかったことも黙らせない（「確認できていない」と「変化なし」は別）。
+        print(
+            f"⚠ 検索パターンを読み直せず、採点設定の変化を確認できません: {exc}",
+            file=sys.stderr,
+        )
+        return
+    for line in detect_config_drift(before, after):
+        print(line, file=sys.stderr)
 
 
 def _send_run_errors(runtime, errors: list[str]) -> None:
