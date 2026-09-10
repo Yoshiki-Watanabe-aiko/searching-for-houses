@@ -152,6 +152,90 @@ class TestFamilyFilter:
             cli.select_patterns(patterns, name="無い")
 
 
+class TestPatternArgument:
+    """``--pattern`` の複数指定（→ 2026-09-10 の実測）。
+
+    ⚠ argparse は同じオプションを繰り返すと **最後の値で上書き** する。
+    ``--family`` は複数指定できるのに ``--pattern`` は単一だったため、
+    ``rescore --pattern A --pattern B --pattern C`` が C だけを採点して
+    **エラーにも警告にもならなかった**（3本のつもりで1本しか処理されない）。
+    """
+
+    def test_scanで複数指定できる(self) -> None:
+        args = build_parser().parse_args(["scan", "--pattern", "A", "--pattern", "B"])
+        assert args.pattern == ["A", "B"]
+
+    def test_rescoreで複数指定できる(self) -> None:
+        args = build_parser().parse_args(["rescore", "--pattern", "A", "--pattern", "B"])
+        assert args.pattern == ["A", "B"]
+
+    def test_check_soldとdigestも同じ(self) -> None:
+        for command in ("check-sold", "digest"):
+            args = build_parser().parse_args([command, "--pattern", "A", "--pattern", "B"])
+            assert args.pattern == ["A", "B"], command
+
+    def test_未指定はNone(self) -> None:
+        assert build_parser().parse_args(["rescore"]).pattern is None
+
+    def test_1つに絞るコマンドは単一のまま(self) -> None:
+        """⚠ fetch-commutes 等は「対象を1つに絞る」仕様なので複数指定にしない。"""
+        args = build_parser().parse_args(["fetch-commutes", "--pattern", "A", "--pattern", "B"])
+        assert args.pattern == "B"
+
+    def test_複数の名前で絞れる(self) -> None:
+        from house_search.config.pattern import parse_pattern
+
+        chintai = parse_pattern(_pattern("賃貸", "CHINTAI"))
+        mansion = parse_pattern(_pattern("中古M", "CHUKO_MANSION"))
+        kodate = parse_pattern(_pattern("新築K", "SHINCHIKU_KODATE"))
+        patterns = [chintai, mansion, kodate]
+
+        assert cli.select_patterns(patterns, name=["中古M", "新築K"]) == [mansion, kodate]
+        # 単一の文字列も従来どおり通す（既存の呼び出しを壊さない）
+        assert cli.select_patterns(patterns, name="中古M") == [mansion]
+
+    def test_1つでも見つからなければ例外(self) -> None:
+        """⚠ 綴り違いを黙って捨てると「指定したのに採点されない」に戻る。"""
+        from house_search.config.pattern import parse_pattern
+
+        patterns = [parse_pattern(_pattern("賃貸", "CHINTAI"))]
+        with pytest.raises(ValueError):
+            cli.select_patterns(patterns, name=["賃貸", "無い"])
+
+
+class TestConfigDrift:
+    """scan の実行中に採点設定が変わったことを検出する（→ 2026-09-10・課題#59）。
+
+    ⚠⚠ **切り離し起動した長時間の scan は、起動時に読んだ YAML を保持したまま走る。**
+    その最中に YAML を編集して ``rescore`` を流しても、scan が後から
+    **起動時の（古い）設定で採点を上書きする**。
+    ⚠ **例外にならず件数も減らない**ので、``config_hash`` の不一致だけが手がかりになる。
+    実測（2026-09-10）では、3時間54分の掃き出しの最中に液状化の配点を入れたため、
+    掃き出しが後から採点した売買3本で **配点がまるごと失われていた**。
+    """
+
+    def test_変化が無ければ黙る(self) -> None:
+        before = {"A": "h1", "B": "h2"}
+        assert cli.detect_config_drift(before, dict(before)) == []
+
+    def test_ハッシュが変われば警告する(self) -> None:
+        warnings = cli.detect_config_drift({"A": "h1"}, {"A": "h9"})
+        assert len(warnings) == 1
+        assert "A" in warnings[0]
+        # ⚠ 対処（rescore）まで書かないと、警告を見ても次の一手が分からない
+        assert "rescore" in warnings[0]
+
+    def test_共通するパターンだけを比べる(self) -> None:
+        """⚠ 実行中に増えた／消えたパターンは、この scan の採点対象ではない。"""
+        assert cli.detect_config_drift({"A": "h1"}, {"A": "h1", "B": "h2"}) == []
+        assert cli.detect_config_drift({"A": "h1", "B": "h2"}, {"A": "h1"}) == []
+
+    def test_複数変われば順序を固定してすべて出す(self) -> None:
+        warnings = cli.detect_config_drift({"B": "h2", "A": "h1"}, {"B": "h8", "A": "h9"})
+        assert len(warnings) == 2
+        assert "A" in warnings[0] and "B" in warnings[1]
+
+
 def _pattern(name: str, property_type: str) -> dict:
     """最小の検索パターン（ファミリの絞り込みだけを試すためのもの）。"""
     return {
