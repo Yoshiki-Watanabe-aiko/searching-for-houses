@@ -3,6 +3,9 @@
 --
 -- どの条件がどの物件種別に適用されるか。v1 の対応表を引き継ぎ、
 -- v2 で追加した売買固有条件の割り当てを加えている。
+-- 土地（TOCHI）は**設備抽出辞書の tochi: で使う条件だけ**を紐づける（課題#61 9c・
+-- ユーザー判断 2026-09-11）。⚠ JOIN で入れるので、条件コードを綴り間違えた行は
+-- 例外にならず黙って落ちる（tests/test_condition_seed.py が 04 と突き合わせる）。
 -- ============================================================
 
 INSERT INTO m_condition_property_types (condition_id, property_type_id)
@@ -176,6 +179,7 @@ FROM (VALUES
     ('EQUIP_CITY_GAS', 'CHUKO_MANSION'),
     ('EQUIP_CITY_GAS', 'SHINCHIKU_KODATE'),
     ('EQUIP_CITY_GAS', 'SHINCHIKU_MANSION'),
+    ('EQUIP_CITY_GAS', 'TOCHI'),
     ('EQUIP_DELIVERY_BOX', 'CHINTAI'),
     ('EQUIP_DELIVERY_BOX', 'CHUKO_MANSION'),
     ('EQUIP_DELIVERY_BOX', 'SHINCHIKU_MANSION'),
@@ -254,6 +258,7 @@ FROM (VALUES
     ('FEAT_TOWER', 'SHINCHIKU_MANSION'),
     ('FEAT_VACANT', 'CHUKO_KODATE'),
     ('FEAT_VACANT', 'CHUKO_MANSION'),
+    ('FEAT_VACANT', 'TOCHI'),
     ('FEAT_WITH_LAYOUT', 'CHINTAI'),
     ('FEAT_WITH_LAYOUT', 'CHUKO_KODATE'),
     ('FEAT_WITH_LAYOUT', 'CHUKO_MANSION'),
@@ -341,6 +346,7 @@ FROM (VALUES
     ('LAND_BUILDING_COVERAGE', 'CHUKO_KODATE'),
     ('LAND_BUILDING_COVERAGE', 'SHINCHIKU_KODATE'),
     ('LAND_BUILD_CONDITION', 'SHINCHIKU_KODATE'),
+    ('LAND_CLEARED_DELIVERY', 'TOCHI'),
     ('LAND_FLOOR_AREA_RATIO', 'CHUKO_KODATE'),
     ('LAND_FLOOR_AREA_RATIO', 'SHINCHIKU_KODATE'),
     ('LAND_LEASEHOLD', 'CHUKO_KODATE'),
@@ -351,6 +357,8 @@ FROM (VALUES
     ('LAND_OWNERSHIP', 'CHUKO_MANSION'),
     ('LAND_OWNERSHIP', 'SHINCHIKU_KODATE'),
     ('LAND_OWNERSHIP', 'SHINCHIKU_MANSION'),
+    ('LAND_REGULAR_SHAPE', 'TOCHI'),
+    ('LAND_ROAD_6M', 'TOCHI'),
     ('LAND_ROAD_WIDTH', 'CHUKO_KODATE'),
     ('LAND_ROAD_WIDTH', 'SHINCHIKU_KODATE'),
     ('LAND_SETBACK', 'CHUKO_KODATE'),
@@ -362,6 +370,7 @@ FROM (VALUES
     ('LOC_CORNER', 'SHINCHIKU_MANSION'),
     ('LOC_CORNER_LOT', 'CHUKO_KODATE'),
     ('LOC_CORNER_LOT', 'SHINCHIKU_KODATE'),
+    ('LOC_CORNER_LOT', 'TOCHI'),
     ('LOC_FLOOR_1', 'CHINTAI'),
     ('LOC_FLOOR_2UP', 'CHINTAI'),
     ('LOC_FLOOR_2UP', 'CHUKO_MANSION'),
@@ -373,6 +382,7 @@ FROM (VALUES
     ('LOC_SOUTH_FACING', 'SHINCHIKU_MANSION'),
     ('LOC_SOUTH_ROAD', 'CHUKO_KODATE'),
     ('LOC_SOUTH_ROAD', 'SHINCHIKU_KODATE'),
+    ('LOC_SOUTH_ROAD', 'TOCHI'),
     ('LOC_TOP_FLOOR', 'CHINTAI'),
     ('LOC_TOP_FLOOR', 'CHUKO_MANSION'),
     ('LOC_TOP_FLOOR', 'SHINCHIKU_MANSION'),

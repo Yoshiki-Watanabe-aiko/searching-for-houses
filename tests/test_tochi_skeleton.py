@@ -9,7 +9,9 @@
 3. 名寄せ: 土地は「住所＋土地面積」で組む。⚠ 既存の `else` に落ちると
    間取り＋専有面積＋階を要求して**キーが常に None**になり、名寄せが静かに死ぬ
 4. 設備条件: 辞書に無い条件コードを書いたら validate-config が NG にする。
-   ⚠ 土地の辞書は空なので、MUST に1つ書くと詳細取得済みが**全件 fail**になる
+   ⚠ 辞書に無い条件を MUST に1つ書くと、詳細取得済みが**全件 fail**になる。
+   9c で土地の辞書（`tochi:`）ができたので、雛形の設備の WANT は
+   ``tests/test_tochi_dictionary.py`` が固定している
 """
 
 from __future__ import annotations
@@ -163,8 +165,8 @@ def test_雛形YAMLが読める() -> None:
     pattern = load_pattern_file(TEMPLATE)
     assert type(pattern).__name__ == "TochiBuyPattern"
     assert pattern.property_type == "TOCHI"
-    # ⚠ 土地の辞書が空の間は設備条件を書かない（→ 4.）
-    assert pattern.want.features == []
+    # ⚠ MUST の設備条件は書かない（→ 4.）。WANT は 9c で辞書ができたので置いてある
+    # （中身は tests/test_tochi_dictionary.py の Test雛形 が辞書と突き合わせる）
     assert pattern.must.features == []
 
 

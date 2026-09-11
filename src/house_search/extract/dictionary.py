@@ -30,11 +30,19 @@ from house_search.extract.normalize import normalize_text
 # ここへ置くかは人が選ばず、**マスタ（m_condition_property_types）が
 # マンション売買にも紐づけているか**で機械的に決まる。`buy` へ表記をコピーすると
 # 同じ語を2箇所で保守することになり、賃貸側を直したとき売買側が黙って古くなる。
+#
+# ⚠ **`tochi` は TOCHI_BUY だけへ展開する**（→ 課題#61 9c）。土地には建物が無いので
+# `common` / `buy`（エレベーター・オートロック・食洗機…）を土地へ広げない。
+# 土地の特徴ピックアップは「即引渡し可」「南側道路面す」のように売買と表記も違う。
 FAMILY_SECTIONS: dict[str, tuple[str, ...]] = {
     "chintai": ("CHINTAI",),
     "common": ("CHINTAI", "MANSION_BUY", "KODATE_BUY"),
     "buy": ("MANSION_BUY", "KODATE_BUY"),
+    "tochi": ("TOCHI_BUY",),
 }
+
+# 辞書YAMLのトップレベルで、セクション以外に置いてよいキー
+_METADATA_KEYS = frozenset({"version"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,12 +89,33 @@ def _as_patterns(values: Any) -> tuple[str, ...]:
     return tuple(seen)
 
 
+def _check_sections(raw: dict[str, Any]) -> None:
+    """知らないトップレベルのキーを例外にする。
+
+    ⚠ 綴り違いのセクション（``tochii:``）は、以前は**黙って読み飛ばしていた**。
+    その条件はどのファミリにも展開されず、抽出0件のまま正常終了する（→ 課題#61 9c）。
+    """
+    unknown = sorted(set(raw) - FAMILY_SECTIONS.keys() - _METADATA_KEYS)
+    if unknown:
+        raise ValueError(
+            f"辞書に知らないセクションがあります: {unknown}（使えるのは {sorted(FAMILY_SECTIONS)}）"
+        )
+
+
 def load_dictionary(path: Path) -> FeatureDictionary:
-    """辞書YAMLを読み込む。パターンは照合と同じ正規化を通す。"""
+    """辞書YAMLを読み込む。パターンは照合と同じ正規化を通す。
+
+    ⚠ 同じ条件が2つのセクションから同じファミリへ展開される書き方は例外にする
+    （``chintai`` と ``common`` の両方に書くと CHINTAI に2エントリでき、
+    ``sync-dict`` が両方を入れるので、どちらの表記が効いているのか読めなくなる）。
+    ファミリが違えば同じ条件を別のセクションに書いてよい（売買と土地の ``FEAT_VACANT``）。
+    """
     with path.open(encoding="utf-8") as fh:
         raw = yaml.safe_load(fh) or {}
+    _check_sections(raw)
 
     entries: list[DictionaryEntry] = []
+    origin: dict[tuple[str, str], str] = {}
     for section, families in FAMILY_SECTIONS.items():
         for code, spec in (raw.get(section) or {}).items():
             if not isinstance(spec, dict):
@@ -102,6 +131,12 @@ def load_dictionary(path: Path) -> FeatureDictionary:
             patterns = _as_patterns(spec.get("patterns"))
             negative = _as_patterns(spec.get("negative_patterns"))
             for family in families:
+                first = origin.setdefault((code, family), section)
+                if first != section:
+                    raise ValueError(
+                        f"辞書の条件 '{code}' がセクション '{first}' と '{section}' の両方から "
+                        f"{family} へ展開されます。どちらか一方にまとめてください"
+                    )
                 entries.append(
                     DictionaryEntry(
                         code=code,

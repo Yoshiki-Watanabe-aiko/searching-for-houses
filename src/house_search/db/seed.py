@@ -21,10 +21,13 @@ EXPECTED_MIN_ROWS = {
     # 土地（TOCHI）を足して6種別（→ 課題#61）。⚠ 5 のままだと、seed を当て忘れても
     # `>=` の判定で黙って通る（tests/test_property_type_seed.py がシードSQLと突き合わせる）
     "m_property_types": 6,
-    "m_sites": 12,
+    # ⚠ 以下4つは 9c の着手時点で実数（18 / 151 / 501）に追随していなかった
+    #   （→ 課題#61 9c。tests/test_condition_seed.py がシードSQLの行数と突き合わせる）
+    "m_sites": 18,
     "m_condition_categories": 19,
-    "m_conditions": 148,
-    "m_condition_property_types": 487,
+    # 土地の3条件（整形地・前道6m以上・更地渡し）と土地の紐づけ7件を足した（→ 課題#61 9c）
+    "m_conditions": 154,
+    "m_condition_property_types": 508,
     # 総務省の全国地方公共団体コード（47都道府県・全市区町村＋政令市の行政区）
     "m_cities": 1918,
     # 07（サイト固有マッピング931行）＋ 08（ATHOME/NIFTY のスラグ902行）

@@ -124,6 +124,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_reextract = sub.add_parser("re-extract", help="raw_features_text から全件再抽出")
     p_reextract.add_argument("--limit", type=int, help="処理件数の上限（動作確認用）")
+    p_reextract.add_argument(
+        "--family",
+        choices=[f.value for f in Family],
+        help=(
+            "そのファミリの掲載だけを抽出し直す（省略時は全件）。辞書に1ファミリだけを足したとき、"
+            "ほかのファミリの設備を1行も動かさずに反映するために使う（→ 課題#61 9c）"
+        ),
+    )
 
     p_unknown = sub.add_parser("report-unknown", help="辞書未登録の表記を出現回数順に一覧")
     p_unknown.add_argument("--limit", type=int, default=50, help="表示件数（既定50）")
@@ -807,9 +815,19 @@ def _cmd_re_extract(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    result = re_extract(runtime, limit=args.limit)
+    # ⚠ そのファミリの辞書が DB に無いまま回すと、抽出0件で**黙って成功する**
+    # （sync-dict の流し忘れ。既存の設備があれば空で上書きされる）
+    if args.family and not runtime.dictionary.for_family(args.family):
+        print(
+            f"{args.family} の設備抽出辞書が空です。"
+            "先に `house-search db-seed` → `house-search sync-dict` を実行してください。",
+            file=sys.stderr,
+        )
+        return 1
+    result = re_extract(runtime, family=args.family, limit=args.limit)
+    target = f"（{args.family} のみ）" if args.family else ""
     print(
-        f"再抽出: {result.listings}物件 / 設備 {result.features}件 / "
+        f"再抽出{target}: {result.listings}物件 / 設備 {result.features}件 / "
         f"未知表記 {result.unknown_tokens}件"
     )
     return 0

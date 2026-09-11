@@ -44,6 +44,7 @@ uv run house-search scan --site SUUMO
 uv run house-search digest --dry-run       # 送信せず件数確認
 uv run house-search rescore                # 再採点（ネットワーク不要）
 uv run house-search re-extract             # 設備の再抽出（ネットワーク不要）
+uv run house-search re-extract --family TOCHI_BUY  # そのファミリだけ再抽出（1ファミリの辞書を足したとき）
 uv run house-search report-unknown         # 辞書未登録の表記
 uv run house-search coverage               # サイト別の抽出充足率（ネットワーク不要）
 uv run house-search regroup                # 名寄せの再構築（ネットワーク不要・通知なし）
@@ -252,15 +253,18 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
 - ⚠⚠ **`BUY_TYPES` に TOCHI（土地）を入れない**（→ ADR 0024・課題#61）。`BUY_TYPES` は
   「建物を伴う売買4種別」の意味で、入れると `layouts`・`market_rate_ratio` が黙って土地に開く。
   土地へ広げる項目は `BUY_TYPES | TOCHI_TYPES` と明示的に書く。
-  ⚠ **土地の設備辞書ができるまで、土地パターンに `features` を書かない**（MUST なら詳細取得済みが
-  全件 fail）。書けば `validate-config` が「辞書に無い条件コード」として NG にする。
+  ⚠ **土地パターンの `features` は辞書の `tochi:` にある条件だけを WANT に書く**（→ 課題#61 9c）。
+  辞書に無い条件は WANT なら全件 miss、MUST なら詳細取得済みが全件 fail になり、`validate-config` が
+  NG にする。⚠ 建築条件付きは辞書に入れない（表示専用。「建築条件なし」のタグを拾うため）。
+  ⚠ `tochi:` は TOCHI_BUY だけへ展開し、05 の TOCHI 行は辞書で使う条件だけ（テストが両方向で固定）
   ⚠ `validate-config --configs-dir <別dir>` は孤児スコアの確認を省く（実運用の configs を基準に
   しないと、稼働中の全パターンを「孤児」と判定して DELETE を案内していた）
 - ⚠⚠ **SUUMO 土地のアダプタ（`suumo_tochi.py`）を戸建ての派生にしない**（→ 課題#61）。戸建ては
   新築の索引に混ざる `/tochi/` を**捨て**、土地は `/tochi/` **だけ**を採る。継承すると0件になるだけで
   例外にならない。⚠ **建築条件付きは詳細の仕様表の「建築条件」欄（`付` / `-`）で判定する**（一覧の
   本文には `建築条件なし` のタグや購入サポートのバッジが混ざる）。⚠ 未知表記は**全ファミリの辞書**と
-  照合されるので、土地の辞書（9c）は `report-unknown` ではなく `raw_features_text` から作る
+  照合されるので、他ファミリの辞書にある語（角地・都市ガス）は土地の未知表記に出ない。土地の辞書を
+  育てるときは `report-unknown` だけでなく `raw_features_text` を直接数える
 - ⚠⚠ **一覧の UPSERT は種別が違う既存行を更新しない**（`ON CONFLICT … WHERE` → 課題#61・#62）。
   一意キーが `(site_id, external_id)` なので、無いと既存行を別の種別の値で上書きし種別は元のまま残す
   （SUUMO は新築と中古で `nc_` を使い回す。本番で新築マンション80位が中古の値で採点されていた）。
