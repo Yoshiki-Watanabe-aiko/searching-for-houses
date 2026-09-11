@@ -568,6 +568,14 @@ def _run_scan(args: argparse.Namespace) -> int:
                 # ⚠ エラーではなく正常な状態変化なので、エラー欄ではなく
                 # ここに出す（→ 課題#55）。0件のときは何も足さない
                 + (f" / 掲載終了 {site.details_sold:3d}件" if site.details_sold else "")
+                # ⚠ 同じ ID が別のファミリで登録済みで、更新を見送った（→ 課題#61）。
+                #   エラーではないが黙って捨てない
+                + (
+                    f" / ファミリ違いで見送り {len(site.family_mismatch)}件"
+                    f"（{', '.join(site.family_mismatch[:5])}）"
+                    if site.family_mismatch
+                    else ""
+                )
             )
         if summary.skipped_sites:
             # 理由はサイトごとに違う（アダプタ未実装 / is_active=false /

@@ -68,8 +68,12 @@ _UNDECIDED = "価格未定"
 _CHIBAN_NOTE = re.compile(r"[（(]地番[）)].*$")
 
 
-def _detail_address(value: str | None) -> str | None:
-    """詳細ページの所在地から導線リンクと地番の注記を落とす。"""
+def address_without_chiban(value: str | None) -> str | None:
+    """所在地から導線リンクと地番の注記を落とす。
+
+    ⚠ 土地（``suumo_tochi``）も一覧・詳細の両方で使う（``瀬田２-856番17、76（地番）``）。
+    別々に書くと片方を直したときもう片方が黙って古くなる。
+    """
     cleaned = clean_address(value)
     if not cleaned:
         return None
@@ -360,7 +364,7 @@ class SuumoNewMansionScraper:
             # 棟はキーを作れず名寄せされずに単独で残る（クラス docstring のとおり設計どおり）
             floor_num=parse_floor(values.get("所在階")),
             total_floors=parse_total_floors(values.get("構造・階建て")),
-            address=_detail_address(values.get("所在地")),
+            address=address_without_chiban(values.get("所在地")),
             walk_minutes=_walk_minutes(access),
             type_specific_attrs={
                 key: values[key]

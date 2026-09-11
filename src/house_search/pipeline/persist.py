@@ -18,7 +18,7 @@ from typing import Any
 from sqlalchemy import Connection, text
 
 from house_search.scoring.listing_view import ListingView, StationAccess
-from house_search.scrape.base import ScrapedDetail, ScrapedListing
+from house_search.scrape.base import ScrapedDetail, ScrapedListing, caveats_of
 
 # 通知種別。
 NEW = "new"
@@ -45,6 +45,22 @@ class UpsertOutcome:
         if self.is_new or self.is_reinstated:
             return NEW
         return self.price_event
+
+
+@dataclass(frozen=True, slots=True)
+class UpsertBatch:
+    """``upsert_listings`` の結果。
+
+    ⚠ ``family_mismatch`` は**ファミリの食い違いで更新を見送った** external_id。
+    一意キーが ``(site_id, external_id)`` で種別を含まないので、同じ ``nc_`` が戸建てと
+    土地の両方に出ると、素朴な UPSERT は戸建ての行を土地の値で上書きし種別は戸建ての
+    まま残す（例外にならない → 課題#61・計画書 §6.5-2）。見送った掲載は新着・価格変動の
+    判定にも含めない。**黙って捨てず**、実行サマリへ件数を出す。
+    ⚠ 同じファミリの別種別（新築⇔中古）は見送らない（→ 課題#62）。
+    """
+
+    outcomes: tuple[UpsertOutcome, ...] = ()
+    family_mismatch: tuple[str, ...] = ()
 
 
 def load_lookup(conn: Connection, table: str) -> dict[str, int]:
@@ -233,6 +249,18 @@ _UPSERT = text(
         status = 'active',
         last_seen_at = now(),
         updated_at = now()
+    -- ⚠⚠ **ファミリが違う既存行は更新しない**（→ 課題#61・計画書 §6.5-2）。一意キーが
+    -- ``(site_id, external_id)`` で種別を含まないので、これが無いと同じ ``nc_`` が
+    -- 戸建てと土地の両方に出たとき**戸建ての行を土地の値で上書きし、種別は戸建てのまま**
+    -- にする（例外にならない）。見送った行は RETURNING が0行になるので呼び出し側で数える。
+    -- ⚠ **同じファミリの別種別（新築⇔中古）は従来どおり更新する。** SUUMO は新築と中古で
+    --   同じ ``nc_`` を使い回す実例がある（2026-09-11 実測2件）。どちらの種別に持たせるかは
+    --   ユーザー判断が要るので、このガードでは稼働中の挙動を変えない（→ 課題#62）
+    WHERE t_listings.property_type_id = EXCLUDED.property_type_id
+       OR (SELECT old_pt.family FROM m_property_types old_pt
+           WHERE old_pt.id = t_listings.property_type_id)
+        = (SELECT new_pt.family FROM m_property_types new_pt
+           WHERE new_pt.id = EXCLUDED.property_type_id)
     RETURNING id
     """
 )
@@ -346,14 +374,17 @@ def upsert_listings(
     site_id: int,
     property_type_id: int,
     city_index: CityIndex,
-) -> list[UpsertOutcome]:
+) -> UpsertBatch:
     """一覧の掲載をまとめて upsert し、新着・再掲載・価格変動を判定する。
 
     既存行の取得を1クエリにまとめてあるのは、掲載1件ごとに SELECT すると
     ページあたり数十回の往復になるため。
+
+    ⚠ **ファミリが違う既存行は更新せず、``family_mismatch`` に external_id を返す**
+    （→ ``UpsertBatch``）。1件の食い違いでバッチ全体は止めない。
     """
     if not listings:
-        return []
+        return UpsertBatch()
 
     external_ids = [listing.external_id for listing in listings]
     existing = {
@@ -364,6 +395,7 @@ def upsert_listings(
     }
 
     outcomes: list[UpsertOutcome] = []
+    family_mismatch: list[str] = []
     for listing in listings:
         previous = existing.get(listing.external_id)
         is_new = previous is None
@@ -413,7 +445,12 @@ def upsert_listings(
                 "price_max": listing.price_max,
                 "type_specific_attrs": json.dumps(listing.type_specific_attrs, ensure_ascii=False),
             },
-        ).scalar_one()
+        ).scalar_one_or_none()
+        if row_id is None:
+            # ⚠ ``ON CONFLICT … WHERE`` がファミリの食い違いで更新を見送った。
+            #   新着・価格変動の判定にも含めない（別の種別の価格と比べることになる）
+            family_mismatch.append(listing.external_id)
+            continue
 
         outcomes.append(
             UpsertOutcome(
@@ -425,7 +462,7 @@ def upsert_listings(
                 price_prev=old_price,
             )
         )
-    return outcomes
+    return UpsertBatch(outcomes=tuple(outcomes), family_mismatch=tuple(family_mismatch))
 
 
 def save_detail(conn: Connection, listing_id: int, detail: ScrapedDetail) -> None:
@@ -768,6 +805,8 @@ _PROPERTY_COLUMNS = """
     -- ここだけ従来どおり「徒歩は徒歩の最小」に落とす（情報を捨てない）。
     )) AS walk_minutes,
     p.prefecture, p.address, p.image_url, pt.family AS property_family,
+    -- 取引上の注意事項（建築条件付き等 → 課題#61 論点5）を通知へ運ぶ。表示専用
+    p.type_specific_attrs,
     (
         p.detail_fetched_at IS NOT NULL
         OR EXISTS (
@@ -1009,6 +1048,7 @@ def _to_view(
         detail_fetched=row.detail_fetched,
         feature_codes=feature_codes,
         stations=stations,
+        caveats=caveats_of(row.type_specific_attrs),
     )
 
 

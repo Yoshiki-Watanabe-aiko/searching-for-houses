@@ -60,6 +60,11 @@ class NotifiableListing:
     # 倒すと、渡し忘れた稼働中の経路が黙って売買表示になる）。
     repair_reserve_monthly: int | None = None
     property_family: str | None = None
+    # --- 土地（Phase 9b → 課題#61） ---
+    # ⚠ 土地は間取り・専有面積・築年を持たないので、条件欄は土地面積で出す
+    land_area_sqm: float | None = None
+    # 取引上の注意事項（建築条件付き・借地権・再建築不可 → 論点5）。条件欄に明示する
+    caveats: tuple[str, ...] = ()
     # 通勤時間は目的地（commute セクション）を設定したパターンでだけ付く任意の属性。
     # 既定値付きにして、設定していない呼び出しをこれまでどおり動かす。
     commute_minutes: int | None = None
@@ -122,6 +127,8 @@ def notifiable_from(
         rent_total=view.rent_total,
         repair_reserve_monthly=view.repair_reserve_monthly,
         property_family=view.property_family,
+        land_area_sqm=view.land_area_sqm,
+        caveats=view.caveats,
         layout=view.layout,
         area_sqm=view.area_sqm,
         age_years=view.age_years,
@@ -148,6 +155,10 @@ _BUY_FAMILIES = frozenset({"MANSION_BUY", "KODATE_BUY", "TOCHI_BUY"})
 
 def _is_buy(prop: NotifiableListing) -> bool:
     return (prop.property_family or "CHINTAI") in _BUY_FAMILIES
+
+
+def _is_land(prop: NotifiableListing) -> bool:
+    return prop.property_family == "TOCHI_BUY"
 
 
 def _man_yen(value: int | None) -> str:
@@ -224,6 +235,25 @@ def _buy_monthly_note(prop: NotifiableListing) -> str:
     )
 
 
+#: 土地の金額欄に添える注記（→ 課題#61 論点4・2026-09-11 決定）。
+#: ⚠ 土地の価格は**建物代を含まない**。ローン返済額だけを見て戸建てと比べると
+#:   建物ぶん（2〜3千万円）安く見える
+LAND_ONLY_NOTE = "土地のみ・建物代別"
+
+
+def _land_monthly_note(prop: NotifiableListing) -> str:
+    """土地の金額欄に添えるローン返済額と注記。
+
+    ⚠ **管理費の欄は出さない**（論点4）。土地に管理費・修繕積立金は無く、
+    戸建てと同じ ``管理費等 不明`` を出すと「取れていないだけ」に読めてしまう。
+    """
+    loan = monthly_loan_payment(prop.price)
+    if loan is None:
+        # 価格未定。ローンは計算できないが「土地のみ」の注記は出す
+        return f"\n※{LAND_ONLY_NOTE}"
+    return f"\n（ローン {_yen(loan)}/月）\n※{LOAN_NOTE}\n※{LAND_ONLY_NOTE}"
+
+
 def price_field(prop: NotifiableListing) -> tuple[str, str]:
     """個別通知に出す金額欄の ``(見出し, 本文)``。
 
@@ -231,6 +261,8 @@ def price_field(prop: NotifiableListing) -> tuple[str, str]:
     賃貸前提のまま出すと、中古マンションの通知に「35,012,000円」が**賃料**として
     並び、物件価格と管理費を足した無意味な数字を誰も異常と思わない（→ 課題#4）。
     """
+    if _is_land(prop):
+        return "価格", f"{_man_yen(prop.price)}{_land_monthly_note(prop)}"
     if _is_buy(prop):
         return "価格", f"{_man_yen(prop.price)}{_buy_monthly_note(prop)}"
     return (
@@ -250,15 +282,28 @@ def _summary_line(prop: NotifiableListing) -> str:
 
     通勤時間は目的地を設定したパターンでだけ出る。駅を同定できなかった掲載は
     「通勤不明」と明示する（黙って省くと、条件が効いているのか分からない）。
+
+    ⚠ **土地は土地面積から始める**（→ 課題#61）。間取り・専有面積・築年は土地に無く、
+    そのまま出すと ``— / — / 築年不明`` が並んで肝心の土地面積が出ない。
+    ⚠ 取引上の注意事項（建築条件付き等）は**末尾に明示する**（論点5）。
     """
-    parts = [
-        prop.layout or "—",
-        f"{prop.area_sqm:.1f}㎡" if prop.area_sqm is not None else "—",
-        f"築{prop.age_years}年" if prop.age_years is not None else "築年不明",
-        f"徒歩{prop.walk_minutes}分" if prop.walk_minutes is not None else "徒歩不明",
-    ]
+    walk = f"徒歩{prop.walk_minutes}分" if prop.walk_minutes is not None else "徒歩不明"
+    if _is_land(prop):
+        parts = [
+            f"土地{prop.land_area_sqm:.1f}㎡" if prop.land_area_sqm is not None else "土地面積不明",
+            walk,
+        ]
+    else:
+        parts = [
+            prop.layout or "—",
+            f"{prop.area_sqm:.1f}㎡" if prop.area_sqm is not None else "—",
+            f"築{prop.age_years}年" if prop.age_years is not None else "築年不明",
+            walk,
+        ]
     if prop.commute_minutes is not None:
         parts.append(f"通勤{prop.commute_minutes}分")
+    if prop.caveats:
+        parts.append("⚠" + "・".join(prop.caveats))
     return " / ".join(parts)
 
 

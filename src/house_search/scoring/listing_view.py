@@ -130,6 +130,11 @@ class ListingView:
     # 掲載（名寄せしたグループ全体）が挙げる駅。**表示専用**で採点には使わない
     # （徒歩と通勤の数値は walk_minutes / commute_minutes が持つ）。
     stations: tuple[StationAccess, ...] = ()
+    # 取引上の注意事項（建築条件付き・借地権・再建築不可 → 課題#61 論点5）。
+    # **表示専用**で採点にも MUST にも使わない（除外 MUST は件数を実測してから設計する）。
+    # ⚠ 掲載そのものの ``type_specific_attrs`` から読む（グループの和集合にはしない。
+    #   建築条件は区画ごとに違いうるので、別の掲載の条件を混ぜると誤読の元になる）
+    caveats: tuple[str, ...] = ()
 
     @property
     def normalized_layout(self) -> str | None:

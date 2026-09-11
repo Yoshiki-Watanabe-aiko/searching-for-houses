@@ -62,14 +62,14 @@ def _upsert(
     city_index: CityIndex,
     listing: ScrapedListing,
 ) -> int:
-    outcomes = upsert_listings(
+    batch = upsert_listings(
         conn,
         [listing],
         site_id=site_id,
         property_type_id=ptype_id,
         city_index=city_index,
     )
-    return outcomes[0].listing_id
+    return batch.outcomes[0].listing_id
 
 
 def _row(conn: Connection, listing_id: int) -> tuple:

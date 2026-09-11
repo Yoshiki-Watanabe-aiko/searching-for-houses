@@ -316,10 +316,14 @@ def test_賃貸アダプタは種別を宣言しないので賃貸として登�
     # ⚠ 種別が増えたら**ここが落ちて気づく**のが狙い。増やすときは
     # 通知の金額表示（notify/format.py）・辞書のファミリ・詳細キューの絞り込みも
     # その種別で通ることを確かめてから足す（→ 課題#4 手順1・課題#54）
+    # ⚠ 土地（TOCHI）は Phase 9b（2026-09-11）で足した。通知は土地の分岐
+    #   （tests/test_notify_tochi.py）、詳細キューは種別で絞る（課題#54）。
+    #   ⚠ 辞書の tochi セクションはまだ無い（9c）ので、土地の設備抽出は0件になる
     assert {ptype for _code, ptype in SCRAPERS} == {
         "CHINTAI",
         "CHUKO_MANSION",
         "SHINCHIKU_MANSION",
         "CHUKO_KODATE",
         "SHINCHIKU_KODATE",
+        "TOCHI",
     }
