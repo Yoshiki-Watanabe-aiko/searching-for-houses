@@ -351,6 +351,19 @@ MUST_ITEMS: tuple[MustSpec, ...] = (
         False,
     ),
     MustSpec(
+        "freehold_only",
+        "所有権のみ（借地権を除く）",
+        # ⚠ マンションと戸建てだけ（ユーザー判断 2026-09-12 → 課題#65）。土地は含めない
+        # （土地の借地は通知の注意事項として表示するだけ → 課題#61 論点5）。
+        BUY_TYPES,
+        # 権利形態の原文（``scrape.base.LAND_RIGHTS_ATTR_KEYS``）から採点のたびに導く。
+        ("type_specific_attrs",),
+        # 権利形態は詳細ページの仕様表にしか出ない（新築マンションの棟は一覧の販売期の
+        # 注記から借地だけ分かるが、所有権の棟には注記が付かない）。
+        # ⚠ 読めない掲載は unknown → unknown_policy（売買4本は keep）に委ねる。
+        False,
+    ),
+    MustSpec(
         "features",
         "必須の設備・条件コード",
         # ⚠ 全種別に置くが、そのファミリの辞書に無い条件コードは validate-config が

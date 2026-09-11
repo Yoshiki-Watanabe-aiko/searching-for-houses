@@ -32,6 +32,7 @@ from house_search.scrape.base import (
     ScrapedDetail,
     ScrapedListing,
     clean_address,
+    leasehold_flag,
     parse_area_sqm,
     parse_built_on,
     parse_floor,
@@ -296,7 +297,12 @@ class SuumoNewMansionScraper:
             fields = _basic_fields(unit)
             access = fields.get("交通")
 
-            attrs: dict[str, object] = {"price_undecided": undecided}
+            attrs: dict[str, object] = {
+                "price_undecided": undecided,
+                # ⚠ 借地の注記が無ければ None を明示する（JSONB の ``||`` マージなので、
+                #   書かないと以前の注記が残り続ける → ``price_undecided`` と同じ理由）
+                "販売期の権利形態": _leasehold_note(unit),
+            }
             if fields.get("引渡時期"):
                 attrs["引渡時期"] = fields["引渡時期"]
 
@@ -382,6 +388,30 @@ class SuumoNewMansionScraper:
         """
         response = fetcher.get(url)
         return response.status_code == 404
+
+
+def _leasehold_note(unit) -> str | None:
+    """販売期の注記に借地の語があれば、その注記の原文を返す（→ 課題#65）。
+
+    ⚠⚠ **棟の詳細ページには権利形態の欄が無い**（仕様表は9項目だけ）。借地の棟は
+    一覧の価格行に ``価格未定 （（一般定期借地権））`` ・
+    ``8890万円～1億4240万円 （先着順(定期転借地権)）`` のような注記が付くので、
+    「所有権のみ」の判定にはこれを使う（実測: 港区30件中4件・板橋区11件中2件）。
+    ⚠ 所有権の棟には注記が付かないので、注記が無いことは「所有権」の証拠にしない
+    （None ＝ 判定不能として ``unknown_policy`` に委ねる）。
+    """
+    for row in unit.cssselect("li.cassette_price-list_item"):
+        values = row.cssselect("div.cassette_price-value")
+        if not values:
+            continue
+        note = " ".join(values[0].text_content().split())
+        accents = row.cssselect("span.cassette_price-accent")
+        if accents:
+            # 価格そのもの（``8890万円～1億4240万円``）を落として注記だけにする
+            note = note.replace(" ".join(accents[0].text_content().split()), "", 1).strip()
+        if leasehold_flag(note) is True:
+            return note
+    return None
 
 
 def _read_prices(unit) -> tuple[int | None, int | None, int | None, str | None, bool]:

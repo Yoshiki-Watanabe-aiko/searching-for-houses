@@ -197,6 +197,14 @@ class ChintaiMust(MustBase):
     )
 
 
+#: マンション・戸建て共通の ``freehold_only`` の説明（→ 課題#65）
+_FREEHOLD_ONLY_DESCRIPTION = (
+    "true なら所有権の掲載だけを残し、借地権（賃借権・地上権・定期借地・一部借地）を除く。"
+    "権利形態は詳細ページにしか出ないので、読めない掲載は unknown（unknown_policy に従う）。"
+    "false は書かないのと同じ"
+)
+
+
 class MansionBuyMust(MustBase):
     """マンション売買のMUST条件。"""
 
@@ -209,6 +217,7 @@ class MansionBuyMust(MustBase):
     area_max: float | None = Field(default=None, description="専有面積の上限（㎡）")
     age_max: int | None = Field(default=None, description="築年数の上限（年・中古のみ）")
     floor_min: int | None = Field(default=None, description="所在階の下限")
+    freehold_only: bool | None = Field(default=None, description=_FREEHOLD_ONLY_DESCRIPTION)
 
 
 class KodateBuyMust(MustBase):
@@ -219,6 +228,7 @@ class KodateBuyMust(MustBase):
     land_area_min: float | None = Field(default=None, description="土地面積の下限（㎡）")
     building_area_min: float | None = Field(default=None, description="建物面積の下限（㎡）")
     age_max: int | None = Field(default=None, description="築年数の上限（年・中古のみ）")
+    freehold_only: bool | None = Field(default=None, description=_FREEHOLD_ONLY_DESCRIPTION)
 
 
 class TochiBuyMust(MustBase):

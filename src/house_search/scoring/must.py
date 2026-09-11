@@ -134,6 +134,20 @@ def _check_features(view: ListingView, required: list[str]) -> tuple[str, object
     return (PASS if not missing else FAIL), missing
 
 
+def _check_freehold(view: ListingView) -> tuple[str, object]:
+    """所有権のみ（→ 課題#65）。借地なら fail、所有権なら pass、読めなければ unknown。
+
+    ⚠ 読めない掲載（詳細未取得・新築マンションの棟・原文が ``‐``）を fail にしない。
+    棟の詳細には権利形態の欄が無く、所有権の棟には一覧の注記も付かないので、
+    fail にすると新築マンションの上位の大半が消える（ユーザー判断 2026-09-12）。
+    """
+    if view.leasehold is None:
+        return UNKNOWN, None
+    if view.leasehold:
+        return FAIL, "借地"
+    return PASS, "所有権"
+
+
 def evaluate_must(view: ListingView, must: object, *, list_stage_only: bool = False) -> MustResult:
     """MUST条件を評価する。
 
@@ -145,7 +159,9 @@ def evaluate_must(view: ListingView, must: object, *, list_stage_only: bool = Fa
     # pydantic モデルのフィールド順ではなくレジストリ定義順で回して決定性を保つ。
     for name, spec in MUST_ITEMS_BY_NAME.items():
         expected = getattr(must, name, None)
-        if expected is None or expected == [] or expected == "":
+        # ⚠ ``False`` は「その条件を課さない」（``freehold_only: false``）。``is False`` で
+        #   比べる——``== False`` だと数値の上限 0 まで読み飛ばす
+        if expected is None or expected is False or expected == [] or expected == "":
             continue
 
         if list_stage_only and not spec.available_on_list:
@@ -160,6 +176,8 @@ def evaluate_must(view: ListingView, must: object, *, list_stage_only: bool = Fa
             result, actual = _check_layouts(view, list(expected))
         elif name == "features":
             result, actual = _check_features(view, list(expected))
+        elif name == "freehold_only":
+            result, actual = _check_freehold(view)
         else:  # pragma: no cover - レジストリに項目を足したら明示的に落とす
             raise ValueError(f"MUST項目 '{name}' の判定方法が未実装です")
 

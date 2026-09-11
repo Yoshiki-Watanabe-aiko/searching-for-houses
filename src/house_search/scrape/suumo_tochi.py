@@ -30,6 +30,7 @@ from house_search.scrape.area import CITY_VALUE_MAPPING, AreaTarget
 from house_search.scrape.base import (
     ScrapedDetail,
     ScrapedListing,
+    leasehold_flag,
     parse_area_sqm,
     query_separator,
 )
@@ -99,21 +100,6 @@ def build_condition_flag(value: str | None) -> bool | None:
     if text.startswith("付"):
         return True
     if text in {"-", "無", "なし", "無し"}:
-        return False
-    return None
-
-
-def leasehold_flag(value: str | None) -> bool | None:
-    """「土地の権利形態」欄から借地かどうかを読む。
-
-    ⚠ **借地が混ざるなら借地として明示する**（``所有権・借地権``）。所有権と並記でも
-    価格は相場より安く見え、借地料が別にかかる（相場比の異常値と同型 → 課題#50）。
-    """
-    if not value or value.strip() in _BLANK_VALUES:
-        return None
-    if "借地" in value:
-        return True
-    if "所有権" in value:
         return False
     return None
 
@@ -244,6 +230,8 @@ class SuumoTochiScraper:
         # 取引上の注意事項（→ 論点5・``CAVEAT_LABELS``）。⚠ 詳細は1回しか取らない
         # （``detail_fetched_at``）ので、判定できたら False も明示して書く
         attrs["build_condition"] = build_condition_flag(values.get("建築条件"))
+        # ⚠ 判定は売買の「所有権のみ」MUST と共通（``scrape.base.leasehold_flag`` → 課題#65）。
+        #    旧版は「借地」の語しか見ておらず、``地上権（旧）、新規20年`` を取りこぼした
         attrs["leasehold"] = leasehold_flag(values.get("土地の権利形態"))
         attrs["rebuild_prohibited"] = mentions_rebuild_prohibited(
             [*(values.get(label) for label in _REBUILD_SOURCE_LABELS), features]
