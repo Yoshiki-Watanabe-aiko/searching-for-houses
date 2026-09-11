@@ -166,6 +166,49 @@ class Test2面採光とクローゼットの表記:
         assert "LOC_TWO_SIDE_LIGHT" not in only_south.codes
 
 
+class Testガスとコンロの表記:
+    """光熱費の見積もり（→ 課題#64）の入力になるので、取りこぼしを固定する。
+
+    ⚠⚠ **ガス種別を取りこぼすと、プロパンの掲載が「不明」扱いになり、
+    期待値（帯ごとのプロパン確率）で見積もられて得をする。** 例外にも件数の
+    減少にもならない。実測（2026-09-11）で ABLE が「ガス」を付けずに
+    「プロパン」とだけ書く掲載が54件、APAMAN の「ガスキッチン」が1,060件、
+    「ガスレンジ付」が155件、辞書から漏れていた。
+    """
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "シャワー/給湯/プロパン/バルコニー",  # ⚠ ABLE。「ガス」が付かない
+            "ユニットバス給湯プロパンバルコニー",  # ABLE。区切りが無い形
+            "プロパンガス",  # 従来から拾えていた形
+            "LPガス",
+        ],
+    )
+    def test_プロパンの表記ゆれを拾える(self, text: str, dictionary: FeatureDictionary) -> None:
+        codes = extract_from_text(text, dictionary, family="CHINTAI").codes
+        assert "EQUIP_LPG" in codes
+        assert "EQUIP_CITY_GAS" not in codes
+
+    def test_都市ガスはプロパンに当たらない(self, dictionary: FeatureDictionary) -> None:
+        codes = extract_from_text("都市ガス", dictionary, family="CHINTAI").codes
+        assert "EQUIP_CITY_GAS" in codes
+        assert "EQUIP_LPG" not in codes
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "システムキッチン・ガスキッチン・コンロ2口以上",  # ⚠ APAMAN
+            "室内洗濯機置場・ガスレンジ付・給湯(ガス)",  # SUUMO・APAMAN・SMOCCA
+            "ガスコンロ設置可",  # 従来から拾えていた形
+        ],
+    )
+    def test_ガスコンロの表記ゆれを拾える(self, text: str, dictionary: FeatureDictionary) -> None:
+        codes = extract_from_text(text, dictionary, family="CHINTAI").codes
+        assert "KITCHEN_GAS" in codes
+        assert "KITCHEN_IH" not in codes
+
+
 # ============================================================
 # 辞書のセクション割り当て（→ 課題#4・Phase 6 手順5）
 #
