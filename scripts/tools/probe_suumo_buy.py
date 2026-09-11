@@ -15,6 +15,14 @@ HOMES・GOO・APAMAN・ATHOME はすべてこれで確定でき、実サイト�
 ⚠ **「効いた」の判定方法そのものの妥当性を先に担保する。** 存在しないキー
 （``zzz=1``）を送って総件数が変わらないことを確かめてから各パラメータを測る。
 
+⚠ **取得を伴う段は取得ロック（``scraping_lock``）を取り、取れなければ1本も叩かずに
+非0で終わる。** このツールは本体の ``SiteFetcher`` を通らないので、定期スキャン・
+掃き出しと並走すると SUUMO への実効間隔が半分になる（→ ADR 0013 決定8・
+計画書 Phase9 §6.6）。⚠ 保存済みHTMLの解析だけの段はロックを取らない（DB不要）。
+
+⚠ **robots の判定は本体と同じ ``RobotsRules`` で行う。** 標準の ``RobotFileParser`` は
+``*`` を展開せず ``/*?*sort=`` を黙って「許可」と判定する（→ 課題#52）。
+
 使い方（PowerShell 5.1。``&&`` は使えないので1行ずつ）:
 
     uv run python scripts/tools/probe_suumo_buy.py --stage robots
@@ -22,6 +30,8 @@ HOMES・GOO・APAMAN・ATHOME はすべてこれで確定でき、実サイト�
     uv run python scripts/tools/probe_suumo_buy.py --stage fetch --url "..." --label list_chuko_m
     uv run python scripts/tools/probe_suumo_buy.py --stage forms --label list_chuko_m
     uv run python scripts/tools/probe_suumo_buy.py --stage links --label city_chuko_m
+
+土地（Phase 9b）は保存先を分ける（``--cache-dir data/probe/suumo_tochi``）。
 """
 
 from __future__ import annotations
@@ -42,7 +52,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from house_search.config.settings import Settings  # noqa: E402
 from house_search.console import force_utf8_output  # noqa: E402
-from house_search.scrape.fetch import merge_robots_groups  # noqa: E402
+from house_search.db.session import scraping_lock  # noqa: E402
+from house_search.scrape.fetch import RobotsRules  # noqa: E402
 
 BASE_URL = "https://suumo.jp"
 ROBOTS_URL = f"{BASE_URL}/robots.txt"
@@ -59,12 +70,19 @@ CITY_PAGES: dict[str, str] = {
 # 許可を確かめたいパス。賃貸で使っている一覧パスも対照として入れる。
 ROBOTS_CHECK_PATHS = (
     "/jj/chintai/ichiran/FR301FC001/?ar=030&bs=040&ta=13",
+    # ⚠ 禁止されるべき対照（`/*?*sort=` → 課題#52）。ここが OK と出たら
+    # 判定器が `*` を展開していない＝このツールの判定そのものが信用できない
+    "/jj/chintai/ichiran/FR301FC001/?ar=030&bs=040&ta=13&sort=2",
     "/ms/chuko/tokyo/city/",
     "/ms/shinchiku/tokyo/city/",
     "/ikkodate/tokyo/city/",
     "/chukoikkodate/tokyo/city/",
     "/jj/bukken/ichiran/JJ012FC001/?ar=030&bs=011",
     "/ms/chuko/tokyo/sc_chiyoda/",
+    # 土地（Phase 9b）で叩く形
+    "/tochi/tokyo/city/",
+    "/tochi/tokyo/sc_setagaya/?po=1&pj=2",
+    "/tochi/tokyo/sc_setagaya/?po=1&pj=2&page=2",
 )
 
 DEFAULT_CACHE = Path("data/probe/suumo_buy")
@@ -101,25 +119,22 @@ def _fetch(client: httpx.Client, url: str, cache_dir: Path, label: str) -> httpx
 
 def stage_robots(client: httpx.Client | None, cache_dir: Path, *, reuse: bool = False) -> None:
     """robots.txt を取得し、売買のパスが許可されているかを判定する。"""
-    from urllib.robotparser import RobotFileParser
-
     if reuse:
         text = (cache_dir / "robots.html").read_text(encoding="utf-8")
     else:
         text = _fetch(client, ROBOTS_URL, cache_dir, "robots").text
-    # ⚠ 標準の RobotFileParser は同じ User-agent のグループが2つ以上あると
-    # 2つ目以降を丸ごと落とす（RFC 9309 §2.2.1 違反 → 課題#43）。
-    # 本体と同じく merge_robots_groups を通してから解析する
-    merged = merge_robots_groups(text)
-    parser = RobotFileParser()
-    parser.parse(merged if isinstance(merged, list) else merged.splitlines())
+    # ⚠ 本体（SiteFetcher）と同じ RobotsRules で判定する。標準の RobotFileParser は
+    # ①同じ User-agent の2つ目以降のグループを落とし（→ 課題#43）
+    # ②`*` を展開しない（→ 課題#52）。どちらも**許可側に倒れる**ので、
+    # 調査ツールだけ標準を使うと「実測では OK だったのに本体は叩かない」ことになる
+    rules = RobotsRules.parse(text)
 
     ua = client.headers.get("User-Agent", "*") if client else Settings().user_agent
     groups = len(re.findall(r"(?mi)^\s*user-agent\s*:\s*\*", text))
     print(f"\n  User-agent: {ua}")
     print(f"  `User-agent: *` のグループ数: {groups}（2以上なら統合が効いている）")
     for path in ROBOTS_CHECK_PATHS:
-        allowed = parser.can_fetch(ua, urljoin(BASE_URL, path))
+        allowed = rules.can_fetch(ua, urljoin(BASE_URL, path))
         print(f"    {'OK ' if allowed else 'NG '} {path}")
 
 
@@ -319,25 +334,35 @@ def main() -> int:
             stage_forms(args.cache_dir, args.label)
         return 0
 
-    settings = Settings()
-    with httpx.Client(
-        timeout=settings.request_timeout_sec,
-        follow_redirects=True,
-        headers={"User-Agent": settings.user_agent},
-    ) as client:
-        if args.stage == "robots":
-            stage_robots(client, args.cache_dir)
-        elif args.stage == "city":
-            stage_city(client, args.cache_dir, args.kind or ["chuko_m"])
-        elif args.stage == "measure":
-            if not (args.base and args.label):
-                parser.error("--base と --label が要ります")
-            label = args.label[0] if isinstance(args.label, list) else args.label
-            stage_measure(client, args.cache_dir, args.base, args.param or [""], label)
-        else:
-            if not (args.url and args.label):
-                parser.error("--url と --label が要ります")
-            stage_fetch(client, args.cache_dir, args.url, args.label)
+    # ⚠ ここから先は SUUMO を叩く。定期スキャン・掃き出しと並走させないため
+    # 取得ロックを取り、取れなければ1本も叩かずに非0で終わる（→ ADR 0013 決定8）
+    with scraping_lock() as acquired:
+        if not acquired:
+            print(
+                "他の取得処理（scan・掃き出し等）が実行中のため中止しました。"
+                "1本も取得していません。終わってから流し直してください",
+                file=sys.stderr,
+            )
+            return 1
+        settings = Settings()
+        with httpx.Client(
+            timeout=settings.request_timeout_sec,
+            follow_redirects=True,
+            headers={"User-Agent": settings.user_agent},
+        ) as client:
+            if args.stage == "robots":
+                stage_robots(client, args.cache_dir)
+            elif args.stage == "city":
+                stage_city(client, args.cache_dir, args.kind or ["chuko_m"])
+            elif args.stage == "measure":
+                if not (args.base and args.label):
+                    parser.error("--base と --label が要ります")
+                label = args.label[0] if isinstance(args.label, list) else args.label
+                stage_measure(client, args.cache_dir, args.base, args.param or [""], label)
+            else:
+                if not (args.url and args.label):
+                    parser.error("--url と --label が要ります")
+                stage_fetch(client, args.cache_dir, args.url, args.label)
     return 0
 
 
