@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 from house_search.commute.matcher import extract_station_names
+from house_search.scrape.base import leasehold_flag
 from house_search.scrape.suumo_shinchiku import (
     SuumoNewMansionScraper,
     parse_price_range,
@@ -224,6 +225,26 @@ def test_住所は都道府県の有無が混在する(itabashi) -> None:
 def test_引渡時期を種別固有属性に残す(itabashi) -> None:
     proud = _by_id(itabashi, "nc_67734880")
     assert proud.type_specific_attrs["引渡時期"] == "2028年1月中旬予定"
+
+
+def test_販売期に借地の注記があれば残す(itabashi, minato) -> None:
+    """⚠ **棟の詳細には権利形態の欄が無い**（→ 課題#65）。借地なら一覧の販売期に
+    ``（一般定期借地権）`` のような注記が付くので、それを「所有権のみ」の判定に使う。
+
+    ⚠ 注記の無い掲載も ``None`` を明示する（保存は JSONB の ``||`` マージなので、
+    書かないと以前の注記が残り続ける → ``price_undecided`` と同じ理由）。
+    """
+    leasehold_ids = {"nc_67732747", "nc_67731397", "nc_67723431", "nc_67730114"}
+    for listing in minato:
+        value = listing.type_specific_attrs["販売期の権利形態"]
+        if listing.external_id in leasehold_ids:
+            assert leasehold_flag(value) is True, listing.external_id
+        else:
+            assert value is None, listing.external_id
+    proud = _by_id(itabashi, "nc_67734880")
+    assert "一般定期借地権" in proud.type_specific_attrs["販売期の権利形態"]
+    # 販売期が2行とも借地（第6期3次・先着順）でも1つ残れば足りる
+    assert leasehold_flag(_by_id(itabashi, "nc_67729004").type_specific_attrs["販売期の権利形態"])
 
 
 # --- URL 組み立て --------------------------------------------------------

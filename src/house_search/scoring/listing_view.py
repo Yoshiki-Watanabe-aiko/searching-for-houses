@@ -137,6 +137,11 @@ class ListingView:
     # ⚠ 掲載そのものの ``type_specific_attrs`` から読む（グループの和集合にはしない。
     #   建築条件は区画ごとに違いうるので、別の掲載の条件を混ぜると誤読の元になる）
     caveats: tuple[str, ...] = ()
+    # 借地かどうか（→ 課題#65）。「所有権のみ」の MUST（``freehold_only``）が読む。
+    # ⚠ **グループ全体の権利形態の原文から導く**（1件でも借地なら True）。
+    #   None ＝ 読めない（詳細未取得・新築マンションの棟・原文が ``‐``）で、MUST は unknown。
+    # ⚠ ``caveats`` の「借地権」（土地のアダプタが立てる真偽値・表示専用）とは別物
+    leasehold: bool | None = None
     # 推定光熱費（→ 課題#64）。パターンに ``utility`` があるときだけ付く。
     # ⚠ 付いていないビューで ``living_cost`` を求めると例外にする（下の metric_value）。
     utility: UtilityEstimate | None = None

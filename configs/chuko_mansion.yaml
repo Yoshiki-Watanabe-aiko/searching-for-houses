@@ -74,6 +74,10 @@ must:
   walk_minutes_max: 20
   layouts: []                  # 制約なし。売買の md は部屋数でしか切れない（→ 課題#4）
   features: []
+  # 所有権のみ（借地権・地上権・定期借地・一部借地を除く → 課題#65・ユーザー判断 2026-09-12）。
+  # ⚠ 権利形態は詳細ページにしか出ない（新築マンションの棟は一覧の販売期の注記だけ）ので、
+  #   読めない掲載は unknown で下の unknown_policy に従う（keep ＝ 残す）
+  freehold_only: true
   # ⚠ drop へ倒さないこと。管理費未取得が「情報が無いだけ」で消える
   unknown_policy: keep
 

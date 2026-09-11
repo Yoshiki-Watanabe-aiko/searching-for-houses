@@ -20,7 +20,13 @@ from sqlalchemy import Connection, text
 
 from house_search.scoring.listing_view import ListingView, StationAccess
 from house_search.scoring.utility import UtilityProfile, estimate_utility
-from house_search.scrape.base import ScrapedDetail, ScrapedListing, caveats_of
+from house_search.scrape.base import (
+    LAND_RIGHTS_ATTR_KEYS,
+    ScrapedDetail,
+    ScrapedListing,
+    caveats_of,
+    leasehold_of,
+)
 
 # 通知種別。
 NEW = "new"
@@ -1176,6 +1182,26 @@ _GROUP_STATIONS = text(
 )
 
 
+# 権利形態の原文（→ 課題#65）。「所有権のみ」の MUST が読む ``ListingView.leasehold`` の材料。
+# ⚠ 設備・駅と同じく**グループ内の全掲載**から集める（同じ住戸を複数の会社が載せており、
+# 詳細を取っていない掲載が代表になっていても、別の掲載の権利形態から判定するため）。
+# ⚠ 判定の規則は ``scrape.base.leasehold_flag`` の1箇所に置き、SQL は原文を集めるだけ
+# （規則を2箇所に書くと片方だけ古くなる）。
+_GROUP_LAND_RIGHTS = text(
+    """
+    SELECT target.id AS listing_id, rights.value AS rights
+    FROM t_listings target
+    JOIN t_listings member
+      ON (target.group_id IS NULL AND member.id = target.id)
+      OR (target.group_id IS NOT NULL AND member.group_id = target.group_id)
+    CROSS JOIN LATERAL jsonb_each_text(COALESCE(member.type_specific_attrs, '{}'::jsonb)) rights
+    WHERE target.id = ANY(:ids)
+      AND rights.key = ANY(:keys)
+      AND rights.value IS NOT NULL
+    """
+)
+
+
 def _opt_float(value: Any) -> float | None:
     """NUMERIC 列（Decimal）を float へ。⚠ None はそのまま None を返す。
 
@@ -1189,6 +1215,7 @@ def _to_view(
     row: Any,
     feature_codes: frozenset[str],
     stations: tuple[StationAccess, ...] = (),
+    leasehold: bool | None = None,
 ) -> ListingView:
     return ListingView(
         listing_id=row.id,
@@ -1222,6 +1249,7 @@ def _to_view(
         feature_codes=feature_codes,
         stations=stations,
         caveats=caveats_of(row.type_specific_attrs),
+        leasehold=leasehold,
     )
 
 
@@ -1314,10 +1342,20 @@ def load_listing_views(
             )
         )
 
+    land_rights: dict[int, list[str]] = {}
+    rights_params = {"ids": ids, "keys": list(LAND_RIGHTS_ATTR_KEYS)}
+    for listing_id, rights in conn.execute(_GROUP_LAND_RIGHTS, rights_params):
+        land_rights.setdefault(listing_id, []).append(rights)
+
     views: dict[int, ListingView] = {}
     for row in rows:
         codes = frozenset(features.get(row.id, ()))
-        view = _to_view(row, codes, tuple(stations.get(row.id, ())))
+        view = _to_view(
+            row,
+            codes,
+            tuple(stations.get(row.id, ())),
+            leasehold=leasehold_of(land_rights.get(row.id, ())),
+        )
         if utility_profile is not None:
             # 光熱費はグループの和集合の設備から推定する（設備と同じく、サイトによって
             # ガス種別を書く・書かないが違うので、グループ全体から拾わないと情報が減る）

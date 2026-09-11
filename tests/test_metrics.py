@@ -115,6 +115,8 @@ def test_一覧だけで判定できないMUST項目が明示されている() -
         "market_rate_ratio_min",
         "flood_rank_max",
         "landslide_special_ratio_max",
+        # 権利形態は詳細ページの仕様表にしか出ない（新築マンションの棟は一覧の注記 → 課題#65）
+        "freehold_only",
     }
 
 
@@ -188,6 +190,8 @@ EXPECTED_MUST_TYPES: dict[str, set[str]] = {
     "market_rate_ratio_min": {_R},
     "floor_min": {_R} | _MANSION,
     "features": _ALL,
+    # ⚠ マンションと戸建てだけ（ユーザー判断 2026-09-12 → 課題#65）。土地は含めない
+    "freehold_only": _BUY,
 }
 
 

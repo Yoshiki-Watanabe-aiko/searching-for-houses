@@ -10,7 +10,7 @@ import datetime as dt
 import re
 import string
 import unicodedata
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -130,7 +130,9 @@ class ScrapedDetail:
 
 #: 取引上の注意事項。``type_specific_attrs`` のキー → 通知に出す語（→ 課題#61 論点5）。
 #: 土地のアダプタが詳細ページの仕様表から立て、``load_listing_views`` が読んで
-#: 通知の条件欄へ出す。⚠ **除外 MUST には使っていない**（件数を実測してから設計する）。
+#: 通知の条件欄へ出す。⚠ **除外 MUST には使っていない。** 売買の「所有権のみ」
+#: （``freehold_only`` → 課題#65）は、この真偽値ではなく権利形態の原文
+#: （``LAND_RIGHTS_ATTR_KEYS``）から採点のたびに導く（既存の掲載を取り直さずに済むため）。
 #: ⚠ 並びがそのまま通知の順になるので、並べ替えない（文面を実行ごとに揺らさない）。
 CAVEAT_LABELS: dict[str, str] = {
     "build_condition": "建築条件付き",
@@ -149,6 +151,62 @@ def caveats_of(attrs: Mapping[str, object] | None) -> tuple[str, ...]:
     if not attrs:
         return ()
     return tuple(label for key, label in CAVEAT_LABELS.items() if attrs.get(key) is True)
+
+
+#: 権利形態の原文を置く ``type_specific_attrs`` の欄（→ 課題#65）。
+#: 採点のたびにここから借地かどうかを導く（``load_listing_views``）。
+#: ⚠ **欄の名前を変えたら、既存の掲載の原文が読めなくなる**（全件 unknown になり
+#: 例外にならない）。``tests/test_freehold_must.py`` がアダプタの出力と突き合わせている。
+LAND_RIGHTS_ATTR_KEYS: tuple[str, ...] = (
+    # マンション（中古・新築の個別住戸）の詳細の仕様表
+    "敷地の権利形態",
+    # 戸建て・土地の詳細の仕様表
+    "土地の権利形態",
+    # 新築マンションの一覧の販売期の注記（棟の詳細には権利形態の欄が無い）。
+    # 借地の語があるときだけ原文、無ければ null
+    "販売期の権利形態",
+)
+
+#: 借地権を示す語。⚠⚠ **「借地」だけを見てはいけない。** 本番DB（2026-09-12）に
+#: ``賃借権（旧）、2025年9月29日～2045年9月28日`` ・ ``地上権（旧）、新規20年`` のように
+#: 「借地」の語を含まない借地があり、見落とすと借地を所有権として通す（例外にならない）。
+#: 借地権は「建物の所有を目的とする地上権または土地の賃借権」（借地借家法 第2条）。
+_LEASEHOLD_WORDS = ("借地", "賃借権", "地上権")
+_FREEHOLD_WORD = "所有権"
+
+
+def leasehold_flag(value: str | None) -> bool | None:
+    """権利形態の原文1つから、借地かどうかを読む。
+
+    - 借地・賃借権・地上権の語があれば **True**。⚠ 敷地の一部だけが借地
+      （``一部賃借権（旧）…``）や、所有権と並記されたもの（``所有権・借地権``）も
+      借地にする——「所有権のみ」ではなく、価格も借地料を別に払う前提で安く見える
+    - 所有権の語だけなら **False**（``所有権の共有`` を含む）
+    - それ以外は **None**（空欄・``-``・本番DBに84件ある ``‐``〈U+2010〉・読めない表記）。
+      推測で True/False に倒さない（→ ADR 0015）
+    """
+    if not value:
+        return None
+    if any(word in value for word in _LEASEHOLD_WORDS):
+        return True
+    if _FREEHOLD_WORD in value:
+        return False
+    return None
+
+
+def leasehold_of(values: Iterable[str | None]) -> bool | None:
+    """複数の原文（名寄せグループの掲載・複数の欄）をまとめて借地かどうかを読む。
+
+    ⚠ **1つでも借地なら借地。** 同じ住戸を載せた別の掲載が借地と書いているなら、
+    詳細を取っていない掲載が代表になっていても借地として扱う。
+    所有権と確認できたものが1つでもあり借地が無ければ False、どれも読めなければ None。
+    """
+    flags = [leasehold_flag(value) for value in values]
+    if any(flag is True for flag in flags):
+        return True
+    if any(flag is False for flag in flags):
+        return False
+    return None
 
 
 class SiteScraper(Protocol):
