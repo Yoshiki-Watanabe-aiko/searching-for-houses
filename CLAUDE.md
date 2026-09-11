@@ -406,6 +406,12 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
   市区必須サイトは216〜240本の一覧URLを持つので、`--full` では5倍に効く
 - **PowerShell 5.1 は stdout と stderr に同じファイルを指定できない。**
   `Start-Process` のリダイレクトは必ず別ファイルにする
+- ⚠ **python を `& $Python` で呼ぶ運用スクリプトは、冒頭（ワーカー部）で出力を UTF-8 に揃える**
+  （`. (Join-Path $PSScriptRoot "lib\utf8_output.ps1")` → `Set-Utf8ConsoleOutput`）。
+  揃えないと PowerShell 自身の行（cp932）と python の行（UTF-8）が同じログで混在し、▶ は「?」に化ける。
+  ⚠ **関数の出力を `| Out-Null` で捨てない**——PowerShell の関数は出力をすべて戻り値として返すので、
+  終了コードのつもりで捨てると python の標準出力（`scan` の実行サマリ）まで消える（→ 課題#61）。
+  ⚠ ログを追うときは `Get-Content … -Wait -Encoding UTF8`
 - **タスク用スクリプトと切り離し用スクリプトを流用し合わない。**
   `run_initial_scan.ps1` は `Start-Process` で切り離す側、`task_runner.ps1` は
   `-Wait` で待つ側。前者をタスクから呼ぶと即完了扱いになり二重起動する

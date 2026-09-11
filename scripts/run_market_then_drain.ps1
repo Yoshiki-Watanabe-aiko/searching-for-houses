@@ -76,13 +76,18 @@ if (-not $Worker) {
     Write-Host "  標準エラー  : $errLog"
     Write-Host ""
     Write-Host "進捗の追い方:" -ForegroundColor Cyan
-    Write-Host "  Get-Content `"$outLog`" -Tail 20 -Wait"
+    # ⚠ ワーカーの出力は UTF-8。PowerShell 5.1 の Get-Content は既定で cp932 として読むので指定する
+    Write-Host "  Get-Content `"$outLog`" -Tail 20 -Wait -Encoding UTF8"
     Write-Host ""
     Write-Host "⚠ 定期スキャンは取得ロックでスキップされます（データは壊れません）"
     exit 0
 }
 
 # ---- ワーカー: ここから同期実行 --------------------------------------------
+# ⚠ 出力を UTF-8 に揃える（→ lib\utf8_output.ps1）。⚠ 呼び出す相場更新・掃き出しも同じ
+#   プロセスで動くので、ここで揃えないとログの途中から UTF-8 に切り替わって混在する
+. (Join-Path $PSScriptRoot "lib\utf8_output.ps1")
+Set-Utf8ConsoleOutput
 function Write-Step {
     param([string]$Message)
     Write-Output "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] $Message"

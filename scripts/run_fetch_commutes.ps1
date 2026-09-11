@@ -109,7 +109,8 @@ if (-not $Worker) {
     Write-Host "  標準エラー   : $errLog"
     Write-Host ""
     Write-Host "進捗の追い方:" -ForegroundColor Cyan
-    Write-Host "  Get-Content `"$outLog`" -Tail 20 -Wait"
+    # ⚠ ワーカーの出力は UTF-8。PowerShell 5.1 の Get-Content は既定で cp932 として読むので指定する
+    Write-Host "  Get-Content `"$outLog`" -Tail 20 -Wait -Encoding UTF8"
     Write-Host "  Get-Process -Id $($proc.Id) -ErrorAction SilentlyContinue   # 生きているか"
     Write-Host ""
     Write-Host "⚠ CPU 使用率で生死を判断しないこと。レート待ちの sleep が大半で" -ForegroundColor Yellow
@@ -125,6 +126,10 @@ if (-not $Worker) {
 # 標準出力・標準エラーはランチャーが「ファイル」へ向けている（パイプではない）ため
 # ここで直接 & 呼び出ししても詰まらない。
 $ErrorActionPreference = "Continue"
+
+# ⚠ 出力を UTF-8 に揃える（揃えないと out.log の中で cp932 と UTF-8 が混在する → lib\utf8_output.ps1）
+. (Join-Path $PSScriptRoot "lib\utf8_output.ps1")
+Set-Utf8ConsoleOutput
 
 function Write-Step {
     param([string]$Message)
