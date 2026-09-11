@@ -78,6 +78,9 @@ SITES: dict[str, dict[str, object]] = {
         # 一覧を取れない（→ 課題#4）。スラグは種別によらず共通で、
         # 既存の賃貸由来23行（``sc_chiyoda`` 等）と一致することを実測で確認する。
         "index": "https://suumo.jp/ms/chuko/{pref}/city/",
+        # 土地の市区選択ページ（``--tochi`` で選ぶ → 課題#61）。⚠ 中古マンションの索引より
+        # 市区が多い（4都県 207件 vs 187件）。郡のリンク21件は ``m_cities`` に無いので捨てる
+        "index_tochi": "https://suumo.jp/tochi/{pref}/city/",
         "user_agent": None,
         # 取得数の上限は無い。robots の Crawl-delay は bingbot 向けで `*` には無い
         "interval": 3.0,
@@ -143,8 +146,10 @@ def parse_index(html_text: str, *, pref_slug: str) -> list[tuple[str | None, str
 # checkbox 側は JIS5桁そのものなので、下3桁で突き合わせて5桁を得る。
 # ⚠ 課題#4 は「``<option value="13101">千代田区(585)</option>``」と記録していたが、
 # 実測（2026-09-06）では **checkbox** で、ラベルに件数も付かない。
+# ⚠ 土地の市区選択ページ（``/tochi/{pref}/city/``）もリンクが ``/tochi/`` で始まるだけで
+# 同じ構造（2026-09-11 実測）。``/ms/chuko/`` 決め打ちだと**0件のまま正常終了する**
 _SUUMO_LINK = re.compile(
-    r"""<a\s[^>]*?href=["']/ms/chuko/(?P<pref>[a-z]+)/(?P<slug>sc_[a-z0-9_]+)/["']"""
+    r"""<a\s[^>]*?href=["']/(?:ms/chuko|tochi)/(?P<pref>[a-z]+)/(?P<slug>sc_[a-z0-9_]+)/["']"""
     r"""[^>]*?id=["']js-linkSc(?P<tail>\d{3})["'][^>]*>(?P<label>[^<]*)</a>""",
     re.IGNORECASE,
 )
@@ -212,8 +217,10 @@ def match_cities(
     return matched, unmatched
 
 
-def _cache_path(cache_dir: Path, site: str, pref: str) -> Path:
-    return cache_dir / f"{site}_{pref}.html"
+def _cache_path(cache_dir: Path, site: str, pref: str, *, tochi: bool = False) -> Path:
+    # ⚠ 土地の索引は別のファイルにする（中古マンションの保存物を上書きしない）
+    kind = "_tochi" if tochi else ""
+    return cache_dir / f"{site}{kind}_{pref}.html"
 
 
 def fetch_index(
@@ -224,15 +231,17 @@ def fetch_index(
     interval: float,
     from_cache: bool,
     user_agent: str,
+    tochi: bool = False,
 ) -> dict[str, str]:
     """都道府県ごとの索引HTMLを取る（``from_cache`` なら保存済みを読むだけ）。"""
     pages: dict[str, str] = {}
     if from_cache:
         for pref in prefectures:
-            pages[pref] = _cache_path(cache_dir, site, pref).read_text(encoding="utf-8")
+            path = _cache_path(cache_dir, site, pref, tochi=tochi)
+            pages[pref] = path.read_text(encoding="utf-8")
         return pages
 
-    index_template = str(SITES[site]["index"])
+    index_template = str(SITES[site]["index_tochi" if tochi else "index"])
     cache_dir.mkdir(parents=True, exist_ok=True)
     client = build_client(user_agent=user_agent, timeout_sec=30.0)
     fetcher = SiteFetcher(
@@ -245,7 +254,9 @@ def fetch_index(
                 raise SystemExit(f"robots.txt が禁止しています: {url}")
             response = fetcher.get(url)
             print(f"  取得 {pref}: HTTP {response.status_code} / {len(response.text):,}文字")
-            _cache_path(cache_dir, site, pref).write_text(response.text, encoding="utf-8")
+            _cache_path(cache_dir, site, pref, tochi=tochi).write_text(
+                response.text, encoding="utf-8"
+            )
             pages[pref] = response.text
     finally:
         client.close()
@@ -260,10 +271,17 @@ def main() -> int:
     parser.add_argument("--interval", type=float, default=None, help="取得間隔（秒）")
     parser.add_argument("--from-cache", action="store_true", help="保存済みHTMLから作り直す")
     parser.add_argument("--out", type=Path, help="SQLのVALUES行を書き出すファイル")
+    parser.add_argument(
+        "--tochi",
+        action="store_true",
+        help="SUUMO の土地の市区選択ページ（/tochi/{pref}/city/）を使う（→ 課題#61）",
+    )
     args = parser.parse_args()
 
     settings = Settings()
     spec = SITES[args.site]
+    if args.tochi and "index_tochi" not in spec:
+        raise SystemExit(f"--tochi は SUUMO でしか使えません: {args.site}")
     interval = args.interval if args.interval is not None else float(spec["interval"])  # type: ignore[arg-type]
     print(f"{args.site}: {len(args.prefectures)}リクエスト / 間隔{interval}秒")
     pages = fetch_index(
@@ -273,6 +291,7 @@ def main() -> int:
         interval=interval,
         from_cache=args.from_cache,
         user_agent=str(spec["user_agent"] or settings.user_agent),
+        tochi=args.tochi,
     )
 
     engine = create_db_engine(settings.database_url)

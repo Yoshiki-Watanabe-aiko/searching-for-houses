@@ -66,12 +66,13 @@ from house_search.scrape.suumo_kodate import (
     SuumoShinchikuKodateScraper,
 )
 from house_search.scrape.suumo_shinchiku import SuumoNewMansionScraper
+from house_search.scrape.suumo_tochi import SuumoTochiScraper
 from house_search.scrape.ur import UrScraper
 
 # **(サイトコード, 物件種別) → アダプタ。**
 # 賃貸11サイトのうち MINIMINI 以外の10サイト ＋ UR賃貸（Phase 5F）
 # ＋ レオパレス21（Phase 5G）＋ D-room・ハウスコム・ホームメイト・
-# CHINTAI.net（Phase 5H）＋ SUUMO 中古マンション（Phase 6）。
+# CHINTAI.net（Phase 5H）＋ SUUMO 売買4種別（Phase 6）＋ SUUMO 土地（Phase 9b）。
 #
 # ⚠ **同じサイトでも種別ごとにアダプタが違う。** SUUMO は賃貸と売買で
 # 一覧URLの体系そのものが違い（賃貸は ``sc=13121`` の JIS5桁クエリ、売買は
@@ -105,6 +106,8 @@ SCRAPERS: dict[tuple[str, str], type] = {
         SuumoNewMansionScraper,
         SuumoChukoKodateScraper,
         SuumoShinchikuKodateScraper,
+        # ⚠ 戸建ての派生にしていない（戸建ては ``/tochi/`` を捨てる → 課題#61）
+        SuumoTochiScraper,
     )
 }
 
@@ -148,6 +151,7 @@ __all__ = [
     "SmoccaScraper",
     "SuumoBuyMansionScraper",
     "SuumoScraper",
+    "SuumoTochiScraper",
     "UrScraper",
     "age_years_from_built",
     "build_client",

@@ -10,7 +10,7 @@ import datetime as dt
 import re
 import string
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -83,7 +83,7 @@ class ScrapedListing:
     image_url: str | None = None
     # 新築（棟／プロジェクト単位）の価格レンジ。``price`` にはレンジ下限を入れる
     # （→ 要件定義書 §11.4）。⚠ **中古・賃貸は None のまま**で、レンジを持つのは
-    # 新築だけ。
+    # 新築と土地（分譲地・区画売り → 課題#61）だけ。
     price_min: int | None = None
     price_max: int | None = None
     # ⚠⚠ **価格未定は ``price`` を NULL にしたうえで
@@ -126,6 +126,29 @@ class ScrapedDetail:
     address: str | None = None
     walk_minutes: int | None = None
     type_specific_attrs: dict = field(default_factory=dict)
+
+
+#: 取引上の注意事項。``type_specific_attrs`` のキー → 通知に出す語（→ 課題#61 論点5）。
+#: 土地のアダプタが詳細ページの仕様表から立て、``load_listing_views`` が読んで
+#: 通知の条件欄へ出す。⚠ **除外 MUST には使っていない**（件数を実測してから設計する）。
+#: ⚠ 並びがそのまま通知の順になるので、並べ替えない（文面を実行ごとに揺らさない）。
+CAVEAT_LABELS: dict[str, str] = {
+    "build_condition": "建築条件付き",
+    "leasehold": "借地権",
+    "rebuild_prohibited": "再建築不可",
+}
+
+
+def caveats_of(attrs: Mapping[str, object] | None) -> tuple[str, ...]:
+    """``type_specific_attrs`` から通知に出す注意事項を取り出す。
+
+    ⚠ **値が True のときだけ**出す。False（記載が無いと確認した）と None（読めない表記）は
+    出さない。原文の ``"付"`` のような文字列を True とみなさない——判定はアダプタの
+    責務で、ここで推測すると判定の規則が2箇所に分かれて片方だけ古くなる。
+    """
+    if not attrs:
+        return ()
+    return tuple(label for key, label in CAVEAT_LABELS.items() if attrs.get(key) is True)
 
 
 class SiteScraper(Protocol):

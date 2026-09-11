@@ -80,6 +80,10 @@ class SiteOutcome:
     # ⚠ **エラーではない**ので errors には入れない。混ぜると本物の失敗と
     # 区別できず、読まれない通知が本物のエラーを隠す（→ 課題#45）
     details_sold: int = 0
+    # ファミリの食い違いで UPSERT を見送った external_id（→ 課題#61・``persist.UpsertBatch``）。
+    # ⚠ 同じ ``nc_`` が別のファミリ（土地⇔戸建て等）で既に登録されている。
+    #   エラーではないが**黙って捨てない**
+    family_mismatch: tuple[str, ...] = ()
     errors: list[str] = field(default_factory=list)
 
 
@@ -1014,13 +1018,15 @@ def scan_pattern(
             outcome.listings_kept = len(kept)
 
             with runtime.engine.begin() as conn:
-                outcomes = persist.upsert_listings(
+                batch = persist.upsert_listings(
                     conn,
                     kept,
                     site_id=site_id,
                     property_type_id=property_type_id,
                     city_index=city_index,
                 )
+                outcomes = batch.outcomes
+                outcome.family_mismatch = batch.family_mismatch
                 dedup.refresh_dedup_keys(
                     conn, [o.listing_id for o in outcomes], runtime.address_index
                 )
