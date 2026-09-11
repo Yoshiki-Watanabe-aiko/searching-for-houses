@@ -129,6 +129,56 @@ class TestReSegmentArguments:
         assert (args.region, args.destination) == (None, "芝公園")
 
 
+class TestReExtractFamily:
+    """``re-extract --family`` でファミリを絞る（→ 課題#61 9c）。
+
+    土地の辞書を足したとき、土地の掲載だけを抽出し直せば既存3ファミリの設備が
+    1行も動かないことを前後の件数で言える（全件を回すと scan 由来と re-extract 由来の
+    差でぶれ、効果と切り分けられない）。
+    """
+
+    def test_既定は全ファミリ(self) -> None:
+        assert build_parser().parse_args(["re-extract"]).family is None
+
+    def test_ファミリを指定できる(self) -> None:
+        assert build_parser().parse_args(["re-extract", "--family", "TOCHI_BUY"]).family == (
+            "TOCHI_BUY"
+        )
+
+    def test_知らないファミリは弾く(self) -> None:
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["re-extract", "--family", "TOCHI"])
+
+    def test_指定したファミリを再抽出へ渡す(self, monkeypatch) -> None:
+        """⚠ 引数を読むだけで再抽出へ渡し忘れると、黙って全ファミリを回す。"""
+        from house_search.extract.dictionary import DictionaryEntry, FeatureDictionary
+        from house_search.pipeline import runtime as runtime_module
+        from house_search.pipeline import tasks
+        from house_search.pipeline.tasks import ReExtractResult
+
+        class _Runtime:
+            dictionary = FeatureDictionary(
+                entries=(DictionaryEntry(code="X", family="TOCHI_BUY", patterns=("x",)),)
+            )
+
+        calls: list[dict] = []
+
+        def _fake_re_extract(runtime, **kwargs) -> ReExtractResult:
+            calls.append(kwargs)
+            return ReExtractResult(listings=0, features=0, unknown_tokens=0)
+
+        monkeypatch.setattr(runtime_module, "build_runtime", lambda **_: _Runtime())
+        monkeypatch.setattr(tasks, "re_extract", _fake_re_extract)
+        assert cli.main(["re-extract", "--family", "TOCHI_BUY"]) == 0
+        assert calls == [{"family": "TOCHI_BUY", "limit": None}]
+
+        # ⚠ そのファミリの辞書が DB に無い（sync-dict の流し忘れ）なら回さずに止める。
+        # 回すと抽出0件で黙って成功し、既存の設備があれば空で上書きする
+        calls.clear()
+        assert cli.main(["re-extract", "--family", "MANSION_BUY"]) == 1
+        assert calls == []
+
+
 class TestFamilyFilter:
     """``--family`` で種別ファミリを絞る（→ 課題#4・2026-09-07）。
 

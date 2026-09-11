@@ -10,9 +10,11 @@
 # 建物面積（building_area_*）・築年数（age_*）は MUST にも WANT にも書けない
 # （書くと validate-config が弾く）。相場比（market_rate_ratio）もまだ使えない（→ 9d）。
 #
-# ⚠ **設備条件（want.features / must.features）は書かない。** 土地の設備抽出辞書が
-# まだ無いので、WANT は全件 miss で分母にだけ乗り、MUST は詳細取得済みが全件 fail になる。
-# 書くと validate-config が「辞書に無い条件コード」として NG にする（→ 9c で辞書を作る）。
+# ⚠ **設備条件は土地の辞書（data/feature_dictionary.yaml の tochi:）にある条件だけを書く**
+# （→ 課題#61 9c）。辞書に無い条件は WANT なら全件 miss で分母にだけ乗り、
+# MUST なら詳細取得済みが全件 fail になる。書くと validate-config が NG にする。
+# ⚠ must.features は書かない（詳細未取得・抽出漏れの掲載まで落とす）。
+# ⚠ 建築条件付きは辞書に無い（表示専用。仕様表の欄で判定して通知に出す）。
 #
 # ⚠ `name:` は configs/ 直下へ配置したら変えない（通知履歴・順位・スコアの鍵）。
 # ⚠ 直下へ置く前に run_initial_scan.ps1 -ConfigsDir <一時dir> で scan --seed を流す
@@ -48,11 +50,20 @@ must:
   price_max: 80000000          # 8,000万円（円単位・暫定）
   land_area_min: 60.0          # 狭小地を外す（暫定）
   walk_minutes_max: 20         # バス便は徒歩 NULL → unknown → keep で通る（→ 課題#58）
-  features: []                 # ⚠ 土地の設備辞書が無い間は書かない
+  features: []                 # ⚠ 書かない（詳細未取得・抽出漏れの掲載まで全件 fail になる）
   unknown_policy: keep
 
 want:
-  features: []                 # ⚠ 同上（全件 miss で分母にだけ乗る）
+  # 後から変えられない土地の条件（→ 課題#61 9c）。出現率は3市区26件の暫定値で、
+  # ⚠ weight は 9e の seed 後に4都県の出現率を見て決め直す（戸建ての角地 3 に揃えた見当）。
+  # ⚠ 都市ガス（65%）は入れていない。配点するかは 9e で判断する（→ 課題#15・#31）
+  features:
+    - { code: LAND_REGULAR_SHAPE,    weight: 4 }   # 50% 整形地（不整形地は除く）
+    - { code: LAND_ROAD_6M,          weight: 4 }   # 46% 前道6m以上
+    - { code: LOC_CORNER_LOT,        weight: 3 }   # 31% 角地
+    - { code: LOC_SOUTH_ROAD,        weight: 3 }   # 19% 南側道路
+    - { code: LAND_CLEARED_DELIVERY, weight: 2 }   # 27% 更地渡し
+    - { code: FEAT_VACANT,           weight: 2 }   # 19% 即引渡し可
   numeric:
     - { metric: price,                 weight: 25, best: 15000000, worst: 60000000 }
     - { metric: land_area_sqm,         weight: 25, best: 200,      worst: 80 }

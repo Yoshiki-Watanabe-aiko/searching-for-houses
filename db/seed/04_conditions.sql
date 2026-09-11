@@ -2,7 +2,9 @@
 -- m_conditions: 条件マスタ
 --
 -- v1 の128条件をそのまま引き継ぎ、売買固有の20条件（CERT / LAND ほか）を追加した148条件に、
--- 課題#15 で 2面採光・クローゼットを足した150条件。
+-- 課題#15 で 2面採光・クローゼット、課題#4 で長期優良住宅認定、
+-- 課題#61（Phase 9c）で土地の3条件（整形地・前道6m以上・更地渡し）を足した154条件。
+-- ⚠ 行を足したら db/seed.py の EXPECTED_MIN_ROWS も直す（tests/test_condition_seed.py が突き合わせる）。
 -- is_extractable は「詳細ページ本文からのローカル抽出対象か」。
 -- data_type='boolean' を原則 true とし、検索軸そのものである
 -- AREA_BUS_OK / PRICE_INCL_MGMT / PRICE_INCL_PARKING だけ false にしている。
@@ -53,8 +55,8 @@ FROM (VALUES
     ('LOCATION', 'LOC_TOP_FLOOR', '最上階', NULL, 'boolean', TRUE, 3),
     ('LOCATION', 'LOC_CORNER', '角部屋', NULL, 'boolean', TRUE, 4),
     ('LOCATION', 'LOC_SOUTH_FACING', '南向き', NULL, 'boolean', TRUE, 5),
-    ('LOCATION', 'LOC_CORNER_LOT', '角地（戸建て）', NULL, 'boolean', TRUE, 6),
-    ('LOCATION', 'LOC_SOUTH_ROAD', '南道路（戸建て）', NULL, 'boolean', TRUE, 7),
+    ('LOCATION', 'LOC_CORNER_LOT', '角地（戸建て・土地）', NULL, 'boolean', TRUE, 6),
+    ('LOCATION', 'LOC_SOUTH_ROAD', '南道路（戸建て・土地）', NULL, 'boolean', TRUE, 7),
     ('LOCATION', 'LOC_TWO_SIDE_LIGHT', '2面採光', NULL, 'boolean', TRUE, 8),
     ('INTERIOR', 'INT_LAUNDRY', '室内洗濯機置場', NULL, 'boolean', TRUE, 1),
     ('INTERIOR', 'INT_WASHROOM', '洗面所独立', NULL, 'boolean', TRUE, 2),
@@ -164,7 +166,12 @@ FROM (VALUES
     ('LAND', 'LAND_FLOOR_AREA_RATIO', '容積率（%）', NULL, 'number', FALSE, 5),
     ('LAND', 'LAND_USE_ZONE', '用途地域', NULL, 'enum', FALSE, 6),
     ('LAND', 'LAND_BUILD_CONDITION', '建築条件付き', '建築会社が指定される。除外条件として使うことが多い', 'boolean', TRUE, 7),
-    ('LAND', 'LAND_SETBACK', 'セットバック要', '接道義務を満たすため敷地の一部を道路へ提供する必要がある', 'boolean', TRUE, 8)
+    ('LAND', 'LAND_SETBACK', 'セットバック要', '接道義務を満たすため敷地の一部を道路へ提供する必要がある', 'boolean', TRUE, 8),
+    -- 課題#61（Phase 9c）: SUUMO 土地の「特徴ピックアップ」のタグから抽出する3条件。
+    -- ⚠ 前面道路の幅員そのもの（LAND_ROAD_WIDTH・数値）とは別。こちらはタグの有無だけを見る
+    ('LAND', 'LAND_REGULAR_SHAPE', '整形地', '敷地の形が整っている（不整形地ではない）', 'boolean', TRUE, 9),
+    ('LAND', 'LAND_ROAD_6M', '前道6m以上', '前面道路の幅員が6m以上', 'boolean', TRUE, 10),
+    ('LAND', 'LAND_CLEARED_DELIVERY', '更地渡し', '建物を解体した更地で引き渡す', 'boolean', TRUE, 11)
 ) AS v(cat_code, code, name, description, data_type, is_extractable, sort_order)
 JOIN m_condition_categories cat ON cat.code = v.cat_code
 ON CONFLICT (code) DO UPDATE SET

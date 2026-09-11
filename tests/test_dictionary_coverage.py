@@ -279,3 +279,37 @@ def test_マスタが売買に紐づける条件は売買ファミリへ展開�
         "マスタがマンション売買に紐づけているのに辞書が売買へ展開していない条件: "
         f"{missing}。`common` セクションへ移してください"
     )
+
+
+def test_マスタが土地に紐づける条件と土地の辞書は一致する(
+    test_engine, dictionary: FeatureDictionary
+) -> None:
+    """土地は**両方向**で一致させる（→ 課題#61 9c・ユーザー判断 2026-09-11）。
+
+    売買と違って逆方向も固定するのは、土地の紐づけを「辞書で使う条件だけ」と決めたから。
+    ⚠ マスタにだけあると「土地に適用する」と言いながら抽出0件のまま、辞書にだけあると
+    マスタの線引きから外れた条件を土地で抽出する。どちらも例外にならない。
+    ⚠ ファイル同士の突き合わせは ``tests/test_condition_seed.py`` にもある。こちらは
+    実際に seed を当てた DB（本番と同じ経路）を見る。
+    """
+    with test_engine.connect() as conn:
+        in_master = {
+            r[0]
+            for r in conn.execute(
+                sql_text(
+                    """
+                    SELECT co.code
+                      FROM m_conditions co
+                      JOIN m_condition_property_types cpt ON cpt.condition_id = co.id
+                      JOIN m_property_types pt ON pt.id = cpt.property_type_id
+                     WHERE pt.family = 'TOCHI_BUY'
+                    """
+                )
+            )
+        }
+    in_dictionary = {e.code for e in dictionary.entries if e.family == "TOCHI_BUY"}
+    assert in_master, "テストDBに土地の紐づけがありません（db-seed --test-db を流してください）"
+    assert in_master == in_dictionary, (
+        f"マスタにだけある: {sorted(in_master - in_dictionary)} / "
+        f"辞書にだけある: {sorted(in_dictionary - in_master)}"
+    )
