@@ -84,6 +84,10 @@ class SiteOutcome:
     # ⚠ 同じ ``nc_`` が別のファミリ（土地⇔戸建て等）で既に登録されている。
     #   エラーではないが**黙って捨てない**
     family_mismatch: tuple[str, ...] = ()
+    # 同じファミリの別種別（新築⇔中古）が掲載中で UPSERT を見送った external_id（→ 課題#62）
+    type_mismatch: tuple[str, ...] = ()
+    # 掲載終了の既存行を新しい種別で引き継いだ external_id（→ 課題#62）
+    retyped: tuple[str, ...] = ()
     errors: list[str] = field(default_factory=list)
 
 
@@ -1027,6 +1031,27 @@ def scan_pattern(
                 )
                 outcomes = batch.outcomes
                 outcome.family_mismatch = batch.family_mismatch
+                outcome.type_mismatch = batch.type_mismatch
+                outcome.retyped = tuple(o.external_id for o in outcomes if o.is_retyped)
+                if outcome.type_mismatch or outcome.retyped:
+                    # ⚠ エラーではないので INFO。**同じ ID が何日見送られ続けるか**を
+                    #   後から数えられるように残す（→ 課題#62。旧行が掲載終了にならないと
+                    #   引き継ぎは起きないので、見送りが続くなら次の手を考える材料になる）
+                    persist.log(
+                        conn,
+                        run_id=runtime.run_id,
+                        level="INFO",
+                        message=(
+                            f"種別違いで見送り {len(outcome.type_mismatch)}件 / "
+                            f"種別を引き継ぎ {len(outcome.retyped)}件"
+                        ),
+                        site_code=outcome.site_code,
+                        pattern_name=pattern.name,
+                        detail={
+                            "type_mismatch": list(outcome.type_mismatch),
+                            "retyped": list(outcome.retyped),
+                        },
+                    )
                 dedup.refresh_dedup_keys(
                     conn, [o.listing_id for o in outcomes], runtime.address_index
                 )

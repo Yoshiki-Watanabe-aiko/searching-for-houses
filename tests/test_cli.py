@@ -13,8 +13,37 @@ from house_search.cli import build_parser
 from house_search.pipeline.scan import (
     DEFAULT_DETAIL_LIMIT,
     FULL_DETAIL_LIMIT,
+    SiteOutcome,
     resolve_detail_limit,
 )
+
+
+class TestSiteSummaryLine:
+    """実行サマリのサイト行（→ 課題#61・#62）。
+
+    ⚠ 見送り・引き継ぎは**エラーではない**のでエラー欄に混ぜない（→ 課題#45）が、
+    **黙って捨てない**。ファミリ違い・種別違い・引き継ぎは意味が違うので出し分ける。
+    """
+
+    def test_ファミリ違いと種別違いと引き継ぎを出し分ける(self) -> None:
+        site = SiteOutcome(
+            site_code="SUUMO",
+            family_mismatch=("nc_1",),
+            type_mismatch=("nc_2", "nc_3"),
+            retyped=("nc_4",),
+        )
+
+        line = cli.format_site_line(site)
+
+        assert "ファミリ違いで見送り 1件（nc_1）" in line
+        assert "種別違いで見送り 2件（nc_2, nc_3）" in line
+        assert "種別を引き継ぎ 1件（nc_4）" in line
+
+    def test_何も無ければ足さない(self) -> None:
+        line = cli.format_site_line(SiteOutcome(site_code="SUUMO", listings_seen=3))
+
+        assert "見送り" not in line and "引き継ぎ" not in line
+        assert line.lstrip().startswith("SUUMO")
 
 
 class TestScanArguments:
