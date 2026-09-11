@@ -61,6 +61,7 @@ uv run house-search re-segment --region 沖縄  # 地方ごと。索引もその
 uv run house-search commute-stats          # 通勤時間の分布（best/worst を決める材料）
 uv run house-search hazard-stats           # ハザードの解決率と分布（weight・best/worst の材料）
 uv run house-search market-stats           # 相場比の解決率・分布・価格との独立性（→ 課題#49）
+uv run house-search utility-stats          # 賃貸の推定光熱費（ガス種別の判定・光熱費込み月額の分布 → 課題#64）
 uv run house-search sync-market-rates --buy  # 売買の㎡単価相場（buy_rates.csv）→ DB
 uv run house-search dedup-stats            # サイト別の重複率・ユニーク率（ネットワーク不要）
 uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観測モード
@@ -424,6 +425,15 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
   `load_property_views` は種別とサイトでしか絞らないので、`scan` と `rescore` の
   双方で `pattern.search.cities` を渡す。渡さないとDBに残る帯外の掲載にも
   帯のスコアが付き、23区のランキングが本庄市で埋まる（→ ADR 0013）
+- ⚠⚠ **賃貸の金額軸は `living_cost`（賃料＋管理費＋推定光熱費）で、`rent_total` と同時に配点しない**
+  （→ 課題#64・ADR 0025）。光熱費は `scoring/utility.py` の純関数で、設備からガス種別を判定する。
+  ⚠ **ガス種別不明を都市ガスとみなさない**（近郊帯では書いていない掲載の79%がプロパン。帯ごとの
+  `utility.unknown_lpg_probability` で期待値）。⚠ **`rent_total + (utility or 0)` と書かない**
+  （付け忘れで光熱費0円が最安側へ行く）。採点に使う `load_listing_views` には必ず
+  `utility_profile=utility_profile_for(pattern)` を渡す（付け忘れは例外・AST テストが検査）。
+  ⚠ 相場比・MUST の `rent_total_max`・異常検出は賃料のまま。⚠ 料金定数を改定すると
+  `config_hash` が変わり全件が採点し直される（指紋が入っている）。⚠ 単価は補助前（LPガスは
+  国の補助の対象外なので、補助後で比べると補助の有無で順位が揺れる）
 - **相場が違う範囲を1つの検索パターンに混ぜない。** 賃料 weight 40・面積 20 に対し
   立地の配点は0なので、安くて広い郊外が構造的に勝つ。4都県を1本で見たとき
   上位15件に東京が1件も入らなかった（→ 課題#24）。帯は都県では切れない

@@ -30,6 +30,7 @@ from house_search.scoring.anomaly import collect_price_anomalies
 from house_search.scoring.listing_view import ListingView
 from house_search.scoring.must import evaluate_must
 from house_search.scoring.score import calculate_score
+from house_search.scoring.utility import utility_profile_for
 from house_search.scrape import get_scraper, resolve_areas
 from house_search.scrape.area import AreaTarget
 from house_search.scrape.base import ScrapedListing
@@ -635,6 +636,8 @@ def _score_pattern(runtime: Runtime, pattern, summary: ScanSummary) -> dict[int,
             # これが無いと帯外の既存データにも帯のスコアが付いてしまう
             city_names=list(pattern.search.cities) or None,
             commute_destination_g_cd=destination,
+            # 賃貸は推定光熱費を付ける（living_cost の入力 → 課題#64）
+            utility_profile=utility_profile_for(pattern),
         )
 
     passed: list[ListingView] = []

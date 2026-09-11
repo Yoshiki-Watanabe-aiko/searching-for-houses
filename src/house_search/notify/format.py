@@ -12,6 +12,16 @@ from typing import Any
 
 from house_search.scoring.listing_view import ListingView, StationAccess
 from house_search.scoring.score import STATUS_UNKNOWN, ScoreResult
+from house_search.scoring.utility import (
+    BASIS_ASSUMED,
+    BASIS_CONFLICT,
+    BASIS_PRIOR,
+    GAS_ELECTRIC,
+    GAS_LABELS,
+    GAS_LPG,
+    STOVE_LABELS,
+    UtilityEstimate,
+)
 
 # 通知種別 → embed の色（requirements.md §9）。
 COLORS: dict[str, int] = {
@@ -80,6 +90,9 @@ class NotifiableListing:
     commute_destination: str | None = None
     previous_total: int | None = None
     previous_site_code: str | None = None
+    # 推定光熱費（→ 課題#64）。賃貸で utility を設定したパターンだけに付く。
+    # 既定値付きなので、売買や設定の無いパターンの表示はこれまでどおり。
+    utility: UtilityEstimate | None = None
 
     @property
     def monthly_cost(self) -> int | None:
@@ -142,6 +155,7 @@ def notifiable_from(
         previous_site_code=previous_site_code,
         stations=view.stations,
         commute_destination=commute_destination,
+        utility=view.utility,
     )
 
 
@@ -265,6 +279,8 @@ def price_field(prop: NotifiableListing) -> tuple[str, str]:
         return "価格", f"{_man_yen(prop.price)}{_land_monthly_note(prop)}"
     if _is_buy(prop):
         return "価格", f"{_man_yen(prop.price)}{_buy_monthly_note(prop)}"
+    if prop.utility is not None:
+        return _chintai_living_cost_field(prop, prop.utility)
     return (
         "月額",
         f"{_yen(prop.rent_total)}\n（賃料 {_yen(prop.price)} + 管理費 "
@@ -272,9 +288,65 @@ def price_field(prop: NotifiableListing) -> tuple[str, str]:
     )
 
 
+def _living_total(prop: NotifiableListing, utility: UtilityEstimate) -> int | None:
+    """賃料＋管理費＋推定光熱費。⚠ 賃料が無ければ None（光熱費だけでは月額にならない）。"""
+    return None if prop.rent_total is None else prop.rent_total + utility.monthly_yen
+
+
+def utility_note(utility: UtilityEstimate) -> str:
+    """推定光熱費の根拠（ガス種別・コンロ・世帯人数）。
+
+    ⚠ **推定であることと、何を前提にしたかを必ず併記する**（ローン返済額の
+    ``LOAN_NOTE`` と同じ理由。前提を変えれば数字も変わる）。
+    ⚠ ガス種別が不明な掲載は「不明」と明示し、期待値に使った確率を出す
+    （都市ガスと断定したように見せない）。
+    """
+    household = f"{utility.household_size}人暮らし想定"
+    if utility.gas == GAS_ELECTRIC:
+        return f"※{GAS_LABELS[GAS_ELECTRIC]}／{household}"
+    stove = STOVE_LABELS[utility.stove] + ("想定" if utility.stove_basis == BASIS_ASSUMED else "")
+    if utility.gas_basis in (BASIS_PRIOR, BASIS_CONFLICT):
+        reason = "掲載間で食い違い" if utility.gas_basis == BASIS_CONFLICT else "不明"
+        probability = f"{(utility.lpg_probability or 0.0):.0%}"
+        return f"※ガス種別{reason}（プロパンの確率{probability}で期待値）・{stove}／{household}"
+    note = f"※{GAS_LABELS[utility.gas]}・{stove}／{household}"
+    if utility.gas == GAS_LPG and utility.city_gas_yen is not None:
+        # プロパンの割高分を具体的な金額で見せる（順位が下がった理由が読める）
+        note += f"（都市ガスなら −{utility.monthly_yen - utility.city_gas_yen:,}円）"
+    return note
+
+
+def _chintai_living_cost_field(
+    prop: NotifiableListing, utility: UtilityEstimate
+) -> tuple[str, str]:
+    """賃貸で光熱費を見積もったパターンの金額欄（→ 課題#64）。"""
+    return (
+        "月額（光熱費込み）",
+        f"{_yen(_living_total(prop, utility))}\n（賃料 {_yen(prop.price)} + 管理費 "
+        f"{_yen(prop.mgmt_fee_monthly)} + 光熱費 推定{utility.monthly_yen:,}円）\n"
+        f"{utility_note(utility)}",
+    )
+
+
+#: ダイジェストの1行に出すガス種別の短い表記
+_GAS_SHORT = {"city": "都市ガス", "lpg": "プロパン", "electric": "オール電化"}
+
+
 def price_summary(prop: NotifiableListing) -> str:
     """ダイジェスト1行に出す金額。⚠ 売買と賃貸で意味が変わる。"""
-    return _man_yen(prop.price) if _is_buy(prop) else _yen(prop.rent_total)
+    if _is_buy(prop):
+        return _man_yen(prop.price)
+    utility = prop.utility
+    if utility is None:
+        return _yen(prop.rent_total)
+    total = _living_total(prop, utility)
+    if total is None:
+        return _yen(None)
+    # ⚠ 期待値で埋めた光熱費は「約」を付け、ガス種別を「ガス不明」と出す
+    if utility.is_estimated_gas:
+        return f"{total:,}円〔賃料等{prop.rent_total:,}＋光熱約{utility.monthly_yen:,}・ガス不明〕"
+    gas = _GAS_SHORT.get(utility.gas, utility.gas)
+    return f"{total:,}円〔賃料等{prop.rent_total:,}＋光熱{utility.monthly_yen:,}・{gas}〕"
 
 
 def _summary_line(prop: NotifiableListing) -> str:

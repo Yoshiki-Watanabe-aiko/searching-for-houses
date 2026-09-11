@@ -28,6 +28,7 @@ from house_search.scoring.anomaly import collect_price_anomalies
 from house_search.scoring.listing_view import ListingView
 from house_search.scoring.must import evaluate_must
 from house_search.scoring.score import calculate_score
+from house_search.scoring.utility import utility_profile_for
 from house_search.scrape import get_scraper
 from house_search.scrape.fetch import RateLimit, SiteFetcher
 
@@ -104,6 +105,7 @@ def rescore(runtime: Runtime, pattern) -> RescoreResult:
             # scan と同じくエリア帯に閉じる（帯外の既存データを採点しない）
             city_names=list(pattern.search.cities) or None,
             commute_destination_g_cd=destination,
+            utility_profile=utility_profile_for(pattern),
         )
 
     passed: list[ListingView] = []
@@ -169,6 +171,8 @@ def digest(runtime: Runtime, pattern, *, dry_run: bool = False) -> DigestResult:
             conn,
             listing_ids=listing_ids,
             commute_destination_g_cd=resolve_destination_group(conn, pattern.commute),
+            # ⚠ ダイジェストは表示のためにその場で採点し直すので、ここにも要る
+            utility_profile=utility_profile_for(pattern),
         )
         # 順位はグループ代表にしか振っていないので、ここに並ぶのは
         # 「代表 ＋ 未グループ物件」だけになる（= ランキングがグループ単位）

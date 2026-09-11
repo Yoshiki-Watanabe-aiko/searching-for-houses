@@ -59,6 +59,7 @@ def test_metrics_forの並びは決定的() -> None:
     """スコア加算順を安定させるため、レジストリの並びは定義順で固定する。"""
     assert [s.name for s in m.metrics_for(m.CHINTAI)] == [
         "rent_total",
+        "living_cost",
         "area_sqm",
         "age_years",
         "walk_minutes",
@@ -74,6 +75,8 @@ def test_metrics_forの並びは決定的() -> None:
 def test_派生metricの判定() -> None:
     assert m.METRICS_BY_NAME["monthly_cost"].is_derived
     assert not m.METRICS_BY_NAME["price"].is_derived
+    # 光熱費込みの月額は「賃料＋管理費」と推定光熱費の和（→ 課題#64）
+    assert m.METRICS_BY_NAME["living_cost"].is_derived
 
 
 @pytest.mark.parametrize(
@@ -151,6 +154,8 @@ _KODATE = {_SK, _CK}
 
 EXPECTED_METRIC_TYPES: dict[str, set[str]] = {
     "rent_total": {_R},
+    # ⚠ 賃貸だけ。光熱費の需要と料金は賃貸の住戸を前提にしている（→ 課題#64）
+    "living_cost": {_R},
     "price": _BUY | {_T},
     "monthly_cost": _MANSION,
     "area_sqm": {_R} | _MANSION,

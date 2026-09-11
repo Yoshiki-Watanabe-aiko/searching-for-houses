@@ -255,6 +255,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="ハザード評価の解決率と分布を実測する（weight と best/worst を決める材料）",
     )
     p_hstats.add_argument("--pattern", help="対象を1つの検索パターンに絞る")
+
+    p_ustats = sub.add_parser(
+        "utility-stats",
+        help=(
+            "推定光熱費（ガス種別の判定・光熱費込み月額の分布・ガス種別ごとの順位）を"
+            "実測する（賃貸のみ・ネットワーク不要 → 課題#64）"
+        ),
+    )
+    p_ustats.add_argument("--pattern", help="対象を1つの検索パターンに絞る")
+    p_ustats.add_argument(
+        "--household-size",
+        type=int,
+        help="世帯人数（省略時はパターンの utility。utility の無いパターンでは必須）",
+    )
+    p_ustats.add_argument(
+        "--lpg-probability",
+        type=float,
+        help="ガス種別不明をプロパンとみなす確率（省略時はパターンの utility）",
+    )
     return parser
 
 
@@ -1715,6 +1734,147 @@ def _cmd_market_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _utility_stats_profile(pattern, args: argparse.Namespace):
+    """実測に使う見積もり条件。引数がパターンの ``utility`` より優先する。
+
+    ⚠ utility の無いパターン（切り替え前）でも、帯のプロパン確率を引数で渡せば
+    切り替え後の分布を先に測れる（best/worst を決める材料 → 課題#31）。
+    """
+    from house_search.scoring.utility import UtilityProfile, utility_profile_for
+
+    base = utility_profile_for(pattern)
+    size = args.household_size or (base.household_size if base else None)
+    probability = (
+        args.lpg_probability
+        if args.lpg_probability is not None
+        else (base.unknown_lpg_probability if base else None)
+    )
+    if size is None or probability is None:
+        return None
+    multiplier = base.lpg_price_multiplier if base else 1.0
+    return UtilityProfile(
+        household_size=size,
+        unknown_lpg_probability=probability,
+        lpg_price_multiplier=multiplier,
+    )
+
+
+def _cmd_utility_stats(args: argparse.Namespace) -> int:
+    """推定光熱費を実測する（→ 課題#64）。
+
+    ⚠ **`load_listing_views` を通して測る**（採点と同じ経路。→ 課題#46 の教訓）。
+    ⚠ 順位は**いまDBにある採点**のもの。YAML を切り替える前に流せば「適用前」、
+    rescore の後に流せば「適用後」の値になる（効果は上位15件の入れ替わりではなく
+    プロパン掲載の平均順位と上位100件の件数で見る → 課題#46）。
+    """
+    from sqlalchemy import text
+
+    from house_search.commute.resolve import resolve_destination_group
+    from house_search.config.metrics import normalize
+    from house_search.db.session import get_engine
+    from house_search.pipeline import persist
+    from house_search.scoring.must import evaluate_must
+    from house_search.scoring.utility import GAS_LABELS
+
+    engine = get_engine()
+    for pattern in _load_patterns(args.pattern):
+        if pattern.property_type != "CHINTAI":
+            continue
+        print(f"=== {pattern.name} ===")
+        profile = _utility_stats_profile(pattern, args)
+        if profile is None:
+            print(
+                "  utility セクションが無いので --household-size と --lpg-probability を"
+                "指定してください\n"
+            )
+            continue
+        print(
+            f"  見積もり条件: {profile.household_size}人・不明のプロパン確率 "
+            f"{profile.unknown_lpg_probability:.2f}・LPガス係数 {profile.lpg_price_multiplier}"
+        )
+        with engine.connect() as conn:
+            destination = (
+                resolve_destination_group(conn, pattern.commute) if pattern.commute else None
+            )
+            views = persist.load_listing_views(
+                conn,
+                property_type_code=pattern.property_type,
+                site_codes=list(pattern.sites),
+                city_names=list(pattern.search.cities) or None,
+                commute_destination_g_cd=destination,
+                utility_profile=profile,
+            )
+            ranks = {
+                listing_id: rank
+                for listing_id, rank in conn.execute(
+                    text(
+                        "SELECT listing_id, rank_in_pattern FROM t_listing_scores "
+                        "WHERE pattern_name = :name AND rank_in_pattern IS NOT NULL"
+                    ),
+                    {"name": pattern.name},
+                )
+            }
+        passing = [
+            view
+            for view in views.values()
+            if evaluate_must(view, pattern.must).passes(pattern.must.unknown_policy)
+            and view.utility is not None
+        ]
+        print(f"  掲載 {len(views):,}件 / MUST通過 {len(passing):,}件")
+        if not passing:
+            print()
+            continue
+
+        def label(view) -> str:
+            est = view.utility
+            if est.gas_basis == "conflict":
+                return "矛盾→期待値"
+            if est.gas_basis == "prior":
+                return "不明→期待値"
+            return GAS_LABELS[est.gas]
+
+        groups: dict[str, list] = {}
+        for view in passing:
+            groups.setdefault(label(view), []).append(view)
+        print("  ガス種別（MUST通過・名寄せグループの和集合）:")
+        for name, members in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+            yen = sorted(v.utility.monthly_yen for v in members)
+            ranked = sorted(r for v in members if (r := ranks.get(v.listing_id)) is not None)
+            mean = f"{sum(ranked) / len(ranked):,.1f}位" if ranked else "—"
+            top100 = sum(1 for r in ranked if r <= 100)
+            top15 = sum(1 for r in ranked if r <= 15)
+            print(
+                f"    {name:<12} {len(members):>6,}件（{len(members) / len(passing):.1%}）"
+                f" 光熱費 中央{_percentile(yen, 0.5):,}円 / 順位あり {len(ranked):,}件"
+                f" 平均{mean} 上位100に{top100} 上位15に{top15}"
+            )
+
+        costs = sorted(v.metric_value("living_cost") for v in passing if v.rent_total is not None)
+        if not costs:
+            print("  ⚠ 賃料のある掲載がありません\n")
+            continue
+        marks = [("5%", 0.05), ("10%", 0.10), ("25%", 0.25), ("中央", 0.5),
+                 ("75%", 0.75), ("90%", 0.90), ("95%", 0.95)]
+        cells = "  ".join(f"{name} {_percentile(costs, r):,.0f}" for name, r in marks)
+        print(f"  光熱費込み月額: {cells}")
+        print(
+            f"  → best/worst の候補（p10〜p90）: "
+            f"{_percentile(costs, 0.10):,.0f} 〜 {_percentile(costs, 0.90):,.0f}"
+        )
+        for item in pattern.want.numeric:
+            if item.metric != "living_cost":
+                continue
+            scores = [normalize(c, best=item.best, worst=item.worst) for c in costs]
+            zero = sum(1 for s in scores if s == 0.0) / len(scores)
+            full = sum(1 for s in scores if s == 1.0) / len(scores)
+            print(
+                f"  現在の best/worst（{item.best:,.0f} / {item.worst:,.0f}）: "
+                f"0点 {zero:.1%} / 満点 {full:.1%}"
+            )
+        print()
+    return 0
+
+
 def _cmd_hazard_stats(args: argparse.Namespace) -> int:
     from house_search.commute.resolve import resolve_destination_group
     from house_search.config.metrics import METRICS_BY_NAME
@@ -1935,6 +2095,7 @@ _COMMANDS = {
     "commute-stats": _cmd_commute_stats,
     "hazard-stats": _cmd_hazard_stats,
     "market-stats": _cmd_market_stats,
+    "utility-stats": _cmd_utility_stats,
 }
 
 

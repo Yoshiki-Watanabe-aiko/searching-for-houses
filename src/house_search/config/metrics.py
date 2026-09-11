@@ -92,6 +92,21 @@ METRICS: tuple[MetricSpec, ...] = (
         property_types=frozenset({CHINTAI}),
         source_columns=("rent_total",),
     ),
+    # --- 光熱費込みの月額（→ 課題#64・ADR 0025） --------------------------
+    # ⚠ rent_total を**置き換える**ためのもので、両方に配点できない（パターンの検証が弾く）。
+    # 足すと賃料に二重の重みが掛かる（→ 要件定義書 §5.3）。
+    # ⚠ 光熱費は t_listings の列ではなく、設備（名寄せグループの和集合）から
+    # scoring/utility.py が推定した値。ガス種別が不明なら帯ごとのプロパン確率で期待値を取る。
+    # ⚠ 相場比（market_rate_ratio）・MUST の rent_total_max・異常検出は賃料のまま
+    # （相場ページの賃料に光熱費は入っていない）。
+    MetricSpec(
+        name="living_cost",
+        label="賃料＋管理費＋光熱費",
+        direction=Direction.LOWER_IS_BETTER,
+        unit="円/月",
+        property_types=frozenset({CHINTAI}),
+        source_columns=("rent_total", "estimated_utility"),
+    ),
     MetricSpec(
         name="price",
         label="物件価格",

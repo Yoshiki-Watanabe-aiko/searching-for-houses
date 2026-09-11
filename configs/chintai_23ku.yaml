@@ -101,6 +101,15 @@ commute:
   destination_station: "芝公園"
   destination_prefecture: "東京都"
 
+# ---- 光熱費の見積もり（→ 課題#64・ADR 0025）----
+# WANT の living_cost（賃料＋管理費＋推定光熱費）の入力。ガス種別（都市ガス／プロパン／
+# オール電化）とコンロ（IH／ガス）を設備から判定し、需要 × 効率 × 料金で月額を出す。
+# ⚠ ガス種別が書かれていない掲載は「都市ガス」とみなさない。23区帯で書いていない掲載が
+#   プロパンだった割合は実測 13.8〜14.3%（2026-09-11・名寄せグループの他の掲載から判定）
+utility:
+  household_size: 1              # ユーザー判断 2026-09-11
+  unknown_lpg_probability: 0.14
+
 # ---- MUST: 未充足なら除外 ----
 must:
   rent_total_max: 100000   # 実測で確定（2026-09-02）
@@ -153,7 +162,8 @@ want:
     # 小さな加点
     - { code: EQUIP_TRASH_24H,      weight: 4 }    # 24時間ゴミ出し可
     - { code: INT_FLOORING,         weight: 4 }    # フローリング
-    - { code: EQUIP_CITY_GAS,       weight: 4 }    # 都市ガス（プロパンとの月額差）
+    # ⚠ 都市ガス（EQUIP_CITY_GAS・weight 4）は外した（→ 課題#64）。プロパンとの月額差は
+    #   living_cost の光熱費で数えるので、残すと二重に効く
     - { code: COMM_FIBER,           weight: 3 }    # 光ファイバー
     - { code: STORAGE_SHOE,         weight: 3 }    # シューズボックス
     - { code: STORAGE_CLOSET,       weight: 3 }    # クローゼット
@@ -166,10 +176,15 @@ want:
     - { code: MOVEIN_INSTRUMENT,    weight: 2 }    # 楽器相談可
     - { code: EQUIP_PARKING,        weight: 1 }    # 駐車場あり
 
-  # best/worst は帯の相場に合わせる。帯2と同じ 50,000〜70,000 にすると
-  # 23区の掲載はほぼ全て0点になり、賃料の weight 40 が死ぬ
+  # best/worst は帯の相場に合わせる。帯2と同じ水準にすると
+  # 23区の掲載はほぼ全て0点になり、金額の weight 40 が死ぬ
   numeric:
-    - { metric: rent_total,   weight: 40, best: 70000, worst: 100000 }
+    # 賃料＋管理費＋推定光熱費（→ 課題#64）。rent_total（70,000〜100,000）を置き換えた。
+    # ⚠ rent_total と同時には配点できない（living_cost は賃料を含む）。
+    # best は母集団（MUST通過・1人）の p10 82,201円。⚠ worst は p90（110,201円）ではなく
+    # 「賃料上限 100,000円 ＋ プロパンの光熱費 13,626円」にした。上限ちょうどの掲載が1割超あり
+    # p90 と p95 が同じ値に張り付くので、p90 で切ると上限付近では都市ガスとプロパンの差が消える
+    - { metric: living_cost,  weight: 40, best: 82000, worst: 114000 }
     - { metric: area_sqm,     weight: 20, best: 45,    worst: 30 }
     # worst は母集団の実態に合わせる。30年にすると築30年以上が全部0点になり、
     # 母集団の9割（中央値 築38〜40年）が張り付いて weight 15 が死ぬ（実測）

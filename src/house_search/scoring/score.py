@@ -41,6 +41,8 @@ class ScoreItem:
     status: str
     missing: bool = False
     value: float | None = None
+    detail: dict[str, Any] | None = None
+    """値の根拠（``living_cost`` の光熱費の内訳など → 課題#64）。無い項目の JSON は変えない。"""
 
     def to_dict(self) -> dict[str, Any]:
         """``t_listing_scores.score_breakdown`` へ入れる形。"""
@@ -57,6 +59,8 @@ class ScoreItem:
             payload["missing"] = True
         if self.value is not None:
             payload["value"] = self.value
+        if self.detail is not None:
+            payload["detail"] = self.detail
         return payload
 
 
@@ -126,6 +130,13 @@ def _numeric_item(item: Any, view: ListingView) -> ScoreItem:
             missing=True,
         )
     s = normalize(value, best=item.best, worst=item.worst)
+    detail = None
+    if item.metric == "living_cost" and view.utility is not None:
+        # 光熱費は推定なので、根拠（ガス種別・コンロ・期待値の確率）を内訳に残す
+        detail = {
+            "rent_total": round(value) - view.utility.monthly_yen,
+            **view.utility.to_detail(),
+        }
     return ScoreItem(
         code=item.metric,
         name=spec.label,
@@ -135,6 +146,7 @@ def _numeric_item(item: Any, view: ListingView) -> ScoreItem:
         points=item.weight * s,
         status=STATUS_HIT if s > 0 else STATUS_MISS,
         value=value,
+        detail=detail,
     )
 
 
