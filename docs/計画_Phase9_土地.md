@@ -471,7 +471,7 @@ ranking: { top_n: 15, digest_group: null, notify_max_rank: 200 }
 | 9 | `.env.example` に `DISCORD_WEBHOOK_TOCHI` と `DISCORD_WEBHOOK_TOCHI_DIGEST` を足す（プレースホルダ。空値の行にインラインコメントを書かない規約に従う） | — |
 | 10 | ドキュメント（§9）・ADR 0024・課題 | — |
 | 11 | 総合確認 | `pytest -q` の失敗0件（件数は手順0から増えるだけ）。`validate-config` の6本のハッシュ先頭12桁が §5.3 と一致。`ruff check` に違反なし。`rg -n "ALL_PROPERTY_TYPES\|BUY_TYPES" src tests` の結果が §2 の表と一致 |
-| 12 | **掃き出しが終わってから**（DB 書き込み・人が実行） | `uv run house-search db-seed` → `m_property_types` が **6行**。テスト DB にも seed を当て、`test_schema_conventions` が通る。（任意）DB での名寄せキーの差が手順0と同じ件数 |
+| 12 | **掃き出しが終わってから**（DB 書き込み・人が実行）。✅ 2026-09-11 適用済み（→ 課題#61） | `uv run house-search db-seed` → `m_property_types` が **6行**。テスト DB にも seed を当て、`test_schema_conventions` が通る。（任意）DB での名寄せキーの差が手順0と同じ件数 |
 
 ### 9b SUUMO 土地アダプタ（§6.6 の実測の後・1つの PR）
 
