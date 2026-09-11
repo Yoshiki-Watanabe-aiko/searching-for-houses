@@ -12,13 +12,14 @@ from __future__ import annotations
 import datetime as dt
 import json
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import Connection, text
 
 from house_search.scoring.listing_view import ListingView, StationAccess
+from house_search.scoring.utility import UtilityProfile, estimate_utility
 from house_search.scrape.base import ScrapedDetail, ScrapedListing, caveats_of
 
 # 通知種別。
@@ -1233,8 +1234,14 @@ def load_listing_views(
     city_names: list[str] | None = None,
     commute_destination_g_cd: int | None = None,
     active_only: bool = True,
+    utility_profile: UtilityProfile | None = None,
 ) -> dict[int, ListingView]:
     """採点に必要な物件ビューをまとめて読み出す。
+
+    ``utility_profile`` を渡すと各ビューに推定光熱費（``ListingView.utility``）を付ける
+    （→ 課題#64）。⚠ **採点に使う読み込みでは必ず渡す**（``utility_profile_for(pattern)``）。
+    渡し忘れた経路で ``living_cost`` を求めると例外になる（黙って欠損にしない）。
+    採点しない統計コマンドなどは渡さなくてよい。
 
     設備は1クエリでまとめて引いてから物件ごとに畳む（物件ごとに引くと
     数千件で往復が効いてくる）。
@@ -1307,14 +1314,16 @@ def load_listing_views(
             )
         )
 
-    return {
-        row.id: _to_view(
-            row,
-            frozenset(features.get(row.id, ())),
-            tuple(stations.get(row.id, ())),
-        )
-        for row in rows
-    }
+    views: dict[int, ListingView] = {}
+    for row in rows:
+        codes = frozenset(features.get(row.id, ()))
+        view = _to_view(row, codes, tuple(stations.get(row.id, ())))
+        if utility_profile is not None:
+            # 光熱費はグループの和集合の設備から推定する（設備と同じく、サイトによって
+            # ガス種別を書く・書かないが違うので、グループ全体から拾わないと情報が減る）
+            view = replace(view, utility=estimate_utility(codes, utility_profile))
+        views[row.id] = view
+    return views
 
 
 def detail_queue(

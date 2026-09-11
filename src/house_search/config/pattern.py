@@ -429,11 +429,71 @@ class PatternBase(Strict):
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+class UtilitySpec(Strict):
+    """光熱費の見積もり条件（→ 課題#64・ADR 0025）。賃貸だけに置く。
+
+    ``living_cost``（賃料＋管理費＋推定光熱費）を WANT に書くなら必須。
+    ⚠ 光熱費は住む人で決まるので、世帯人数は**住戸ではなくパターン側**に持つ
+    （間取りや面積から推定すると、面積の WANT と逆向きの二重重みになる）。
+    """
+
+    household_size: Literal[1, 2] = Field(
+        description="世帯人数（需要の出典がある 1人・2人だけ）"
+    )
+    unknown_lpg_probability: float = Field(
+        ge=0.0,
+        le=1.0,
+        description=(
+            "ガス種別が書かれていない掲載がプロパンである確率（帯ごとの実測値）。"
+            "⚠ 不明を都市ガスとみなすとプロパンを伏せた掲載が得をする（→ 課題#64）"
+        ),
+    )
+    lpg_price_multiplier: float = Field(
+        default=1.0,
+        gt=0.0,
+        description="LPガスの価格に掛ける係数（賃貸の割高分を見込むとき 1.0 より大きくする）",
+    )
+
+
 class ChintaiPattern(PatternBase):
     """賃貸の検索パターン。"""
 
     property_type: Literal["CHINTAI"]
     must: ChintaiMust = Field(default_factory=ChintaiMust)
+    utility: UtilitySpec | None = Field(
+        default=None,
+        description="光熱費の見積もり条件。WANT に living_cost を書くなら必須",
+    )
+
+    @model_validator(mode="after")
+    def _validate_utility(self) -> ChintaiPattern:
+        metrics = {item.metric for item in self.want.numeric}
+        if "living_cost" in metrics and self.utility is None:
+            raise ValueError(
+                "living_cost（賃料＋管理費＋光熱費）を使うには utility セクションが要ります"
+            )
+        # ⚠ living_cost は rent_total を含むので、両方に配点すると賃料に二重の重みが掛かる
+        if {"living_cost", "rent_total"} <= metrics:
+            raise ValueError(
+                "living_cost と rent_total を同時に配点できません（living_cost は賃料を含む）"
+            )
+        return self
+
+    def score_config(self) -> dict[str, Any]:
+        """賃貸は光熱費の見積もり条件と料金定数の指紋もハッシュに入れる。
+
+        ⚠ 未設定のパターンではキーごと省き、既存のハッシュを変えない
+        （commute と同じ扱い。意図しない全件再スコアを起こさないため）。
+        """
+        from house_search.scoring.utility import tariff_fingerprint
+
+        config = super().score_config()
+        if self.utility is not None:
+            config["utility"] = {
+                **self.utility.model_dump(mode="json"),
+                "tariff": tariff_fingerprint(),
+            }
+        return config
 
 
 class MansionBuyPattern(PatternBase):

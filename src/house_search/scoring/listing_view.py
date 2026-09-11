@@ -10,6 +10,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from house_search.scoring.utility import UtilityEstimate, UtilityNotAttachedError
+
 # 「1SLDK」のサービスルーム表記。間取り比較では S を無視する
 # （1SLDK は 1LDK に納戸が付いた形で、1LDK を許容するなら除外する理由がない）。
 _SERVICE_ROOM = re.compile(r"(?<=\d)s(?=[ldk])", re.IGNORECASE)
@@ -135,6 +137,9 @@ class ListingView:
     # ⚠ 掲載そのものの ``type_specific_attrs`` から読む（グループの和集合にはしない。
     #   建築条件は区画ごとに違いうるので、別の掲載の条件を混ぜると誤読の元になる）
     caveats: tuple[str, ...] = ()
+    # 推定光熱費（→ 課題#64）。パターンに ``utility`` があるときだけ付く。
+    # ⚠ 付いていないビューで ``living_cost`` を求めると例外にする（下の metric_value）。
+    utility: UtilityEstimate | None = None
 
     @property
     def normalized_layout(self) -> str | None:
@@ -156,6 +161,19 @@ class ListingView:
             if self.price is None:
                 return None
             return float(self.price + (self.mgmt_fee_monthly or 0))
+        if metric == "living_cost":
+            rent = self.metric_value("rent_total")
+            if rent is None:
+                return None  # 賃料が無ければ欠損（光熱費だけでは月額にならない）
+            # ⚠⚠ **光熱費を 0 円として足さない。** 付け忘れた経路で光熱費0円の物件が
+            # 最安側へ行く（→ ADR 0021 決定4 と同じ形）。欠損にしても weight 40 が
+            # 分母から消えて賃料が採点から抜けるので、どちらも例外にならない。止める。
+            if self.utility is None:
+                raise UtilityNotAttachedError(
+                    "living_cost を求めましたが光熱費の見積もりが付いていません"
+                    "（load_listing_views に utility_profile を渡していない経路があります）"
+                )
+            return rent + self.utility.monthly_yen
         if metric == "monthly_cost":
             cost = self.monthly_cost
             return None if cost is None else float(cost)
