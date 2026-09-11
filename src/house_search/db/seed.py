@@ -29,7 +29,9 @@ EXPECTED_MIN_ROWS = {
     "m_cities": 1918,
     # 07（サイト固有マッピング931行）＋ 08（ATHOME/NIFTY のスラグ902行）
     # ＋ 09（HOMES/ATHOME の帯市区スラグ追補・Phase 5E で318行が新規 → 課題#36）
-    "m_city_site_values": 2151,
+    # ＋ 10〜13（レオパレス・ハウスコム・ATHOME 東京・SUUMO 売買）で 3529行（2026-09-11 実測）
+    # ＋ 14（SUUMO の13市町 → 課題#61）。⚠ 据え置くと seed の当て忘れを `>=` で見逃す
+    "m_city_site_values": 3542,
 }
 
 
