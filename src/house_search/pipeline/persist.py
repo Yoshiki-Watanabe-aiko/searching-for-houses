@@ -13,6 +13,7 @@ import datetime as dt
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import Connection, text
@@ -38,6 +39,9 @@ class UpsertOutcome:
     is_reinstated: bool
     price_event: str | None
     price_prev: int | None
+    # 掲載終了の既存行を新しい種別で引き継いだ（→ 課題#62・``ExistingRelation.RETYPE``）。
+    # ⚠ 引き継ぎは ``is_reinstated`` も真なので「再掲載」として新着を出す（ユーザー判断）
+    is_retyped: bool = False
 
     @property
     def notification_type(self) -> str | None:
@@ -51,16 +55,160 @@ class UpsertOutcome:
 class UpsertBatch:
     """``upsert_listings`` の結果。
 
-    ⚠ ``family_mismatch`` は**ファミリの食い違いで更新を見送った** external_id。
-    一意キーが ``(site_id, external_id)`` で種別を含まないので、同じ ``nc_`` が戸建てと
-    土地の両方に出ると、素朴な UPSERT は戸建ての行を土地の値で上書きし種別は戸建ての
-    まま残す（例外にならない → 課題#61・計画書 §6.5-2）。見送った掲載は新着・価格変動の
-    判定にも含めない。**黙って捨てず**、実行サマリへ件数を出す。
-    ⚠ 同じファミリの別種別（新築⇔中古）は見送らない（→ 課題#62）。
+    一意キーが ``(site_id, external_id)`` で種別を含まないので、同じ ``nc_`` が別の種別で
+    既に登録されていると、素朴な UPSERT は**既存行を別の種別の値で上書きし、種別は元のまま**
+    にする（例外にならない）。そのため次の2つは更新を見送り、external_id を返す。
+    見送った掲載は新着・価格変動の判定にも含めない（別の種別の価格と比べることになる）。
+    **黙って捨てず**、実行サマリへ件数を出す。
+
+    - ``family_mismatch``: ファミリが違う（土地⇔戸建て等 → 課題#61）。掲載終了でも見送る
+    - ``type_mismatch``: 同じファミリの別種別（新築⇔中古）で、既存行が**掲載中**（→ 課題#62）。
+      ⚠ 既存行が掲載終了なら見送らず、新しい種別で引き継ぐ（``UpsertOutcome.is_retyped``）
     """
 
     outcomes: tuple[UpsertOutcome, ...] = ()
     family_mismatch: tuple[str, ...] = ()
+    type_mismatch: tuple[str, ...] = ()
+
+
+# 掲載終了を表す状態。⚠ ``_RETAKE`` の SQL と揃えること
+_ENDED_STATUSES = frozenset({"sold", "removed"})
+
+
+class ExistingRelation(StrEnum):
+    """一覧の掲載と、同じ ``(site_id, external_id)`` の既存行との関係（→ 課題#61・#62）。"""
+
+    NEW = "new"  # 既存行が無い
+    SAME_TYPE = "same_type"  # 同じ種別（掲載終了なら従来どおり「再掲載」。作り直さない）
+    RETYPE = "retype"  # 同じファミリの別種別で、既存行が掲載終了 → 新しい種別で引き継ぐ
+    TYPE_MISMATCH = "type_mismatch"  # 同じファミリの別種別で、既存行が掲載中 → 見送る
+    FAMILY_MISMATCH = "family_mismatch"  # ファミリが違う → 掲載終了でも見送る
+
+
+def classify_existing(
+    *,
+    existing_type_id: int | None,
+    existing_family: str | None,
+    existing_status: str | None,
+    new_type_id: int,
+    new_family: str,
+) -> ExistingRelation:
+    """既存行との関係を決める（純関数）。
+
+    ⚠ **ファミリが違えば掲載終了でも引き継がない**（ユーザー判断 2026-09-11）。
+    ファミリが変わると名寄せの名前空間・相場比・通知チャンネルまで変わる。
+    ⚠ 同じファミリで既存行が掲載中なら**最初の種別で安定させる**。新築と中古の両方に
+    同時に載っている間に値が毎日行き来するのを防ぐ（→ 課題#62 案(c)）。
+    """
+    if existing_type_id is None:
+        return ExistingRelation.NEW
+    if existing_type_id == new_type_id:
+        return ExistingRelation.SAME_TYPE
+    if existing_family != new_family:
+        return ExistingRelation.FAMILY_MISMATCH
+    if existing_status in _ENDED_STATUSES:
+        return ExistingRelation.RETYPE
+    return ExistingRelation.TYPE_MISMATCH
+
+
+# ---- 引き継ぎ（``ExistingRelation.RETYPE``）で作り直す列 -------------------------
+# ⚠ ``t_listings`` の全列は、次の3つのどれか1つに入っていること
+#   （``tests/test_upsert_family_guard.py`` が機械的に固定している）。列を足したとき
+#   分類し忘れると**旧種別の値が黙って残る**。
+
+# NULL に戻す列。旧種別の一覧・詳細が入れた値で、一覧の UPSERT は COALESCE で
+# 「新しい値が無ければ古い値を残す」ため、戻さないと残る（棟の所在階・旧い詳細の
+# 設備原文・築年月など）。派生列（``address_normalized`` / ``dedup_key``）も、元の列を
+# 消す以上いったん消す（直後の ``refresh_dedup_keys`` が作り直す）。
+RETAKE_NULL_COLUMNS: tuple[str, ...] = (
+    "title",
+    "price_prev",
+    "price_per_sqm",
+    "repair_reserve_monthly",
+    "area_sqm",
+    "land_area_sqm",
+    "building_area_sqm",
+    "layout",
+    "floor_num",
+    "total_floors",
+    "built_on",
+    "age_years",
+    "address",
+    "address_normalized",
+    "prefecture",
+    "city_id",
+    "station_info",
+    "walk_minutes",
+    "image_url",
+    "raw_features_text",
+    "dedup_key",
+    # ⚠ 新しい種別の詳細キューに入れ直す（詳細ページは種別で別物 → 課題#4）
+    "detail_fetched_at",
+)
+# 値を入れ直す列（``_RETAKE`` の SQL で個別に書く）。
+# ⚠ ``type_specific_attrs`` は JSONB のマージなので空にしてから一覧の値を足す
+#   （新築の「価格未定」フラグ等を残さない）
+RETAKE_SET_COLUMNS: tuple[str, ...] = ("property_type_id", "type_specific_attrs", "updated_at")
+# 残す列。掲載の同一性・履歴（``first_seen_at`` 等。通知履歴も残す）か、一覧の UPSERT が
+# 必ず上書きする列（``url`` / ``price`` 等）か、別の仕組みが作り直す列
+# （``group_id`` は ``sync_groups``、``rent_total`` は生成列）。
+RETAKE_KEEP_COLUMNS: tuple[str, ...] = (
+    "id",
+    "site_id",
+    "external_id",
+    "url",
+    "price",
+    "price_min",
+    "price_max",
+    "mgmt_fee_monthly",
+    "deposit_amount",
+    "key_money_amount",
+    "rent_total",
+    "group_id",
+    "status",
+    "first_seen_at",
+    "last_seen_at",
+    "created_at",
+)
+
+# ⚠ 条件は SQL の側でも確かめる（Python の分類を誤っても別の行を作り直さない）
+_RETAKE = text(
+    "UPDATE t_listings SET "
+    "property_type_id = :property_type_id, "
+    "type_specific_attrs = '{}'::jsonb, "
+    + ", ".join(f"{column} = NULL" for column in RETAKE_NULL_COLUMNS)
+    + ", updated_at = now() "
+    "WHERE id = :listing_id "
+    "AND status IN ('sold', 'removed') "
+    "AND property_type_id <> :property_type_id "
+    "AND (SELECT old_pt.family FROM m_property_types old_pt "
+    "     WHERE old_pt.id = t_listings.property_type_id) "
+    "  = (SELECT new_pt.family FROM m_property_types new_pt "
+    "     WHERE new_pt.id = :property_type_id) "
+    "RETURNING id"
+)
+# 旧種別の抽出結果と採点。⚠ 採点を消さないと、旧パターンが採点し直すまで
+#   その順位が残る（digest は種別で絞らずに読む）
+_RETAKE_CLEANUP = (
+    text("DELETE FROM t_listing_features WHERE listing_id = :listing_id"),
+    text("DELETE FROM t_listing_scores WHERE listing_id = :listing_id"),
+)
+
+
+def _retake(conn: Connection, *, listing_id: int, property_type_id: int) -> bool:
+    """掲載終了の既存行を新しい種別で作り直す。作り直せたら True。
+
+    ⚠ 行を DELETE して入れ直さない。通知履歴（``t_notifications``）が CASCADE で消え、
+    グループ単位の重複抑制が効かなくなる。
+    """
+    retaken = conn.execute(
+        _RETAKE, {"listing_id": listing_id, "property_type_id": property_type_id}
+    ).scalar_one_or_none()
+    if retaken is None:
+        return False
+    for statement in _RETAKE_CLEANUP:
+        conn.execute(statement, {"listing_id": listing_id})
+    return True
 
 
 def load_lookup(conn: Connection, table: str) -> dict[str, int]:
@@ -190,8 +338,9 @@ def _unique_city_names(rows: Sequence[tuple[str, str, int]]) -> frozenset[str]:
 
 
 _SELECT_EXISTING = text(
-    "SELECT external_id, id, price, status FROM t_listings "
-    "WHERE site_id = :site_id AND external_id = ANY(:external_ids)"
+    "SELECT l.external_id, l.id, l.price, l.status, l.property_type_id, pt.family "
+    "FROM t_listings l JOIN m_property_types pt ON pt.id = l.property_type_id "
+    "WHERE l.site_id = :site_id AND l.external_id = ANY(:external_ids)"
 )
 
 _UPSERT = text(
@@ -249,18 +398,15 @@ _UPSERT = text(
         status = 'active',
         last_seen_at = now(),
         updated_at = now()
-    -- ⚠⚠ **ファミリが違う既存行は更新しない**（→ 課題#61・計画書 §6.5-2）。一意キーが
+    -- ⚠⚠ **種別が違う既存行は更新しない**（→ 課題#61・#62）。一意キーが
     -- ``(site_id, external_id)`` で種別を含まないので、これが無いと同じ ``nc_`` が
-    -- 戸建てと土地の両方に出たとき**戸建ての行を土地の値で上書きし、種別は戸建てのまま**
-    -- にする（例外にならない）。見送った行は RETURNING が0行になるので呼び出し側で数える。
-    -- ⚠ **同じファミリの別種別（新築⇔中古）は従来どおり更新する。** SUUMO は新築と中古で
-    --   同じ ``nc_`` を使い回す実例がある（2026-09-11 実測2件）。どちらの種別に持たせるかは
-    --   ユーザー判断が要るので、このガードでは稼働中の挙動を変えない（→ 課題#62）
+    -- 別の種別に出たとき**既存行を別の種別の値で上書きし、種別は元のまま**にする
+    -- （例外にならない。本番で新築マンション80位が中古の値で採点されていた）。
+    -- 見送った行は RETURNING が0行になるので呼び出し側で数える。
+    -- ⚠ 掲載終了の既存行を新しい種別で引き継ぐときは、先に ``_RETAKE`` が種別を
+    --   付け替えるので、ここは「同じ種別」として更新される。
+    -- ⚠ 条件をファミリの比較へ広げない。Python 側の分類を誤ったときの最後の防壁になる
     WHERE t_listings.property_type_id = EXCLUDED.property_type_id
-       OR (SELECT old_pt.family FROM m_property_types old_pt
-           WHERE old_pt.id = t_listings.property_type_id)
-        = (SELECT new_pt.family FROM m_property_types new_pt
-           WHERE new_pt.id = EXCLUDED.property_type_id)
     RETURNING id
     """
 )
@@ -380,32 +526,50 @@ def upsert_listings(
     既存行の取得を1クエリにまとめてあるのは、掲載1件ごとに SELECT すると
     ページあたり数十回の往復になるため。
 
-    ⚠ **ファミリが違う既存行は更新せず、``family_mismatch`` に external_id を返す**
-    （→ ``UpsertBatch``）。1件の食い違いでバッチ全体は止めない。
+    ⚠ **種別が違う既存行は更新せず、``family_mismatch`` / ``type_mismatch`` に
+    external_id を返す**（→ ``UpsertBatch``）。ただし同じファミリで既存行が掲載終了なら、
+    新しい種別で引き継ぐ（→ ``classify_existing``・課題#62）。
+    1件の食い違いでバッチ全体は止めない。
     """
     if not listings:
         return UpsertBatch()
 
     external_ids = [listing.external_id for listing in listings]
     existing = {
-        external_id: (row_id, price, status)
-        for external_id, row_id, price, status in conn.execute(
+        row.external_id: row
+        for row in conn.execute(
             _SELECT_EXISTING, {"site_id": site_id, "external_ids": external_ids}
         )
     }
+    new_family = conn.execute(
+        text("SELECT family FROM m_property_types WHERE id = :id"), {"id": property_type_id}
+    ).scalar_one()
 
     outcomes: list[UpsertOutcome] = []
     family_mismatch: list[str] = []
+    type_mismatch: list[str] = []
     for listing in listings:
         previous = existing.get(listing.external_id)
+        relation = classify_existing(
+            existing_type_id=previous.property_type_id if previous else None,
+            existing_family=previous.family if previous else None,
+            existing_status=previous.status if previous else None,
+            new_type_id=property_type_id,
+            new_family=new_family,
+        )
         is_new = previous is None
-        old_price = previous[1] if previous else None
-        old_status = previous[2] if previous else None
-        is_reinstated = old_status in ("sold", "removed")
+        old_price = previous.price if previous else None
+        is_reinstated = previous is not None and previous.status in _ENDED_STATUSES
+        # ⚠ 作り直せなかったとき（分類の後に状態が変わった等）は下の UPSERT の条件が
+        #   更新を止め、「種別違いで見送り」として数えられる
+        is_retyped = relation is ExistingRelation.RETYPE and _retake(
+            conn, listing_id=previous.id, property_type_id=property_type_id
+        )
 
         price_event: str | None = None
-        price_prev = old_price
-        if not is_new and old_price is not None and listing.price is not None:
+        # ⚠ 引き継いだ行では別の種別の価格を「直前価格」にしない（値下げ通知が誤発火する）
+        price_prev = None if is_retyped else old_price
+        if not is_new and not is_retyped and old_price is not None and listing.price is not None:
             if listing.price < old_price:
                 price_event = PRICE_DOWN
             elif listing.price > old_price:
@@ -447,9 +611,12 @@ def upsert_listings(
             },
         ).scalar_one_or_none()
         if row_id is None:
-            # ⚠ ``ON CONFLICT … WHERE`` がファミリの食い違いで更新を見送った。
+            # ⚠ ``ON CONFLICT … WHERE`` が種別の食い違いで更新を見送った。
             #   新着・価格変動の判定にも含めない（別の種別の価格と比べることになる）
-            family_mismatch.append(listing.external_id)
+            if relation is ExistingRelation.FAMILY_MISMATCH:
+                family_mismatch.append(listing.external_id)
+            else:
+                type_mismatch.append(listing.external_id)
             continue
 
         outcomes.append(
@@ -459,10 +626,15 @@ def upsert_listings(
                 is_new=is_new,
                 is_reinstated=is_reinstated,
                 price_event=price_event,
-                price_prev=old_price,
+                price_prev=None if is_retyped else old_price,
+                is_retyped=is_retyped,
             )
         )
-    return UpsertBatch(outcomes=tuple(outcomes), family_mismatch=tuple(family_mismatch))
+    return UpsertBatch(
+        outcomes=tuple(outcomes),
+        family_mismatch=tuple(family_mismatch),
+        type_mismatch=tuple(type_mismatch),
+    )
 
 
 def save_detail(conn: Connection, listing_id: int, detail: ScrapedDetail) -> None:

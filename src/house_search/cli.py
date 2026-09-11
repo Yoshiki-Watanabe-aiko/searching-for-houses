@@ -12,10 +12,14 @@ import argparse
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from house_search import __version__
 from house_search.config.metrics import Family
 from house_search.console import force_utf8_output
+
+if TYPE_CHECKING:
+    from house_search.pipeline.scan import SiteOutcome
 
 # 未実装サブコマンドと、実装予定の Phase。Phase 2 ですべて実装済みになった。
 PLANNED: dict[str, str] = {}
@@ -476,6 +480,30 @@ def _skipped_by_lock(command: str) -> None:
     )
 
 
+def format_site_line(site: SiteOutcome) -> str:
+    """実行サマリのサイト1行を組む。
+
+    ⚠ 掲載終了（→ 課題#55）・ファミリ違いの見送り（→ 課題#61）・種別違いの見送りと
+    種別の引き継ぎ（→ 課題#62）は**エラーではない**ので、エラー欄に混ぜない（→ 課題#45）。
+    ただし**黙って捨てない**。0件のときは何も足さない。
+    """
+    line = (
+        f"  {site.site_code:10s} 取得 {site.listings_seen:4d} → "
+        f"MUST1段目通過 {site.listings_kept:4d} → 新規 {site.listings_new:4d} / "
+        f"詳細 {site.details_fetched:3d}件 / 設備 {site.features_extracted:4d}件"
+    )
+    if site.details_sold:
+        line += f" / 掲載終了 {site.details_sold:3d}件"
+    for label, ids in (
+        ("ファミリ違いで見送り", site.family_mismatch),
+        ("種別違いで見送り", site.type_mismatch),
+        ("種別を引き継ぎ", site.retyped),
+    ):
+        if ids:
+            line += f" / {label} {len(ids)}件（{', '.join(ids[:5])}）"
+    return line
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
     from house_search.db.session import scraping_lock
 
@@ -561,22 +589,7 @@ def _run_scan(args: argparse.Namespace) -> int:
         mode = "シードモード（通知なし）" if args.seed else "通常"
         print(f"\n=== {summary.pattern_name} / {mode} ===")
         for site in summary.sites:
-            print(
-                f"  {site.site_code:10s} 取得 {site.listings_seen:4d} → "
-                f"MUST1段目通過 {site.listings_kept:4d} → 新規 {site.listings_new:4d} / "
-                f"詳細 {site.details_fetched:3d}件 / 設備 {site.features_extracted:4d}件"
-                # ⚠ エラーではなく正常な状態変化なので、エラー欄ではなく
-                # ここに出す（→ 課題#55）。0件のときは何も足さない
-                + (f" / 掲載終了 {site.details_sold:3d}件" if site.details_sold else "")
-                # ⚠ 同じ ID が別のファミリで登録済みで、更新を見送った（→ 課題#61）。
-                #   エラーではないが黙って捨てない
-                + (
-                    f" / ファミリ違いで見送り {len(site.family_mismatch)}件"
-                    f"（{', '.join(site.family_mismatch[:5])}）"
-                    if site.family_mismatch
-                    else ""
-                )
-            )
+            print(format_site_line(site))
         if summary.skipped_sites:
             # 理由はサイトごとに違う（アダプタ未実装 / is_active=false /
             # 市区ローテーションの枠を他パターンが使用中）。理由を一括で
