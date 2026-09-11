@@ -1743,7 +1743,12 @@ def _utility_stats_profile(pattern, args: argparse.Namespace):
     from house_search.scoring.utility import UtilityProfile, utility_profile_for
 
     base = utility_profile_for(pattern)
-    size = args.household_size or (base.household_size if base else None)
+    # ⚠ ``or`` だと 0 が偽になり、パターンの値へ黙って置き換わる
+    size = (
+        args.household_size
+        if args.household_size is not None
+        else (base.household_size if base else None)
+    )
     probability = (
         args.lpg_probability
         if args.lpg_probability is not None

@@ -268,6 +268,18 @@ class Test採点の内訳:
         assert item["detail"]["utility"] == 13626
         assert item["detail"]["gas"] == "lpg"
 
+    def test_内訳の項目はハッシュできる(self) -> None:
+        """⚠ frozen な ``ScoreItem`` に dict を持たせると ``hash(item)`` が TypeError になる。
+
+        ``detail`` は値の根拠であって項目の同一性ではないので、比較とハッシュから外す。
+        """
+        view = _view(utility=estimate_utility({"EQUIP_LPG"}, _PROFILE))
+        want = _want([{"metric": "living_cost", "weight": 40, "best": 80000, "worst": 110000}])
+        item = calculate_score(view, want, condition_names={}).items[0]
+        assert item.detail is not None
+        assert isinstance(hash(item), int)
+        assert len({item, item}) == 1
+
     def test_他の項目のJSONは変えない(self) -> None:
         view = _view(utility=estimate_utility({"EQUIP_LPG"}, _PROFILE))
         want = _want([{"metric": "rent_total", "weight": 40, "best": 70000, "worst": 100000}])
@@ -366,6 +378,30 @@ class Test検索パターン:
         )
         del data["utility"]
         assert utility_profile_for(parse_pattern(data)) is None
+
+
+class Test実測の見積もり条件:
+    """``utility-stats`` の引数とパターンの ``utility`` の合成（→ 課題#64）。"""
+
+    def test_省略時はパターンの値(self) -> None:
+        import argparse
+
+        from house_search.cli import _utility_stats_profile
+
+        args = argparse.Namespace(household_size=None, lpg_probability=None)
+        assert _utility_stats_profile(parse_pattern(_chintai()), args) == UtilityProfile(
+            household_size=1, unknown_lpg_probability=0.14
+        )
+
+    def test_世帯人数0を黙ってパターンの値に置き換えない(self) -> None:
+        """⚠ ``or`` で判定すると 0 が偽になり、パターンの 1 人へ黙って置き換わる。"""
+        import argparse
+
+        from house_search.cli import _utility_stats_profile
+
+        args = argparse.Namespace(household_size=0, lpg_probability=None)
+        with pytest.raises(ValueError, match="世帯人数"):
+            _utility_stats_profile(parse_pattern(_chintai()), args)
 
 
 @pytest.mark.parametrize(

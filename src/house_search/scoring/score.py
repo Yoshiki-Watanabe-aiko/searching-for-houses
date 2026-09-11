@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from house_search.config.metrics import METRICS_BY_NAME, normalize
@@ -41,8 +41,11 @@ class ScoreItem:
     status: str
     missing: bool = False
     value: float | None = None
-    detail: dict[str, Any] | None = None
-    """値の根拠（``living_cost`` の光熱費の内訳など → 課題#64）。無い項目の JSON は変えない。"""
+    detail: dict[str, Any] | None = field(default=None, compare=False, hash=False)
+    """値の根拠（``living_cost`` の光熱費の内訳など → 課題#64）。無い項目の JSON は変えない。
+
+    ⚠ dict はハッシュできないので、比較とハッシュから外す（根拠であって項目の同一性ではない）。
+    """
 
     def to_dict(self) -> dict[str, Any]:
         """``t_listing_scores.score_breakdown`` へ入れる形。"""
