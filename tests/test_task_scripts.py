@@ -161,3 +161,86 @@ def test_取得を伴うタスクは無効で登録される(register_text: str)
     """⚠ 国交省APIを叩くので取得タスク扱い（-EnableScraping の対象に入れる）。"""
     block = re.search(r'Name\s*=\s*"HouseSearch-BuyMarketRates".*?TimeLimit', register_text, re.S)
     assert block and "Scraping    = $true" in block.group(0)
+
+
+INITIAL = SCRIPTS / "run_initial_scan.ps1"
+
+
+def test_初回スキャンは集計を捨てない() -> None:
+    """⚠ `Invoke-HouseSearch ... | Out-Null` はパターンごとの集計まで捨てていた。
+
+    戻り値（終了コード）を捨てるための `| Out-Null` だったが、PowerShell の関数は
+    **出力をすべて戻り値として返す**ので、関数内の「▶ 開始／◀ 終了コード・所要」と
+    python の標準出力（`scan` の実行サマリ）も一緒に消える。2026-09-11 の13市町 seed で
+    out.log に見出し7行しか残らず、集計を t_scrape_runs から掘り直すことになった。
+    """
+    text = _read(INITIAL)
+
+    assert not re.search(r"Invoke-HouseSearch[^\n]*\|\s*Out-Null", text), (
+        "Invoke-HouseSearch の出力を Out-Null で捨てている（scan の集計がログに残らない）"
+    )
+    body = re.search(r"function Invoke-HouseSearch \{.*?\n\}", text, re.S)
+    assert body, "Invoke-HouseSearch の定義が読めません（書き方が変わった？）"
+    assert "return $code" not in body.group(0), (
+        "終了コードを出力へ流している（呼び出し側でまた捨てたくなる）"
+    )
+
+
+UTF8_LIB = SCRIPTS / "lib" / "utf8_output.ps1"
+
+
+def _python_callers() -> list[Path]:
+    """python を `& $Python` で直接呼ぶ運用スクリプト（出力が同じログへ流れる）。
+
+    ⚠ task_runner.ps1 は python の出力を Start-Process で別ファイルへ落とすので混在せず、
+    `& $Python` を含まないため自然に外れる。
+    """
+    return [p for p in sorted(SCRIPTS.glob("*.ps1")) if re.search(r"&\s*\$Python\b", _read(p))]
+
+
+def test_pythonを呼ぶ運用スクリプトは出力をUTF8に揃える() -> None:
+    """⚠ PowerShell 5.1 は自分の出力を cp932 で書き、子の python は UTF-8 で書く。
+
+    揃えないと**同じログの中でエンコーディングが混在**し、どちらかが必ず化ける
+    （▶ は cp932 に無く「?」になる。2026-09-11 に隠し起動＋リダイレクトで実測）。
+    ⚠ 新しい運用スクリプトを足したときに黙って混在へ戻らないよう、対象は
+    `scripts/*.ps1` から機械的に拾う（test_console_utf8.py と同じ考え方）。
+    """
+    callers = _python_callers()
+    assert len(callers) >= 4, f"python を呼ぶスクリプトの検出が壊れている: {[p.name for p in callers]}"
+
+    missing = [p.name for p in callers if "Set-Utf8ConsoleOutput" not in _read(p)]
+    assert not missing, f"出力を UTF-8 に揃えていない（ログが混在する）: {missing}"
+
+
+def test_夜間バッチも出力をUTF8に揃える() -> None:
+    """⚠ 夜間バッチは相場更新と掃き出しを**同じプロセス**で呼ぶ（`& $Python` を持たない）。
+
+    呼び先だけが UTF-8 に切り替えると、ログの途中からエンコーディングが変わって混在する。
+    """
+    worker = _read(NIGHTLY).split("# ---- ワーカー", 1)
+    assert len(worker) == 2, "ワーカー部の見出しが読めません（書き方が変わった？）"
+    assert "Set-Utf8ConsoleOutput" in worker[1]
+
+
+def test_UTF8の共通処理はBOMなしで出力を揃える() -> None:
+    """⚠ 共通処理そのものは BOM 付き UTF-8（日本語コメントを 5.1 に読ませるため）。"""
+    raw = UTF8_LIB.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf"), "BOM が無い（PowerShell 5.1 が cp932 として読み構文が壊れる）"
+
+    text = _read(UTF8_LIB)
+    assert "function Set-Utf8ConsoleOutput" in text
+    # ⚠ UTF8Encoding($false) ＝ BOM を出さない（[Text.Encoding]::UTF8 は BOM 付き）
+    assert "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)" in text
+
+
+def test_進捗の追い方はUTF8で読ませる() -> None:
+    """⚠ ログを UTF-8 にしたので、案内する `Get-Content -Wait` も UTF-8 を指定する。
+
+    PowerShell 5.1 の Get-Content は BOM の無いファイルを cp932 として読むので、
+    指定しないと案内どおりに追ったときだけ化ける。
+    """
+    for path in sorted(SCRIPTS.glob("*.ps1")):
+        for line in _read(path).splitlines():
+            if "Get-Content" in line and "-Wait" in line:
+                assert "-Encoding UTF8" in line, f"{path.name}: {line.strip()}"

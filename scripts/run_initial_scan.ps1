@@ -107,7 +107,8 @@ if (-not $Worker) {
     Write-Host "  標準エラー  : $errLog"
     Write-Host ""
     Write-Host "進捗の追い方:" -ForegroundColor Cyan
-    Write-Host "  Get-Content `"$outLog`" -Tail 20 -Wait"
+    # ⚠ ワーカーの出力は UTF-8。PowerShell 5.1 の Get-Content は既定で cp932 として読むので指定する
+    Write-Host "  Get-Content `"$outLog`" -Tail 20 -Wait -Encoding UTF8"
     Write-Host "  Get-Process -Id $($proc.Id) -ErrorAction SilentlyContinue   # 生きているか"
     Write-Host ""
     Write-Host "⚠ CPU 使用率で生死を判断しないこと。レート待ちの sleep が大半で" -ForegroundColor Yellow
@@ -126,6 +127,10 @@ if (-not $Worker) {
 # ここで直接 & 呼び出ししても詰まらない。
 # native コマンドの stderr で止まらないよう Continue にし、終了コードは自分で見る
 $ErrorActionPreference = "Continue"
+
+# ⚠ 出力を UTF-8 に揃える（揃えないと out.log の中で cp932 と UTF-8 が混在する → lib\utf8_output.ps1）
+. (Join-Path $PSScriptRoot "lib\utf8_output.ps1")
+Set-Utf8ConsoleOutput
 
 function Write-Step {
     param([string]$Message)
@@ -146,7 +151,9 @@ function Invoke-HouseSearch {
         # 1サイトの失敗で全体を捨てない。scan は1件でもエラーがあれば 1 を返す
         Write-Step "  ⚠ 終了コードが 0 ではないが後続ステップは続行する"
     }
-    return $code
+    # ⚠ 終了コードを return しない。PowerShell の関数は出力をすべて戻り値として返すので、
+    #   呼び出し側で捨てる（| Out-Null）と「▶／◀」の行と python の標準出力（scan の
+    #   実行サマリ）まで一緒に消える（2026-09-11 の13市町 seed で実際に集計が残らなかった）
 }
 
 Set-Location $RepoRoot
@@ -162,7 +169,7 @@ if ($ConfigsDir) {
     Write-Step "パターン  : $ConfigsDir（CONFIGS_DIR を差し替え）"
 }
 
-Invoke-HouseSearch -Label "辞書の同期" -Arguments @("sync-dict") | Out-Null
+Invoke-HouseSearch -Label "辞書の同期" -Arguments @("sync-dict")
 
 $scanArgs = @("scan", "--seed", "--detail-limit", "$DetailLimit")
 if (-not $Drain) { $scanArgs += "--full" }
@@ -171,7 +178,7 @@ if ($Site) { $scanArgs += @("--site", $Site) }
 # 種別ファミリで絞る（-Family MANSION_BUY,KODATE_BUY で売買だけを掃き出す）。
 # ⚠ 絞った結果が空なら scan 側が例外にする（黙って0件で正常終了しない → 課題#4）
 foreach ($fam in $Family) { $scanArgs += @("--family", $fam) }
-Invoke-HouseSearch -Label "全サイトのシードスキャン" -Arguments $scanArgs | Out-Null
+Invoke-HouseSearch -Label "全サイトのシードスキャン" -Arguments $scanArgs
 
 Write-Step "==== 初回全件スキャン終了 ===="
 Write-Step "次にやること: regroup → rescore → dedup-stats → coverage"

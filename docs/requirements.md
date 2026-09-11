@@ -1766,6 +1766,7 @@ f:\searching-for-houses\
 │   ├── setup_db.ps1            # DB・ロール作成（冪等）
 │   ├── run_initial_scan.ps1    # 初回全件スキャン（Start-Process で切り離す側）
 │   │                           #   -Drain 掃き出し / -Site 1サイトだけ取り直す
+│   ├── lib/utf8_output.ps1     # 運用スクリプト共通: 出力を UTF-8 に揃える（ログの cp932 混在を防ぐ）
 │   ├── task_runner.ps1         # タスクから呼ばれる実体（-Wait で待つ側）
 │   ├── backup_db.ps1           # pg_dump（14世代保持・課題#8）
 │   └── register_tasks.ps1      # タスクスケジューラ登録（schtasks /XML・要管理者）

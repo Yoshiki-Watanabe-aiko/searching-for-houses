@@ -41,6 +41,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# ⚠ 出力を UTF-8 に揃える（揃えないとタスクのログで cp932 と UTF-8 が混在する → lib\utf8_output.ps1）
+. (Join-Path $PSScriptRoot "lib\utf8_output.ps1")
+Set-Utf8ConsoleOutput
+
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $Python   = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 $Builder  = Join-Path $RepoRoot "scripts\tools\build_market_rates.py"
