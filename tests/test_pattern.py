@@ -230,6 +230,8 @@ def test_雛形YAMLはconfigs直下に置かない() -> None:
         # 戸建て2種別（Phase 6 手順8・2026-09-07）。⚠ 直下へ置く前に scan --seed を流した
         "chuko_kodate.yaml",
         "shinchiku_kodate.yaml",
+        # 土地（Phase 9e・2026-09-14 → 課題#61）。⚠ 直下へ置く前に scan --seed を流した
+        "tochi.yaml",
     }, f"configs/ 直下に実運用しないパターンがある: {sorted(live)}"
 
 

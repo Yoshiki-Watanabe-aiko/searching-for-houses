@@ -163,6 +163,39 @@ def test_取得を伴うタスクは無効で登録される(register_text: str)
     assert block and "Scraping    = $true" in block.group(0)
 
 
+def _families_of(runner_text: str, task: str, command: str) -> set[str]:
+    """task_runner.ps1 の分岐 ``task`` の中で ``command`` に渡している ``--family`` を拾う。"""
+    body = runner_text.split("switch ($Task) {", 1)[1]
+    branch = re.search(rf'^\s{{4}}"{re.escape(task)}"\s+\{{(.*?)^\s{{4}}\}}', body, re.S | re.M)
+    assert branch, f"task_runner.ps1 の {task} の分岐が読めません"
+    step = re.search(rf'"house_search\.cli",\s*"{command}",(.*?)\)\s*\}}', branch.group(1), re.S)
+    assert step, f"task_runner.ps1 の {task} に {command} のステップが読めません"
+    return set(re.findall(r'"--family",\s*"([A-Z_]+)"', step.group(1)))
+
+
+@pytest.mark.parametrize("command", ["scan", "check-sold"])
+def test_実運用の全ファミリが定期タスクで回る(runner_text: str, command: str) -> None:
+    """⚠ configs/ 直下にあるのに、どの定期タスクの ``--family`` にも無いファミリを検出する。
+
+    ``select_patterns`` が例外にするのは**絞った結果の全体が空のときだけ**なので、
+    土地（TOCHI_BUY）を configs/ へ置いて scan-buy に足し忘れても、マンション・戸建てが
+    残るかぎり**正常終了し、土地だけ毎日黙って取りに行かない**（週1回の sweep でしか
+    回らない）。逆に scan-buy へ先に足しても同じく黙って飛ばす（→ 課題#61 9e）。
+    """
+    from house_search.config.pattern import load_patterns
+
+    live = {p.family.value for p in load_patterns(SCRIPTS.parent / "configs")}
+    covered = _families_of(runner_text, command, command)
+    covered |= _families_of(runner_text, "scan-buy", command)
+
+    missing = live - covered
+    assert not missing, f"{command} の定期タスクで回らないファミリ: {sorted(missing)}"
+    extra = covered - live
+    assert not extra, (
+        f"configs/ にパターンが無いのに {command} へ渡しているファミリ: {sorted(extra)}"
+    )
+
+
 INITIAL = SCRIPTS / "run_initial_scan.ps1"
 
 

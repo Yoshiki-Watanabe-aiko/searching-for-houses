@@ -148,8 +148,8 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 
 ⚠ **土地（TOCHI）は Phase 9 で足した6種別目**（→ [ADR 0024](./adr/0024-tochi-family.md)・課題#61）。
 骨格（9a）・**SUUMO の土地アダプタ（9b）**・**設備の抽出辞書（9c・`tochi:` → §7）まで実装済み**
-（2026-09-12）。⚠ 実運用パターン（9e）はまだ無いので、`configs/` 直下に土地のパターンは置いていない
-（取得も採点も起きない）。⚠ 建物を伴わないので独立したファミリにしてあり、
+（2026-09-12）。**2026-09-14 に実運用パターン `configs/tochi.yaml` を置き、日次の売買取得
+（`HouseSearch-ScanBuy`）に載せた**（9e → §4.4・§5.1）。⚠ 建物を伴わないので独立したファミリにしてあり、
 **`BUY_TYPES`（建物を伴う売買4種別）には含めない**（含めると間取り・相場比が黙って土地に開く）。
 
 ### 3.1 サイト×種別の実装対象
@@ -225,7 +225,7 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 | タスク名 | トリガー | 実行 | 実行時間上限 |
 |---|---|---|---|
 | `HouseSearch-Scan` | **2時間ごと・01:15起点** | `task_runner.ps1 -Task scan`（`scan --family CHINTAI`・**賃貸のみ**） | PT1H50M |
-| `HouseSearch-ScanBuy` | **毎日 10:25** | `-Task scan-buy`（`scan --family MANSION_BUY --family KODATE_BUY --detail-limit 200` → `check-sold`〈同〉`--limit 10 --top-rank-limit 30`） | PT1H40M |
+| `HouseSearch-ScanBuy` | **毎日 10:25** | `-Task scan-buy`（`scan --family MANSION_BUY --family KODATE_BUY --family TOCHI_BUY --detail-limit 200` → `check-sold`〈同〉`--limit 10 --top-rank-limit 30`） | PT1H40M |
 | `HouseSearch-Sweep` | **毎週日曜 02:00** | `-Task sweep`（`scan --full`・全パターン） | PT10H |
 | `HouseSearch-CheckSold` | **毎日 08:40** | `-Task check-sold`（`--family CHINTAI`・**賃貸のみ**） | PT1H |
 | `HouseSearch-Digest` | 毎日 20:00 | `-Task digest` | PT30M |
@@ -425,7 +425,10 @@ CSV も `period`/`acquired_on` が変わるので「更新されました」と�
   - [`configs/chintai_suburb60.yaml`](../configs/chintai_suburb60.yaml) — 近郊60分圏（59市区・個別通知は `CHINTAI_SUBURB60`）
   - **個別通知は帯ごとに別チャンネル、ダイジェストは両帯とも `DIGEST` へ集約**する（→ §9.1）
   - 売買は**種別ごとに1本**（Phase 6・帯は持たない → 課題#4）:
-    `configs/chuko_mansion.yaml` / `shinchiku_mansion.yaml` / `chuko_kodate.yaml` / `shinchiku_kodate.yaml`。
+    `configs/chuko_mansion.yaml` / `shinchiku_mansion.yaml` / `chuko_kodate.yaml` / `shinchiku_kodate.yaml`、
+    土地は `configs/tochi.yaml`（Phase 9e・通知は `TOCHI` / `TOCHI_DIGEST` → 課題#61）。
+    ⚠⚠ **configs/ 直下へ置くパターンと scan-buy の `--family` は同時に足す**（片方だけだと
+    黙ってそのファミリだけ毎日取りに行かない。`tests/test_task_scripts.py` が突き合わせる）。
     ⚠ **4都県の全域が対象で `cities` は空**（2026-09-07 ユーザー判断）。売買アダプタは
     `requires_city=True` なので空なら全市区へ自動展開され、SUUMO のスラグが無い市区は
     黙って落ちる（実測 173/251 市区。無い市区は収集時に掲載が無かった市区）。
