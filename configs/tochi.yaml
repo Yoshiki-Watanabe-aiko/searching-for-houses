@@ -1,0 +1,79 @@
+# ============================================================
+# 土地（TOCHI・Phase 9e → 課題#61・ADR 0024）
+#
+# ⚠ price・land_area_sqm の best/worst は4都県の seed（2026-09-12・MUST 通過 8,078件）の
+# p10〜p90 に合わせてある（→ 課題#31・#34）。通勤・徒歩・ハザードは他の売買と同じ。
+# ⚠⚠ **設備の weight は暫定。** seed で詳細が取れたのは 326件（神奈川・埼玉が92%）だけで、
+# 出現率は4都県を代表していない。掃き出しの後に測り直し、都市ガスを入れるかもそこで決める
+# （ユーザー判断 2026-09-14）。
+# ⚠ 詳細未取得の掲載は設備6項目が全部 unknown（0点・分母に残る）なので、
+# 掃き出しが進むたびに上位が入れ替わる（→ 課題#4 と同じ）。
+#
+# ⚠ MUST は「広く取ってから締める」（→ ADR 0013）。price_max・land_area_min は
+# 1段目で効くので、締めすぎると緩める方向が取り直しになる（fail した掲載は DB に残らない）。
+# 値は中古一戸建て（configs/chuko_kodate.yaml）に揃えてある（seed の1段目で 13,906 → 10,421件）。
+# ⚠ configs/ 直下へ置く前に `run_initial_scan.ps1 -ConfigsDir <一時dir>` で seed を流した（→ ADR 0006）。
+#
+# ⚠ 土地には建物の概念が無い。間取り・専有面積・建物面積・築年数は書けない（validate が弾く）。
+# ⚠ 相場比（market_rate_ratio）はまだ土地に使えない（→ Phase 9d）。
+# ⚠ `name:` は configs/ 直下へ配置したら変えない（通知履歴・順位・スコアの鍵 → 課題#4）。
+# ============================================================
+
+name: "土地"
+property_type: "TOCHI"
+
+webhook_ref: "TOCHI"
+digest_webhook_ref: "TOCHI_DIGEST"
+
+sites:
+  - "SUUMO"
+
+search:
+  prefectures:
+    - "東京都"
+    - "千葉県"
+    - "埼玉県"
+    - "神奈川県"
+  cities: []                   # SUUMO のスラグがある186市区へ自動展開（郡部は未対応 → 課題#61）
+  price_max_hint: null
+  # ⚠ サイト側MUSTは土地の一覧で実測してから（→ ADR 0015「推測で書かない」）
+  site_filters:
+    enabled: false
+    axes: []
+    exclude_sites: []
+
+commute:
+  destination_station: "芝公園"
+  destination_prefecture: "東京都"
+
+must:
+  price_max: 100000000         # 1億円（円単位・中古一戸建てと同じ）
+  land_area_min: 40.0          # ⚠ 23区の狭小地を落とさない（中古一戸建てと同じ）
+  walk_minutes_max: 20         # バス便は徒歩 NULL → unknown → keep で通る（→ 課題#58）
+  features: []                 # ⚠ 書かない（詳細未取得・抽出漏れの掲載まで全件 fail になる）
+  unknown_policy: keep
+
+want:
+  # 土地の設備（→ 課題#61 9c）。出現率は seed で詳細が取れた 312件（2026-09-12）の値で暫定。
+  # ⚠ 都市ガス（312件中164件＝52.6%）は入れていない。掃き出し後に測り直して判断する。
+  features:
+    - { code: LAND_REGULAR_SHAPE,    weight: 4 }   # 43% 整形地（不整形地は除く）
+    - { code: LAND_ROAD_6M,          weight: 4 }   # 23% 前道6m以上
+    - { code: LOC_CORNER_LOT,        weight: 3 }   # 22% 角地
+    - { code: LOC_SOUTH_ROAD,        weight: 3 }   # 16% 南側道路
+    - { code: LAND_CLEARED_DELIVERY, weight: 2 }   # 46% 更地渡し
+    - { code: FEAT_VACANT,           weight: 2 }   # 14% 即引渡し可
+  numeric:
+    - { metric: price,                 weight: 25, best: 12000000, worst: 71000000 }  # p10 1,190万 / p90 7,080万
+    - { metric: land_area_sqm,         weight: 25, best: 235,      worst: 63 }        # p90 234.2 / p10 63.0
+    - { metric: walk_minutes,          weight: 10, best: 3,        worst: 20 }
+    - { metric: commute_minutes,       weight: 10, best: 40,       worst: 90 }        # p10 40 / p90 91
+    # ハザードは他の売買と同じ配点（購入は住み替えが利かない → ADR 0021・0023）
+    - { metric: flood_rank_avg,        weight: 25, best: 0,        worst: 4 }
+    - { metric: landslide_area_ratio,  weight: 10, best: 0,        worst: 0.1 }
+    - { metric: liquefaction_rank_avg, weight: 10, best: 1,        worst: 4.5 }
+
+ranking:
+  top_n: 15
+  digest_group: null
+  notify_max_rank: 200

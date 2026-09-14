@@ -235,7 +235,7 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
   ⚠ ページ送りは `&page=N`（`?` を重ねると page が黙って無視される）
 - ⚠ **売買4パターンは2時間ごとの `scan` に同居させない**（`--family` で分ける → 課題#4）。
   4都県173市区で一覧692リクエスト≒30分が加わり上限 PT1H50M に迫る。
-  `HouseSearch-ScanBuy`（毎日 10:25）が `scan --family MANSION_BUY --family KODATE_BUY` →
+  `HouseSearch-ScanBuy`（毎日 10:25）が `scan --family MANSION_BUY --family KODATE_BUY --family TOCHI_BUY` →
   `check-sold`（同・上位30＋古い順10/パターン）を回す。⚠ 08:40 の check-sold に売買を含めると
   最大600件で PT1H を超える。⚠ `--family` で絞った結果が空なら例外にする（黙って0件で正常終了しない）
 - ⚠ **売買は `cities: []`（4都県全域）で、賃貸の帯（`cities` 必須）と逆の運用。**

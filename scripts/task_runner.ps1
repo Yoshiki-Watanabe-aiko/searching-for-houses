@@ -86,12 +86,17 @@ switch ($Task) {
     #   ⚠ 上げたぶん所要が +20分ほど増える見込み（160件 × 3パターン × 2.5秒）。
     #     ScanBuy はタスク登録が未実施でまだ一度も走っておらず**所要が未測定**なので、
     #     初回の実行ログで実測して上限（TimeLimit）ごと見直すこと
+    # ⚠ 土地（TOCHI_BUY）も同じタスクで回す（Phase 9e・2026-09-14 → 課題#61）。
+    #   一覧が186市区ぶん（約10分）＋詳細200件（約10分）増える見込みで、上限 PT1H40M に
+    #   収まるかは初回の実行ログで実測する。⚠ configs/tochi.yaml の配置と同時に足すこと。
+    #   ⚠ どちらか片方だけだと**黙って土地だけ飛ばす**（select_patterns が例外にするのは
+    #   絞った結果の全体が空のときだけで、マンション・戸建てが残れば正常終了する）
     "scan-buy"   {
         $steps += @{ Exe = $Python; Argv = @("-m", "house_search.cli", "scan",
-                     "--family", "MANSION_BUY", "--family", "KODATE_BUY",
+                     "--family", "MANSION_BUY", "--family", "KODATE_BUY", "--family", "TOCHI_BUY",
                      "--detail-limit", "200") }
         $steps += @{ Exe = $Python; Argv = @("-m", "house_search.cli", "check-sold",
-                     "--family", "MANSION_BUY", "--family", "KODATE_BUY",
+                     "--family", "MANSION_BUY", "--family", "KODATE_BUY", "--family", "TOCHI_BUY",
                      "--limit", "10", "--top-rank-limit", "30") }
     }
     # 在庫棚卸し。増分（一覧1ページ）が拾えるのは各市区の先頭だけなので、
