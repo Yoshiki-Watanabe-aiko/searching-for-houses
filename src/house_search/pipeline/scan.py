@@ -928,6 +928,13 @@ def scan_pattern(
         if site_code in inactive:
             summary.skipped_sites.append(f"{site_code}（is_active=false）")
             continue
+        if site_code in runtime.aborted_sites:
+            # ⚠ 同じ実行の中で打ち切ったサイトを後続のパターンで叩き直さない（→ 課題#67）。
+            # 2026-09-15 に HOMEMATE の接続タイムアウトで2帯ぶん計62分を空費し、
+            # スキャンが上限 PT1H50M を超えて 10:25 の ScanBuy をロック競合でスキップさせた。
+            # 打ち切りの理由は最初のパターンのエラーとして記録済み
+            summary.skipped_sites.append(f"{site_code}（この実行で打ち切り済み）")
+            continue
         # ⚠ **種別まで指定して引く。** サイトコードだけで引くと
         # 売買パターンで賃貸のアダプタが動き、URL体系が違うので
         # **0件になるだけで例外にならない**（→ 課題#4）
@@ -1074,6 +1081,9 @@ def scan_pattern(
         except (SiteAborted, RobotsDisallowed) as exc:
             status = "aborted"
             outcome.errors.append(str(exc))
+            if isinstance(exc, SiteAborted):
+                # ⚠ robots の禁止は持ち越さない。判定は URL ごとで、パターンが違えば URL も違う
+                runtime.aborted_sites[site_code] = str(exc)
         except Exception as exc:  # noqa: BLE001 - 1サイトの失敗で他サイトを止めない
             status = "failed"
             outcome.errors.append(f"想定外のエラー: {exc}")
