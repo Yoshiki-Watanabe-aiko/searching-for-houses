@@ -5,7 +5,8 @@
 
 要点:
   - **欠損metricは分子・分母の双方から除外して再正規化**する。0点扱いにすると
-    価格未定の新築マンションが不当に沈む
+    価格未定の新築マンションが不当に沈む。⚠ ただし ``on_missing: zero`` の項目
+    （売買の徒歩 → 課題#58）は0点として分母に残す
   - WANT の設備が判定不能（詳細ページ未取得）なら0点だが status は unknown にし、
     通知に「未確認N項目」として出す。中間値の補完はしない
   - 加算は条件コード順に固定する。``PYTHONHASHSEED`` を変えても同じ値になる
@@ -118,7 +119,11 @@ def _feature_item(feat: Any, view: ListingView, names: Mapping[str, str]) -> Sco
 
 
 def _numeric_item(item: Any, view: ListingView) -> ScoreItem:
-    """WANT数値条件1件を採点する。値が取れなければ欠損として扱う。"""
+    """WANT数値条件1件を採点する。値が取れなければ欠損として扱う。
+
+    ⚠ ``on_missing: zero`` の項目は欠損にせず、0点として分母に残す（status は unknown のまま）。
+    再正規化すると値が無い掲載が残りの項目だけで満点に近づき、上位を占める（→ 課題#58）。
+    """
     spec = METRICS_BY_NAME[item.metric]
     value = view.metric_value(item.metric)
     if value is None:
@@ -130,7 +135,7 @@ def _numeric_item(item: Any, view: ListingView) -> ScoreItem:
             s=0.0,
             points=0.0,
             status=STATUS_UNKNOWN,
-            missing=True,
+            missing=item.on_missing != "zero",
         )
     s = normalize(value, best=item.best, worst=item.worst)
     detail = None

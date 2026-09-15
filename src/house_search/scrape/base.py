@@ -194,6 +194,54 @@ def leasehold_flag(value: str | None) -> bool | None:
     return None
 
 
+#: 建築条件の原文を置く ``type_specific_attrs`` の欄（土地の詳細の仕様表 → 課題#61）。
+#: ⚠ アダプタは空欄・``-`` を原文として残さない（``build_condition`` の真偽値だけが残る）。
+BUILD_CONDITION_ATTR_KEY = "建築条件"
+
+
+def build_condition_flag(value: str | None) -> bool | None:
+    """仕様表の「建築条件」欄を真偽値にする。
+
+    ⚠ **実測したのは ``付`` と ``-`` だけ**なので、それ以外の表記は None にする
+    （推測で True/False に倒さない → ADR 0015）。原文は ``建築条件`` のキーに残る。
+    ⚠ ``一部建築条件付``（区画分譲で一部の区画だけが条件付き・本番DBに23件）も None。
+    その掲載の区画が条件付きかは読めない。
+    ⚠ 判定の規則はここ1箇所に置く。アダプタ（``suumo_tochi``）と採点ビュー
+    （``exclude_build_condition`` の MUST）が共用する。
+    """
+    if value is None:
+        return None
+    text = value.strip()
+    if text.startswith("付"):
+        return True
+    if text in {"-", "無", "なし", "無し"}:
+        return False
+    return None
+
+
+def build_condition_of(members: Iterable[tuple[str | None, object]]) -> bool | None:
+    """名寄せグループの掲載ごとの ``(建築条件の原文, 保存済みの真偽値)`` から建築条件付きかを読む。
+
+    - 原文があれば原文から導く（規則を直したら ``rescore`` だけで既存の掲載に効く）。
+      無ければ保存済みの真偽値へ落とす（アダプタは ``-`` を原文として残さないため）
+    - ⚠ **1件でも付なら付。** 同じ区画を別の会社が ``-`` で載せていても除外側に倒す
+      （代表は最安の掲載で、条件付きの方が安いことが多い。代表の判定だけで決めると、
+      代表の入れ替わりで同じ区画が出たり消えたりする）
+    - 条件なしと確認できたものが1つでもあり付が無ければ False、どれも読めなければ None
+    """
+    flags: list[bool | None] = []
+    for raw, saved in members:
+        if raw is not None:
+            flags.append(build_condition_flag(raw))
+        else:
+            flags.append(saved if isinstance(saved, bool) else None)
+    if any(flag is True for flag in flags):
+        return True
+    if any(flag is False for flag in flags):
+        return False
+    return None
+
+
 def leasehold_of(values: Iterable[str | None]) -> bool | None:
     """複数の原文（名寄せグループの掲載・複数の欄）をまとめて借地かどうかを読む。
 

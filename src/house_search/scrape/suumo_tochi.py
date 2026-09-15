@@ -30,6 +30,7 @@ from house_search.scrape.area import CITY_VALUE_MAPPING, AreaTarget
 from house_search.scrape.base import (
     ScrapedDetail,
     ScrapedListing,
+    build_condition_flag,
     leasehold_flag,
     parse_area_sqm,
     query_separator,
@@ -85,22 +86,6 @@ def _external_id(href: str) -> str | None:
     for part in href.split("/"):
         if part.startswith("nc_") and part[3:].isdigit():
             return part
-    return None
-
-
-def build_condition_flag(value: str | None) -> bool | None:
-    """仕様表の「建築条件」欄を真偽値にする。
-
-    ⚠ **実測したのは ``付`` と ``-`` だけ**なので、それ以外の表記は None にする
-    （推測で True/False に倒さない → ADR 0015）。原文は ``建築条件`` のキーに残る。
-    """
-    if value is None:
-        return None
-    text = value.strip()
-    if text.startswith("付"):
-        return True
-    if text in {"-", "無", "なし", "無し"}:
-        return False
     return None
 
 
@@ -229,6 +214,7 @@ class SuumoTochiScraper:
             attrs["建ぺい率・容積率"] = coverage
         # 取引上の注意事項（→ 論点5・``CAVEAT_LABELS``）。⚠ 詳細は1回しか取らない
         # （``detail_fetched_at``）ので、判定できたら False も明示して書く
+        # ⚠ 判定は土地の「建築条件付きを除く」MUST と共通（``scrape.base.build_condition_flag``）
         attrs["build_condition"] = build_condition_flag(values.get("建築条件"))
         # ⚠ 判定は売買の「所有権のみ」MUST と共通（``scrape.base.leasehold_flag`` → 課題#65）。
         #    旧版は「借地」の語しか見ておらず、``地上権（旧）、新規20年`` を取りこぼした

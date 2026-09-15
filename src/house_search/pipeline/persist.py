@@ -21,9 +21,11 @@ from sqlalchemy import Connection, text
 from house_search.scoring.listing_view import ListingView, StationAccess
 from house_search.scoring.utility import UtilityProfile, estimate_utility
 from house_search.scrape.base import (
+    BUILD_CONDITION_ATTR_KEY,
     LAND_RIGHTS_ATTR_KEYS,
     ScrapedDetail,
     ScrapedListing,
+    build_condition_of,
     caveats_of,
     leasehold_of,
 )
@@ -1202,6 +1204,28 @@ _GROUP_LAND_RIGHTS = text(
 )
 
 
+# 建築条件（→ 課題#61）。土地の「建築条件付きを除く」MUST が読む
+# ``ListingView.build_condition`` の材料。
+# ⚠ 権利形態と同じく**グループ内の全掲載**から集め、判定の規則は
+# ``scrape.base.build_condition_of`` の1箇所に置く（SQL は原文と保存済みの真偽値を集めるだけ）。
+# ⚠ ``->`` で JSON のまま取り出す（``->>`` だと真偽値が文字列 'true' になり、
+# 判定側で bool と見なせない）
+_GROUP_BUILD_CONDITION = text(
+    """
+    SELECT target.id AS listing_id,
+           member.type_specific_attrs ->> :raw_key AS raw,
+           member.type_specific_attrs -> 'build_condition' AS saved
+    FROM t_listings target
+    JOIN t_listings member
+      ON (target.group_id IS NULL AND member.id = target.id)
+      OR (target.group_id IS NOT NULL AND member.group_id = target.group_id)
+    WHERE target.id = ANY(:ids)
+      AND (member.type_specific_attrs ? :raw_key
+           OR member.type_specific_attrs ? 'build_condition')
+    """
+)
+
+
 def _opt_float(value: Any) -> float | None:
     """NUMERIC 列（Decimal）を float へ。⚠ None はそのまま None を返す。
 
@@ -1216,6 +1240,7 @@ def _to_view(
     feature_codes: frozenset[str],
     stations: tuple[StationAccess, ...] = (),
     leasehold: bool | None = None,
+    build_condition: bool | None = None,
 ) -> ListingView:
     return ListingView(
         listing_id=row.id,
@@ -1250,6 +1275,7 @@ def _to_view(
         stations=stations,
         caveats=caveats_of(row.type_specific_attrs),
         leasehold=leasehold,
+        build_condition=build_condition,
     )
 
 
@@ -1347,6 +1373,11 @@ def load_listing_views(
     for listing_id, rights in conn.execute(_GROUP_LAND_RIGHTS, rights_params):
         land_rights.setdefault(listing_id, []).append(rights)
 
+    build_conditions: dict[int, list[tuple[str | None, object]]] = {}
+    condition_params = {"ids": ids, "raw_key": BUILD_CONDITION_ATTR_KEY}
+    for listing_id, raw, saved in conn.execute(_GROUP_BUILD_CONDITION, condition_params):
+        build_conditions.setdefault(listing_id, []).append((raw, saved))
+
     views: dict[int, ListingView] = {}
     for row in rows:
         codes = frozenset(features.get(row.id, ()))
@@ -1355,6 +1386,7 @@ def load_listing_views(
             codes,
             tuple(stations.get(row.id, ())),
             leasehold=leasehold_of(land_rights.get(row.id, ())),
+            build_condition=build_condition_of(build_conditions.get(row.id, ())),
         )
         if utility_profile is not None:
             # 光熱費はグループの和集合の設備から推定する（設備と同じく、サイトによって
