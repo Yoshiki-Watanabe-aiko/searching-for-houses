@@ -53,6 +53,11 @@ class Runtime:
     # ⚠ 空のまま名寄せを回すと番地を丁目と誤認したままになるので、
     # scan / regroup は空なら警告する（例外にはしない。マスタ未同期でも動かすため）
     address_index: AddressIndex = field(default_factory=lambda: AddressIndex.build([]))
+    # この実行の中で打ち切った（``SiteAborted``）サイト → 理由。後続のパターンでは取りに行かない。
+    # ⚠ 打ち切りは fetcher の連続失敗の数で決まり、fetcher はパターンごとに作り直されるので、
+    #   ここで持ち越さないと次のパターンで0から数え直す
+    #   （接続タイムアウトでは1パターン約31分かかる → 課題#67）
+    aborted_sites: dict[str, str] = field(default_factory=dict)
     _sender: DiscordSender | None = None
 
     @property

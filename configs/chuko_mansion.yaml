@@ -128,10 +128,10 @@ want:
     # 築年は best 0 を保ち worst だけ p90 へ（賃貸の課題#31 と同じ手順）
     - { metric: age_years,            weight: 15, best: 0,        worst: 50 }         # p90 50
     - { metric: monthly_cost,         weight: 10, best: 15000,    worst: 40000 }      # p10 1.6万 / p90 3.7万（据え置き）
-    # ⚠ 徒歩が取れない（バス便）は0点で分母に残す。再正規化するとバス便が上位を占める（→ 課題#58・2026-09-15）
+    # ⚠ 徒歩・通勤時間が取れない（駅の無いバス便）は0点で分母に残す。再正規化するとバス便が上位を占める（→ 課題#58・#66）
     - { metric: walk_minutes,         weight: 8,  best: 3,        worst: 20, on_missing: zero }         # 0点 2%・満点 12%（据え置き）
     # 通勤は 25→10 へ（ユーザー判断 2026-09-07）。best/worst は4都県の母集団の p10〜p90
-    - { metric: commute_minutes,      weight: 10, best: 35,       worst: 80 }         # p10 34 / p90 80
+    - { metric: commute_minutes,      weight: 10, best: 35,       worst: 80, on_missing: zero }         # p10 34 / p90 80
     # ハザードは全種別で共通に効く（→ ADR 0021）。購入では住み替えが利かないので
     # 賃貸（15＋5）より重くする。⚠ 0 は「区域外だと確認した」で満点、未解決は欠損
     - { metric: flood_rank_avg,       weight: 25, best: 0,        worst: 4 }
