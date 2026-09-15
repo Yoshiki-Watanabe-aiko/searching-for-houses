@@ -16,7 +16,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.engine import Engine
 
-from house_search.web import create_app
+from house_search.marks import marks_of
+from house_search.web import EXTENSION_KEY, create_app
 from house_search.web.context import build_context
 
 pytestmark = pytest.mark.db
@@ -213,6 +214,33 @@ def test_メモを保存して詳細に出す(client, seeded: list[int]) -> None
         f"/patterns/{SLUG}/listings/{seeded[1]}", base_url=BASE_URL
     ).get_data(as_text=True)
     assert "&lt;b&gt;内見したい&lt;/b&gt;" in body
+
+
+def test_メモの無い印を開き直して保存してもメモにNoneが入らない(client, seeded: list[int]) -> None:
+    """⚠ 印の行があってメモが NULL のとき、メモ欄に「None」と出て、次の保存で書き込まれていた
+    （→ 課題#68・2026-09-15 本番で実測）。ブラウザと同じく、画面のメモ欄の中身をそのまま送り返す。
+    """
+    detail = f"/patterns/{SLUG}/listings/{seeded[1]}"
+
+    def save(excluded: bool) -> None:
+        body = client.get(detail, base_url=BASE_URL).get_data(as_text=True)
+        memo = re.search(r'<textarea name="memo"[^>]*>(.*?)</textarea>', body, re.S)
+        assert memo is not None
+        assert memo.group(1) == ""
+        data = {"memo": memo.group(1), "csrf_token": "tkn", "next": detail}
+        if excluded:
+            data["excluded"] = "1"
+        assert client.post(
+            f"/listings/{seeded[1]}/mark", base_url=BASE_URL, data=data
+        ).status_code == 303
+
+    save(excluded=True)
+    save(excluded=True)
+    save(excluded=False)
+    # 印をすべて外したら行ごと消える（メモに「None」が残ると消えずにメモ件数へ出る）
+    engine = client.application.extensions[EXTENSION_KEY].engine
+    with engine.connect() as conn:
+        assert marks_of(conn, [seeded[1]]) == {}
 
 
 def test_メモが上限を超えたら保存せず400(client, seeded: list[int]) -> None:

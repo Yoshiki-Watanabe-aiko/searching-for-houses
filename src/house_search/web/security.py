@@ -24,12 +24,18 @@ CONTENT_SECURITY_POLICY = (
     "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; "
     "base-uri 'none'; frame-ancestors 'none'"
 )
+#: 同じサイト内にだけ参照元を送る。外部リンクは ``rel="noreferrer"`` も付けてある
+REFERRER_POLICY = "same-origin"
 SECURITY_HEADERS: dict[str, str] = {
     "Content-Security-Policy": CONTENT_SECURITY_POLICY,
     "X-Content-Type-Options": "nosniff",
     "X-Frame-Options": "DENY",
-    # ⚠ 掲載サイトへのリンクを踏んだとき、閲覧画面の URL（掲載ID入り）を送らない
-    "Referrer-Policy": "no-referrer",
+    # 掲載サイトへのリンクを踏んだとき、閲覧画面の URL（掲載ID入り）を送らない
+    # ⚠⚠ ``no-referrer`` にしない（→ 課題#68）。ブラウザは同じサイトへのフォーム POST でも
+    # ``Origin: null`` を送るので、``is_same_origin_post`` が弾いて印が一切保存できなくなる
+    # （本番の Chrome 系で実測。テストのクライアントは Origin を手で付けるので気づけない）。
+    # ``base.html`` の ``<meta name="referrer">`` も同じ値にそろえる（テストで固定）
+    "Referrer-Policy": REFERRER_POLICY,
     "Cache-Control": "no-store",
 }
 
