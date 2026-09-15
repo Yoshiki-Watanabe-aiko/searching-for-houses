@@ -631,7 +631,10 @@ uv run house-search web --test-db          # ブラウザ閲覧画面をテス�
   マージより前**に流す（逆だと 20:00 のダイジェストが落ちる）
 - ⚠ **閲覧画面（`web/`）はローカル限定でも `Host` ヘッダと CSRF トークンを検証する**（悪意あるサイトを開いたブラウザが
   127.0.0.1 を読み書きできる → DNS リバインディング・CSRF）。⚠ テンプレートに `|safe` を足さない（物件名・設備原文は
-  スクレイピング由来。`tests/test_web_security.py` が禁止を固定）。⚠ JavaScript・インラインスタイルは CSP で止まる
+  スクレイピング由来。`tests/test_web_security.py` が禁止を固定）。⚠ JavaScript・インラインスタイルは CSP で止まる。
+  ⚠⚠ **`Referrer-Policy` を `no-referrer` にしない**（ブラウザが同じサイトへの POST に `Origin: null` を付け、印が全部 403 になる。
+  テストのクライアントは `Origin` を手で付けるので検出できない → 課題#68）。⚠ テンプレートへ None を渡さない（Jinja2 は「None」と描画し、
+  フォームの初期値なら次の保存でそのまま書き込まれる）
 - ⚠ **flask は閲覧画面だけの依存。** 定期タスクの経路（`scan` / `digest` など）から `house_search.web` や flask を
   モジュール先頭で import しない（`cli._cmd_web` だけが遅延 import。AST テストが固定）。
   ⚠ main の `.venv` への `uv sync` は**走行中の python が無いことを確かめてから**（定期タスクは同じ `.venv` を使う）。

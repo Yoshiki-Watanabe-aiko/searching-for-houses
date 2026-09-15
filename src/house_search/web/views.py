@@ -244,7 +244,9 @@ def listing(slug: str, listing_id: int) -> str:
         last_seen_text=presenters.format_datetime(row.last_seen_at),
         detail_fetched_text=presenters.format_datetime(row.detail_fetched_at),
         group_mark=group_mark,
-        own_memo=own_mark.memo if own_mark else "",
+        # ⚠ 印があってメモが NULL の行もある。None を渡すと Jinja2 が「None」と描画し、
+        #   次の保存でその4文字がメモとして書き込まれる（→ 課題#68・2026-09-15 本番で実測）
+        own_memo=(own_mark.memo if own_mark else None) or "",
         memo_max=marks.MARK_MEMO_MAX_CHARS,
         current_path=_current_path(),
     )

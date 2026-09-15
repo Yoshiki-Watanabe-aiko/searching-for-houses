@@ -50,7 +50,11 @@
 | XSS | Jinja2 の自動エスケープを全テンプレートで強制（`\|safe`・`Markup` はテストで禁止）。リンクにするのは http/https だけ（`safe_href`）。JavaScript を使わず CSP を `default-src 'none'; style-src 'self'; form-action 'self'` にする |
 | 情報の漏洩 | テンプレートへは表示用の値だけを渡し、`Settings` を載せない。500 は定型ページで、トレースバックはログにだけ出す。デバッガ・自動リロードは使わない |
 
-- `Referrer-Policy: no-referrer`（掲載サイトへのリンクを踏んだとき、閲覧画面の URL を送らない）
+- `Referrer-Policy: same-origin`（掲載サイトへのリンクを踏んだとき、閲覧画面の URL を送らない。外部リンクには `rel="noreferrer"` も付ける）
+  - ⚠⚠ **`no-referrer` にしない**（2026-09-15 改訂 → 課題#68）。当初は `no-referrer` にしていたが、Fetch の仕様で
+    ブラウザは**同じサイトへのフォーム POST にも `Origin: null` を付ける**ため、`Origin` の照合で弾かれ**印を一切保存できなかった**
+    （本番の Chromium で実測。`Sec-Fetch-Site` は `same-origin` だった）。テストのクライアントは `Origin` を手で付けるので検出できなかった。
+    `null` を許可して直す案は、サンドボックス化された iframe などからも `null` が来るので採らない
 - サムネイルを出さないので、画面を開いただけで外部サイトへ画像リクエストが飛ぶことも無い
 
 ## 決定3: 閲覧は定期スキャンと排他しない

@@ -433,6 +433,7 @@ CSV も `period`/`acquired_on` が変わるので「更新されました」と�
 - **除外が効くのは閲覧画面の既定表示と日次ダイジェストだけ**（→ §9）。順位・採点・個別通知・成約確認は変えない
 - 待ち受けは **127.0.0.1 固定**（引数で変えられない）。**`Host` ヘッダの検証**（DNS リバインディング対策・外れたら 421）、
   書き込みは POST だけで**起動ごとの CSRF トークン**と `Origin`／`Sec-Fetch-Site` を検証（外れたら 403）、
+  `Referrer-Policy` は `same-origin`（⚠ `no-referrer` だとブラウザが同じサイトへの POST に `Origin: null` を付け、印を保存できない）、
   テンプレートは自動エスケープを強制し、リンクは http/https だけ、JavaScript を使わない CSP（`default-src 'none'`）
 - **取得ロックは取らない**（定期スキャンの最中に起動してよい）。閲覧は読み取り専用トランザクション・専用エンジン
   （接続 2＋2・`statement_timeout` 10秒・`application_name=house-search-web`）

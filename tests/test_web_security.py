@@ -170,7 +170,23 @@ def test_応答にセキュリティヘッダが付く(client) -> None:
     assert response.status_code == 404
     assert "script-src" not in response.headers["Content-Security-Policy"]
     assert "default-src 'none'" in response.headers["Content-Security-Policy"]
-    assert response.headers["Referrer-Policy"] == "no-referrer"
+    assert response.headers["Referrer-Policy"] == "same-origin"
+
+
+def test_参照元ポリシーは同じサイトへのPOSTでOriginを消さない() -> None:
+    """⚠⚠ ``no-referrer`` だとブラウザは同じサイトへのフォーム POST に ``Origin: null`` を付け、
+    送信元の検証（``null`` は拒否）で印が一切保存できなくなる（→ 課題#68・2026-09-15 本番で実測）。
+
+    テストのクライアントは Origin を手で付けるので、ページ側の指定をここで固定する。
+    ⚠ ヘッダと ``<meta name="referrer">`` の両方がページの方針になるので、両方を見る。
+    """
+    header = SECURITY_HEADERS["Referrer-Policy"]
+    base_html = (WEB / "templates" / "base.html").read_text("utf-8")
+    meta = re.search(r'<meta name="referrer" content="([^"]+)">', base_html)
+    assert meta is not None
+    assert header == meta.group(1) == "same-origin"
+    # 仕様どおり null は拒否のまま（緩めて直さない）
+    assert not is_same_origin_post("null", "same-origin", PORT)
 
 
 def test_予期しないエラーで接続情報を出さない(client) -> None:
