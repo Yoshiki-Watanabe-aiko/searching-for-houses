@@ -21,6 +21,7 @@ from house_search.extract.extractor import (
     extract_from_text,
     merge_features,
 )
+from house_search.marks import mark_exists_sql
 from house_search.notify.format import DigestEntry, build_digest_message, notifiable_from
 from house_search.pipeline import persist
 from house_search.pipeline.runtime import Runtime
@@ -44,6 +45,9 @@ class DigestResult:
     #: CLI は ``not sent`` で終了コード1を返すので、ここを混ぜると
     #: タスクの「前回の結果」で本物の失敗を見分けられなくなる。
     skipped: bool = False
+    #: 除外の印（→ 課題#68）で飛ばした件数。選んだ最下位の順位までに居た除外だけを数える。
+    #: ⚠ 黙って効かせない（CLI が件数を出す。除外したことを忘れても気づけるように）
+    excluded: int = 0
 
 
 @dataclass(slots=True)
@@ -155,17 +159,45 @@ def needs_rescore(runtime: Runtime, pattern) -> bool:
     return bool(row)
 
 
+def _count_excluded_in_digest(conn: Connection, pattern_name: str, rows: list[Any]) -> int:
+    """ダイジェストの抽出で飛ばした除外の件数（選んだ最下位の順位まで）。
+
+    ⚠ 選んだ行が0件なら順位の付いた除外を全部数える（全件が除外で空になった便を、
+    「対象0件」と区別して読めるように）。
+    """
+    ranks = [row.rank_in_pattern for row in rows if row.rank_in_pattern is not None]
+    sql = (
+        "SELECT count(*) FROM t_listing_scores s JOIN t_listings p ON p.id = s.listing_id "
+        "WHERE s.pattern_name = :name AND s.must_result <> 'fail' AND s.score IS NOT NULL "
+        f"AND s.rank_in_pattern IS NOT NULL AND {mark_exists_sql('is_excluded')}"
+    )
+    params: dict[str, Any] = {"name": pattern_name}
+    if ranks:
+        sql += " AND s.rank_in_pattern <= :last_rank"
+        params["last_rank"] = max(ranks)
+    return int(conn.execute(text(sql), params).scalar_one())
+
+
 def digest(runtime: Runtime, pattern, *, dry_run: bool = False) -> DigestResult:
     """スコア上位N件のランキングダイジェストを送る。"""
     with runtime.engine.connect() as conn:
+        # ⚠⚠ **除外の印（→ 課題#68）は LIMIT の前で抜く。** 後から捨てると件数が N 未満に減る。
+        #   前で抜けば上位 N 件の N が保たれ、次の順位が自然に繰り上がる。
+        # ⚠ 順位（rank_in_pattern）そのものは変えない。表示する番号も DB の順位のまま
+        #   （欠番が見える。閲覧画面・個別通知の「パターン内N位」と一致させる → ユーザー判断）
+        # ⚠ 判定は marks.mark_exists_sql の1箇所（閲覧画面の一覧と同じ規則）
         rows = conn.execute(
             text(
-                "SELECT listing_id, rank_in_pattern FROM t_listing_scores "
-                "WHERE pattern_name = :name AND must_result <> 'fail' AND score IS NOT NULL "
-                "ORDER BY rank_in_pattern ASC LIMIT :top_n"
+                "SELECT s.listing_id, s.rank_in_pattern FROM t_listing_scores s "
+                "JOIN t_listings p ON p.id = s.listing_id "
+                "WHERE s.pattern_name = :name AND s.must_result <> 'fail' "
+                "AND s.score IS NOT NULL "
+                f"AND NOT {mark_exists_sql('is_excluded')} "
+                "ORDER BY s.rank_in_pattern ASC LIMIT :top_n"
             ),
             {"name": pattern.name, "top_n": pattern.ranking.top_n},
         ).all()
+        excluded = _count_excluded_in_digest(conn, pattern.name, rows)
         listing_ids = [row.listing_id for row in rows]
         views = persist.load_listing_views(
             conn,
@@ -202,13 +234,17 @@ def digest(runtime: Runtime, pattern, *, dry_run: bool = False) -> DigestResult:
     #   見逃すという形で実害になる」（要件定義書 §14.1）。
     #   ⚠ 送信履歴にも残さない（送っていない便を追記専用テーブルへ入れない）。
     if not entries:
-        return DigestResult(pattern_name=pattern.name, entries=0, sent=False, skipped=True)
+        return DigestResult(
+            pattern_name=pattern.name, entries=0, sent=False, skipped=True, excluded=excluded
+        )
 
     message = build_digest_message(
         entries, pattern_name=pattern.name, digest_group=pattern.ranking.digest_group
     )
     if dry_run:
-        return DigestResult(pattern_name=pattern.name, entries=len(entries), sent=False)
+        return DigestResult(
+            pattern_name=pattern.name, entries=len(entries), sent=False, excluded=excluded
+        )
 
     # ⚠ ダイジェストは digest_webhook_ref（未指定なら webhook_ref）へ送る。
     #   上位N件だけを個別通知とは別のチャンネルへ流せるようにするため
@@ -223,7 +259,9 @@ def digest(runtime: Runtime, pattern, *, dry_run: bool = False) -> DigestResult:
             listing_ids=[entry.prop.listing_id for entry in entries],
             status="sent" if sent else "failed",
         )
-    return DigestResult(pattern_name=pattern.name, entries=len(entries), sent=sent)
+    return DigestResult(
+        pattern_name=pattern.name, entries=len(entries), sent=sent, excluded=excluded
+    )
 
 
 def re_extract_rows(conn: Any, *, limit: int | None = None, family: str | None = None) -> list[Any]:

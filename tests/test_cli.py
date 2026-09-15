@@ -326,3 +326,22 @@ def _pattern(name: str, property_type: str) -> dict:
         "must": {"unknown_policy": "keep"},
         "want": {"features": [], "numeric": []},
     }
+
+
+class TestWebCommand:
+    """ブラウザ閲覧画面の起動（→ 課題#68）。"""
+
+    def test_既定は8765番でブラウザを開かない(self) -> None:
+        args = build_parser().parse_args(["web"])
+        assert (args.port, args.test_db, args.open) == (8765, False, False)
+
+    def test_待ち受けアドレスは引数で変えられない(self) -> None:
+        """⚠ LAN へ公開する経路を作らない（--host を持たせない）。"""
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["web", "--host", "0.0.0.0"])
+
+    def test_特権ポートは起動前に弾く(self, capsys: pytest.CaptureFixture[str]) -> None:
+        from house_search.web.server import run_server
+
+        assert run_server(port=80, use_test_db=False, open_browser=False) == 1
+        assert "1024" in capsys.readouterr().err

@@ -37,6 +37,7 @@ EXPECTED_TRANSACTION_TABLES = {
     "t_listings",
     "t_listing_features",
     "t_listing_groups",
+    "t_listing_marks",
     "t_listing_scores",
     "t_listing_stations",
     "t_navitime_routes",

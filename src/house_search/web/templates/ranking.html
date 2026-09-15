@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% block title %}{{ pattern_name }}{% endblock %}
+{% block content %}
+<h1>{{ pattern_name }}</h1>
+<p class="lead">
+  絞り込み後 {{ "{:,}".format(total) }}件（{{ flt.page }} / {{ page_count }} ページ）
+  {% if destination %}・通勤時間は {{ destination }} まで{% endif %}
+  {% if not flt.include_excluded %}・除外した物件は隠しています{% endif %}
+</p>
+
+<form class="filters" method="get" action="{{ url_for('web.ranking', slug=slug) }}">
+  <fieldset>
+    <legend>絞り込み</legend>
+    <label>{{ price_label }}（万円）
+      <span class="range">
+        <input type="number" name="price_min" min="0" step="0.1" value="{{ flt.price_min if flt.price_min is not none else '' }}" aria-label="下限">
+        〜
+        <input type="number" name="price_max" min="0" step="0.1" value="{{ flt.price_max if flt.price_max is not none else '' }}" aria-label="上限">
+      </span>
+    </label>
+    <label>{{ area_label }}（㎡以上）
+      <input type="number" name="area_min" min="0" step="0.1" value="{{ flt.area_min if flt.area_min is not none else '' }}">
+    </label>
+    <label>駅徒歩（分以内）
+      <input type="number" name="walk_max" min="0" step="1" value="{{ flt.walk_max if flt.walk_max is not none else '' }}">
+    </label>
+    <label>通勤（分以内）
+      <input type="number" name="commute_max" min="0" step="1" value="{{ flt.commute_max if flt.commute_max is not none else '' }}">
+    </label>
+    <label>必須条件
+      <select name="must">
+        {% for key, label in must_labels.items() %}
+        <option value="{{ key }}"{% if flt.must == key %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>サイト
+      <select name="site">
+        <option value="">すべて</option>
+        {% for option in site_options %}
+        <option value="{{ option.code }}"{% if flt.site == option.code %} selected{% endif %}>{{ option.name }}（{{ option.listings }}）</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>市区
+      <select name="city">
+        <option value="">すべて</option>
+        {% for option in city_options %}
+        <option value="{{ option.id }}"{% if flt.city == option.id %} selected{% endif %}>{{ option.prefecture }} {{ option.canonical_name }}（{{ option.listings }}）</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>並べ替え
+      <select name="sort">
+        {% for key, label in sort_labels.items() %}
+        <option value="{{ key }}"{% if flt.sort == key %} selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" name="favorites" value="1"{% if flt.favorites %} checked{% endif %}> お気に入りだけ</label>
+    <label class="check"><input type="checkbox" name="include_excluded" value="1"{% if flt.include_excluded %} checked{% endif %}> 除外した物件も表示</label>
+    <div class="filter-actions">
+      <button type="submit">絞り込む</button>
+      <a href="{{ url_for('web.ranking', slug=slug) }}">条件をクリア</a>
+    </div>
+  </fieldset>
+</form>
+
+{% if items %}
+<div class="table-wrap">
+<table class="ranking">
+  <thead>
+    <tr>
+      <th scope="col">順位</th>
+      <th scope="col">スコア</th>
+      <th scope="col">物件</th>
+      <th scope="col">金額</th>
+      <th scope="col">条件</th>
+      <th scope="col">判定</th>
+      <th scope="col">印</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for item in items %}
+    <tr class="{% if item.is_excluded %}is-excluded{% endif %}{% if item.is_favorite %} is-favorite{% endif %}">
+      <td class="num">{{ item.rank }}</td>
+      <td class="num">{{ "%.1f"|format(item.score) }}</td>
+      <td class="listing-cell">
+        <a class="listing-title" href="{{ url_for('web.listing', slug=slug, listing_id=item.listing_id) }}">{{ item.title }}</a>
+        <span class="sub">{{ item.address }}</span>
+        <span class="sub">{{ item.sites_text }}{% if item.external_href %}・<a href="{{ item.external_href }}" target="_blank" rel="noopener noreferrer">掲載ページ</a>{% endif %}・{{ item.first_seen_text }} 発見</span>
+      </td>
+      <td class="price">{{ item.price_text }}</td>
+      <td>{{ item.summary_text }}</td>
+      <td>
+        <span class="badge badge-{{ item.must_result }}">{{ item.must_label }}</span>
+        {% if item.unknown_count %}<span class="badge badge-muted">未確認 {{ item.unknown_count }}</span>{% endif %}
+        {% if item.is_stale %}<span class="badge badge-warn">採点が古い</span>{% endif %}
+      </td>
+      <td class="marks">
+        <form method="post" action="{{ url_for('web.set_flag', listing_id=item.listing_id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="flag" value="favorite">
+          <input type="hidden" name="value" value="{{ '0' if item.is_favorite else '1' }}">
+          <input type="hidden" name="next" value="{{ current_path }}">
+          <button type="submit" class="mark-btn{% if item.is_favorite %} on{% endif %}" title="{{ 'お気に入りを外す' if item.is_favorite else 'お気に入りにする' }}">{{ '★' if item.is_favorite else '☆' }}</button>
+        </form>
+        <form method="post" action="{{ url_for('web.set_flag', listing_id=item.listing_id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+          <input type="hidden" name="flag" value="excluded">
+          <input type="hidden" name="value" value="{{ '0' if item.is_excluded else '1' }}">
+          <input type="hidden" name="next" value="{{ current_path }}">
+          <button type="submit" class="mark-btn{% if item.is_excluded %} on{% endif %}">{{ '除外を戻す' if item.is_excluded else '除外' }}</button>
+        </form>
+        {% if item.memo_count %}<span class="badge badge-muted">メモ {{ item.memo_count }}</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="empty">条件に合う物件がありません。</p>
+{% endif %}
+
+<nav class="pager" aria-label="ページ送り">
+  {% if prev_url %}<a href="{{ prev_url }}">← 前のページ</a>{% endif %}
+  <span>{{ flt.page }} / {{ page_count }}</span>
+  {% if next_url %}<a href="{{ next_url }}">次のページ →</a>{% endif %}
+</nav>
+{% endblock %}

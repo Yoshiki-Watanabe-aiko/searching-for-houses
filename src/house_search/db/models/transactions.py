@@ -875,3 +875,61 @@ class SiteScanCursor(TimestampMixin, Base):
         UUID(as_uuid=True),
         comment="最後にローテーションを回した実行ID。同一実行で予算を二重消費しないための印",
     )
+
+
+# メモの上限（文字数）。画面の入力とDBの CHECK 制約が同じ値を使う。
+MARK_MEMO_MAX_CHARS = 2000
+
+
+class ListingMark(TimestampMixin, Base):
+    """掲載への手動の印（お気に入り・除外・メモ → 課題#68・ADR 0026）。
+
+    ブラウザ閲覧画面から付ける。**印は掲載ごとに持ち**、名寄せグループへの効果は
+    読み出し時に「同じグループのどれか1件に印があるか」で導く。
+
+    ⚠ **グループIDを持たない。** ``sync_groups`` はメンバー0件のグループを消し、
+    同じ住戸でも組み直しでIDが振り直されうる。グループに付けると印が黙って外れる。
+    掲載ID（``t_listings.id``）は掲載終了・再掲載・種別の引き継ぎ（``_RETAKE``）を
+    またいで保たれる。
+
+    ⚠ **除外は採点・順位・個別通知を変えない。** 効くのは閲覧画面の既定表示と
+    日次ダイジェストの抽出だけ（ユーザー判断 2026-09-15）。
+    """
+
+    __tablename__ = "t_listing_marks"
+    __table_args__ = (
+        CheckConstraint(
+            f"memo IS NULL OR char_length(memo) <= {MARK_MEMO_MAX_CHARS}", name="memo_length"
+        ),
+        {"comment": "掲載への手動の印（お気に入り・除外・メモ）。ブラウザ閲覧画面から付ける"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, comment="印ID")
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("t_listings.id", ondelete="CASCADE"),
+        unique=True,
+        nullable=False,
+        comment=(
+            "掲載ID。印は掲載ごとに持ち、同じ名寄せグループのどれか1件に印があれば"
+            "グループ全体に効かせる（読み出し時に導く）"
+        ),
+    )
+    is_favorite: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+        comment="お気に入り。閲覧画面の絞り込みにだけ使う（採点・順位・通知には効かない）",
+    )
+    is_excluded: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=text("false"),
+        comment=(
+            "除外。閲覧画面の既定表示から隠し、日次ダイジェストでは飛ばして繰り上げる。"
+            "rank_in_pattern・採点・個別通知・成約確認は変えない"
+        ),
+    )
+    memo: Mapped[str | None] = mapped_column(
+        Text,
+        comment=f"自由メモ（{MARK_MEMO_MAX_CHARS}字まで）。利用者の入力でスクレイピング由来ではない",
+    )

@@ -159,7 +159,7 @@ def notifiable_from(
     )
 
 
-def _yen(value: int | None) -> str:
+def yen(value: int | None) -> str:
     return f"{value:,}円" if value is not None else "—"
 
 
@@ -175,7 +175,7 @@ def _is_land(prop: NotifiableListing) -> bool:
     return prop.property_family == "TOCHI_BUY"
 
 
-def _man_yen(value: int | None) -> str:
+def man_yen(value: int | None) -> str:
     """売買価格を万円・億円で表す。⚠ 未定は「価格未定」と明示する。
 
     0円やハイフンで出すと「安い」と誤読される（新築は価格未定が実在する）。
@@ -238,14 +238,14 @@ def _buy_monthly_note(prop: NotifiableListing) -> str:
     monthly = prop.monthly_cost
     if loan is None:
         # 価格未定。管理費だけ判っていれば出す（ローンは計算できない）
-        return f"\n（管理費等 {_yen(monthly)}/月）" if monthly is not None else ""
+        return f"\n（管理費等 {yen(monthly)}/月）" if monthly is not None else ""
     if monthly is None:
         # ⚠ **0円として合計しない。** 新築の棟は詳細に管理費が無いので、
         #   足すと総額が小さく見える（→ ADR 0021 決定4 と同じ形の欠陥）
-        return f"\n（ローン {_yen(loan)}/月 ＋ 管理費等 不明）\n※{LOAN_NOTE}"
+        return f"\n（ローン {yen(loan)}/月 ＋ 管理費等 不明）\n※{LOAN_NOTE}"
     return (
-        f"\n（ローン {_yen(loan)}/月 ＋ 管理費等 {_yen(monthly)}/月"
-        f" ＝ 月々 {_yen(loan + monthly)}）\n※{LOAN_NOTE}"
+        f"\n（ローン {yen(loan)}/月 ＋ 管理費等 {yen(monthly)}/月"
+        f" ＝ 月々 {yen(loan + monthly)}）\n※{LOAN_NOTE}"
     )
 
 
@@ -265,7 +265,7 @@ def _land_monthly_note(prop: NotifiableListing) -> str:
     if loan is None:
         # 価格未定。ローンは計算できないが「土地のみ」の注記は出す
         return f"\n※{LAND_ONLY_NOTE}"
-    return f"\n（ローン {_yen(loan)}/月）\n※{LOAN_NOTE}\n※{LAND_ONLY_NOTE}"
+    return f"\n（ローン {yen(loan)}/月）\n※{LOAN_NOTE}\n※{LAND_ONLY_NOTE}"
 
 
 def price_field(prop: NotifiableListing) -> tuple[str, str]:
@@ -276,15 +276,15 @@ def price_field(prop: NotifiableListing) -> tuple[str, str]:
     並び、物件価格と管理費を足した無意味な数字を誰も異常と思わない（→ 課題#4）。
     """
     if _is_land(prop):
-        return "価格", f"{_man_yen(prop.price)}{_land_monthly_note(prop)}"
+        return "価格", f"{man_yen(prop.price)}{_land_monthly_note(prop)}"
     if _is_buy(prop):
-        return "価格", f"{_man_yen(prop.price)}{_buy_monthly_note(prop)}"
+        return "価格", f"{man_yen(prop.price)}{_buy_monthly_note(prop)}"
     if prop.utility is not None:
         return _chintai_living_cost_field(prop, prop.utility)
     return (
         "月額",
-        f"{_yen(prop.rent_total)}\n（賃料 {_yen(prop.price)} + 管理費 "
-        f"{_yen(prop.mgmt_fee_monthly)}）",
+        f"{yen(prop.rent_total)}\n（賃料 {yen(prop.price)} + 管理費 "
+        f"{yen(prop.mgmt_fee_monthly)}）",
     )
 
 
@@ -322,8 +322,8 @@ def _chintai_living_cost_field(
     """賃貸で光熱費を見積もったパターンの金額欄（→ 課題#64）。"""
     return (
         "月額（光熱費込み）",
-        f"{_yen(_living_total(prop, utility))}\n（賃料 {_yen(prop.price)} + 管理費 "
-        f"{_yen(prop.mgmt_fee_monthly)} + 光熱費 推定{utility.monthly_yen:,}円）\n"
+        f"{yen(_living_total(prop, utility))}\n（賃料 {yen(prop.price)} + 管理費 "
+        f"{yen(prop.mgmt_fee_monthly)} + 光熱費 推定{utility.monthly_yen:,}円）\n"
         f"{utility_note(utility)}",
     )
 
@@ -335,13 +335,13 @@ _GAS_SHORT = {"city": "都市ガス", "lpg": "プロパン", "electric": "オー
 def price_summary(prop: NotifiableListing) -> str:
     """ダイジェスト1行に出す金額。⚠ 売買と賃貸で意味が変わる。"""
     if _is_buy(prop):
-        return _man_yen(prop.price)
+        return man_yen(prop.price)
     utility = prop.utility
     if utility is None:
-        return _yen(prop.rent_total)
+        return yen(prop.rent_total)
     total = _living_total(prop, utility)
     if total is None:
-        return _yen(None)
+        return yen(None)
     # ⚠ 期待値で埋めた光熱費は「約」を付け、ガス種別を「ガス不明」と出す
     if utility.is_estimated_gas:
         return f"{total:,}円〔賃料等{prop.rent_total:,}＋光熱約{utility.monthly_yen:,}・ガス不明〕"
@@ -349,7 +349,7 @@ def price_summary(prop: NotifiableListing) -> str:
     return f"{total:,}円〔賃料等{prop.rent_total:,}＋光熱{utility.monthly_yen:,}・{gas}〕"
 
 
-def _summary_line(prop: NotifiableListing) -> str:
+def summary_line(prop: NotifiableListing) -> str:
     """間取り・面積・築年・徒歩・通勤を1行にまとめる。
 
     通勤時間は目的地を設定したパターンでだけ出る。駅を同定できなかった掲載は
@@ -431,7 +431,7 @@ def build_listing_embed(
             "inline": True,
         },
         dict(zip(("name", "value"), price_field(prop), strict=True), inline=True),
-        {"name": "条件", "value": _summary_line(prop), "inline": False},
+        {"name": "条件", "value": summary_line(prop), "inline": False},
     ]
 
     if access := access_lines(prop):
@@ -444,7 +444,7 @@ def build_listing_embed(
             1,
             {
                 "name": "価格変動",
-                "value": f"{_yen(prop.price_prev)} → {_yen(prop.price)}（{sign}{diff:,}円）",
+                "value": f"{yen(prop.price_prev)} → {yen(prop.price)}（{sign}{diff:,}円）",
                 "inline": True,
             },
         )
@@ -456,8 +456,8 @@ def build_listing_embed(
             1,
             {
                 "name": "他サイトとの差",
-                "value": f"{_yen(prop.previous_total)}{previous_site} → "
-                f"{_yen(prop.rent_total)}（{diff:,}円）",
+                "value": f"{yen(prop.previous_total)}{previous_site} → "
+                f"{yen(prop.rent_total)}（{diff:,}円）",
                 "inline": True,
             },
         )
@@ -546,7 +546,7 @@ def _digest_line(entry: DigestEntry) -> str:
     return (
         f"**{entry.rank}. [{title}]({prop.url})**\n"
         f"　`{entry.score.score:5.1f}点` {price_summary(prop)} / "
-        f"{_summary_line(prop)}\n"
+        f"{summary_line(prop)}\n"
         f"　{prop.address or '住所不明'} ({site_note}){unknown_note}"
     )
 
