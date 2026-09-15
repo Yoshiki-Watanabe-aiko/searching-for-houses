@@ -94,7 +94,8 @@ want:
     - { metric: area_sqm,             weight: 20, best: 75,       worst: 38 }         # p90 74.6 / p10 38.1
     # ⚠ 棟には管理費が無いので大半が missing になる（実測 397/752・分母から除外される）
     - { metric: monthly_cost,         weight: 10, best: 18000,    worst: 50000 }      # p10 1.8万 / p90 4.9万
-    - { metric: walk_minutes,         weight: 8,  best: 3,        worst: 20 }         # 0点 1%・満点 22%（据え置き）
+    # ⚠ 徒歩が取れない（バス便）は0点で分母に残す。再正規化するとバス便が上位を占める（→ 課題#58・2026-09-15）
+    - { metric: walk_minutes,         weight: 8,  best: 3,        worst: 20, on_missing: zero }         # 0点 1%・満点 22%（据え置き）
     # 通勤は 25→10 へ（ユーザー判断 2026-09-07）。best/worst は4都県の母集団の p10〜p90
     - { metric: commute_minutes,      weight: 10, best: 20,       worst: 70 }         # p10 20 / p90 69
     # ハザードは全種別で共通に効く（→ ADR 0021）。購入では住み替えが利かないので

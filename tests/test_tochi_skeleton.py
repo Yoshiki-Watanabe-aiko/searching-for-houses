@@ -49,7 +49,7 @@ def test_土地で使えるmetricは8つ() -> None:
     ]
 
 
-def test_土地で使えるMUSTは7つ() -> None:
+def test_土地で使えるMUSTは8つ() -> None:
     assert [spec.name for spec in m.must_items_for("TOCHI")] == [
         "price_max",
         "land_area_min",
@@ -57,6 +57,8 @@ def test_土地で使えるMUSTは7つ() -> None:
         "commute_minutes_max",
         "flood_rank_max",
         "landslide_special_ratio_max",
+        # 建築条件付きを除く（ユーザー判断 2026-09-15 → 課題#61）
+        "exclude_build_condition",
         "features",
     ]
 

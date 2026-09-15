@@ -241,6 +241,15 @@ class TochiBuyMust(MustBase):
 
     price_max: int | None = Field(default=None, description="物件価格の上限（円）")
     land_area_min: float | None = Field(default=None, description="土地面積の下限（㎡）")
+    exclude_build_condition: bool | None = Field(
+        default=None,
+        description=(
+            "true なら建築条件付きの土地を除く（名寄せグループの1件でも付なら付）。"
+            "建築条件は詳細ページにしか出ないので、"
+            "読めない掲載は unknown（unknown_policy に従う）。"
+            "false は書かないのと同じ"
+        ),
+    )
 
 
 class FeatureWant(Strict):
@@ -287,6 +296,14 @@ class NumericWant(Strict):
     weight: float = Field(gt=0, description="重み")
     best: float = Field(description="満点(1.0)になる値")
     worst: float = Field(description="0点になる値")
+    on_missing: Literal["exclude", "zero"] = Field(
+        default="exclude",
+        description=(
+            "値が取れないときの扱い。exclude は分子・分母の双方から外して再正規化する（既定）。"
+            "zero は0点として分母に残す。⚠ exclude のままだと、値が無い掲載が"
+            "残りの項目だけで満点に近づき上位を占める（売買の徒歩 → 課題#58）"
+        ),
+    )
 
     @model_validator(mode="after")
     def _check_range(self) -> NumericWant:
@@ -420,9 +437,16 @@ class PatternBase(Strict):
         検索範囲や通知先を変えただけで全件再スコアが走らないよう、
         WANT と物件種別だけをハッシュ対象にする。
         """
+        want = self.want.model_dump(mode="json")
+        for item in want["numeric"]:
+            # 既定の exclude はキーごと省き、既存のハッシュを変えない（commute と同じ扱い）。
+            # ⚠ model_dump(exclude_defaults=True) にしない。FeatureWant の any_of=[]・
+            # code=None まで落ちて、on_missing を書いていないパターンのハッシュも変わる
+            if item["on_missing"] == "exclude":
+                del item["on_missing"]
         config: dict[str, Any] = {
             "property_type": self.property_type,  # type: ignore[attr-defined]
-            "want": self.want.model_dump(mode="json"),
+            "want": want,
         }
         if self.commute is not None:
             # 目的地が変われば通勤時間の意味も変わるので再スコアの対象にする。

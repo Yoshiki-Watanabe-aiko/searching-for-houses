@@ -117,6 +117,8 @@ def test_一覧だけで判定できないMUST項目が明示されている() -
         "landslide_special_ratio_max",
         # 権利形態は詳細ページの仕様表にしか出ない（新築マンションの棟は一覧の注記 → 課題#65）
         "freehold_only",
+        # 建築条件も詳細ページの仕様表にしか出ない（→ 課題#61）
+        "exclude_build_condition",
     }
 
 
@@ -192,6 +194,8 @@ EXPECTED_MUST_TYPES: dict[str, set[str]] = {
     "features": _ALL,
     # ⚠ マンションと戸建てだけ（ユーザー判断 2026-09-12 → 課題#65）。土地は含めない
     "freehold_only": _BUY,
+    # ⚠ 土地だけ（ユーザー判断 2026-09-15 → 課題#61）
+    "exclude_build_condition": {_T},
 }
 
 

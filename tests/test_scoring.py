@@ -257,6 +257,41 @@ def test_欠損metricは分子と分母の双方から除外される() -> None:
     assert [item.code for item in missing] == ["rent_total"]
 
 
+def test_on_missingがzeroの欠損は0点として分母に残る() -> None:
+    # 売買の徒歩（→ 課題#58）。再正規化すると徒歩が取れない掲載が残りの項目だけで
+    # 満点に近づき、上位を占める
+    want = {
+        "numeric": [
+            {"metric": "walk_minutes", "weight": 10, "best": 3, "worst": 20, "on_missing": "zero"},
+            {"metric": "area_sqm", "weight": 10, "best": 45, "worst": 30},
+        ]
+    }
+    view = make_view(walk_minutes=None, area_sqm=45.0)
+    result = calculate_score(view, make_pattern(want=want).want, condition_names={})
+    assert result.score == 50.0
+    walk = next(item for item in result.items if item.code == "walk_minutes")
+    assert walk.status == STATUS_UNKNOWN
+    assert walk.missing is False
+    assert result.unknown_count == 1
+    # 値が取れれば on_missing は効かない
+    present = calculate_score(
+        make_view(walk_minutes=3, area_sqm=45.0), make_pattern(want=want).want, condition_names={}
+    )
+    assert present.score == 100.0
+
+
+def test_on_missingは既定ならconfig_hashを変えずzeroなら変える() -> None:
+    # ⚠ 対で固定する。「常に落とす」実装だと zero を書いても再採点が走らず、
+    # 「常に残す」実装だと全パターンのハッシュが変わって全件が再採点される
+    base = {"metric": "walk_minutes", "weight": 10, "best": 3, "worst": 20}
+    implicit = make_pattern(want={"numeric": [base]})
+    explicit = make_pattern(want={"numeric": [{**base, "on_missing": "exclude"}]})
+    zero = make_pattern(want={"numeric": [{**base, "on_missing": "zero"}]})
+    assert "on_missing" not in implicit.score_config()["want"]["numeric"][0]
+    assert implicit.config_hash() == explicit.config_hash()
+    assert zero.config_hash() != implicit.config_hash()
+
+
 def test_設備の未確認は0点だが分母には残る() -> None:
     pattern = make_pattern(
         want={

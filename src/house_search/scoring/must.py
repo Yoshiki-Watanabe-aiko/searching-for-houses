@@ -148,6 +148,19 @@ def _check_freehold(view: ListingView) -> tuple[str, object]:
     return PASS, "所有権"
 
 
+def _check_build_condition(view: ListingView) -> tuple[str, object]:
+    """建築条件付きを除く（→ 課題#61）。付なら fail、なしなら pass、読めなければ unknown。
+
+    ⚠ 読めない掲載（詳細未取得・``一部建築条件付``）を fail にしない。詳細の掃き出しが
+    追いついていない掲載が黙って消える（``freehold_only`` と同じ扱い）。
+    """
+    if view.build_condition is None:
+        return UNKNOWN, None
+    if view.build_condition:
+        return FAIL, "建築条件付き"
+    return PASS, "建築条件なし"
+
+
 def evaluate_must(view: ListingView, must: object, *, list_stage_only: bool = False) -> MustResult:
     """MUST条件を評価する。
 
@@ -178,6 +191,8 @@ def evaluate_must(view: ListingView, must: object, *, list_stage_only: bool = Fa
             result, actual = _check_features(view, list(expected))
         elif name == "freehold_only":
             result, actual = _check_freehold(view)
+        elif name == "exclude_build_condition":
+            result, actual = _check_build_condition(view)
         else:  # pragma: no cover - レジストリに項目を足したら明示的に落とす
             raise ValueError(f"MUST項目 '{name}' の判定方法が未実装です")
 

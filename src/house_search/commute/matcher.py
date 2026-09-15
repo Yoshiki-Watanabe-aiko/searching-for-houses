@@ -77,6 +77,28 @@ _PAREN_BEFORE_STATION = re.compile(r"[（(][^）)]{0,24}[）)](?=駅)")
 # goo の ``「品の木・ハイランドホテル前」バス停`` のようなバス停名には掛からない。
 _QUOTED_BEFORE_STATION = re.compile(r"[「｢]([^」｣]{1,24})[」｣](?=\s*駅)")
 
+# ⚠⚠ **SUUMO はバス停も「「◯◯」駅」の形で書く**（``川越観光 「高坂ニュータウン入口」駅 徒歩3分`` /
+# ``茅ヶ崎駅 「芹沢入口」駅 徒歩8分``）。「駅」のアンカーがあるので第1パスが駅として拾い、
+# **バス停からの徒歩が駅徒歩になる**（→ 課題#66）。
+# 実測 2026-09-15 で土地の上位15件に3件（1位を含む）。
+# ⚠ 例外にならず件数も減らない（マスタに無いので unmatched として徒歩付きで残るだけ）。
+# 見分けは**直前の語**で行う。路線名なら駅、バス会社名・出発駅・「バスN分」ならバス停。
+# ⚠ **unmatched を一律に捨てて解かない**——マスタに無い本物の駅（本庄早稲田・京成町屋など）の
+# 正しい徒歩まで捨てる。
+# ⚠ 直前の語が空（``小田急線（新宿～相模大野） 「喜多見」駅``）は駅とみなす。
+# ⚠ **直後がバスなら出発駅**なので残す
+# （``小田急 「海老名」駅 駅よりバス12分 「中原」駅 徒歩3分``）。
+_QUOTED_STATION = re.compile(
+    r"(?P<head>[「｢][^」｣]{1,24}[」｣]\s*駅)"
+    r"(?:[\s　/／:：]*(?:徒歩|歩|バス|車)\s*\d+\s*分(?:\s*[～~〜]\s*\d+\s*分)?)?"
+)
+_PRECEDING_WORD = re.compile(rf"([^{_BOUNDARY}｢｣]*)[\s　]*\Z")
+_FOLLOWED_BY_BUS = re.compile(r"[\s　/／:：]*(?:駅より|駅から|駅)?バス")
+_RAIL_WORDS = re.compile(
+    r"線|ライン|鉄道|モノレール|エクスプレス|ライナー|ゆりかもめ|スカイアクセス|舎人"
+    r"|ＥＸ|EX|電鉄|シャトル|トラム|地下鉄|メトロ|新幹線"
+)
+
 # 第1パス。「◯◯駅」を拾う。中黒は駅名の一部になりうる（元町・中華街 / 大塚・帝京大学）ので、
 # 区切りではなく駅名の構成文字として扱う。
 _WITH_SUFFIX = re.compile(rf"([^{_BOUNDARY}・]{{1,24}}(?:・[^{_BOUNDARY}・]{{1,24}})*)駅")
@@ -154,9 +176,34 @@ class StationIndex:
         return self.by_key.get(name_key, frozenset())
 
 
+def _is_quoted_bus_stop(match: re.Match[str]) -> bool:
+    """「「◯◯」駅」の1件がバス停かを、直前の語と直後の時間表記で判定する。"""
+    # ⚠ 「駅」の直後で見る。徒歩の時間表記を読み飛ばした後で見ると、
+    #   ``「X」駅 徒歩3分 バス便あり`` のバス停を出発駅と誤認する
+    if _FOLLOWED_BY_BUS.match(match.string, match.end("head")):
+        return False  # 直後がバス → バスの出発駅
+    word = _PRECEDING_WORD.search(match.string[: match.start()]).group(1)  # type: ignore[union-attr]
+    if not word:
+        return False
+    if "バス" in word or word.endswith("駅"):
+        return True  # 「駅バス6分」「茅ヶ崎駅」「京成バス千葉ウエスト」
+    return _RAIL_WORDS.search(word) is None
+
+
+def mask_quoted_bus_stops(station_info: str) -> str:
+    """「「◯◯」駅」の形のバス停を、直後の時間表記ごと消す。**原文に対して**通す。
+
+    ⚠ 時間表記も消す。残すと第2パスが直前の語（``川越観光``）とその徒歩を拾う。
+    ⚠ 直前の語は残す（``茅ヶ崎駅 「芹沢入口」駅`` の茅ヶ崎は出発駅として駅名になる）。
+    """
+    return _QUOTED_STATION.sub(
+        lambda m: " " if _is_quoted_bus_stop(m) else m.group(0), station_info
+    )
+
+
 def mask_bus_stops(station_info: str) -> str:
     """バス停・降車地の表記を消す。駅名を拾う前に必ず通す。"""
-    masked = station_info
+    masked = mask_quoted_bus_stops(station_info)
     for pattern in _BUS_SEGMENTS:
         masked = pattern.sub(" ", masked)
     return masked
@@ -196,7 +243,10 @@ def station_walk_minutes(station_info: str | None) -> dict[str, int]:
     """
     if not station_info:
         return {}
-    text = _QUOTED_BEFORE_STATION.sub(r"\1", station_info)
+    # ⚠ 鉤括弧つきのバス停（SUUMO）だけは先に消す。
+    #   囲みを外した後では直前の語と地続きになり見分けられない
+    text = mask_quoted_bus_stops(station_info)
+    text = _QUOTED_BEFORE_STATION.sub(r"\1", text)
     text = _PAREN_BEFORE_STATION.sub("", text)
 
     walks: dict[str, int] = {}

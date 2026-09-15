@@ -3,10 +3,9 @@
 #
 # ⚠ price・land_area_sqm の best/worst は4都県の seed（2026-09-12・MUST 通過 8,078件）の
 # p10〜p90 に合わせてある（→ 課題#31・#34）。通勤・徒歩・ハザードは他の売買と同じ。
-# ⚠⚠ **設備の weight は暫定。** seed で詳細が取れたのは 326件（神奈川・埼玉が92%）だけで、
-# 出現率は4都県を代表していない。掃き出しの後に測り直し、都市ガスを入れるかもそこで決める
-# （ユーザー判断 2026-09-14）。
-# ⚠ 詳細未取得の掲載は設備6項目が全部 unknown（0点・分母に残る）なので、
+# 設備の出現率は掃き出しの完走後（2026-09-15・設備原文がある 8,745件が分母）に測り直した値。
+# 都市ガスは weight 3 で入れた（ユーザー判断 2026-09-15）。
+# ⚠ 詳細未取得の掲載は設備7項目が全部 unknown（0点・分母に残る）なので、
 # 掃き出しが進むたびに上位が入れ替わる（→ 課題#4 と同じ）。
 #
 # ⚠ MUST は「広く取ってから締める」（→ ADR 0013）。price_max・land_area_min は
@@ -50,23 +49,27 @@ must:
   price_max: 100000000         # 1億円（円単位・中古一戸建てと同じ）
   land_area_min: 40.0          # ⚠ 23区の狭小地を落とさない（中古一戸建てと同じ）
   walk_minutes_max: 20         # バス便は徒歩 NULL → unknown → keep で通る（→ 課題#58）
+  # 建築条件付き（詳細済みの17%）を除く。⚠ 詳細にしか出ないので未取得は unknown → keep で残る。
+  # ⚠ 名寄せグループの1件でも付なら付（→ 課題#61・ユーザー判断 2026-09-15）
+  exclude_build_condition: true
   features: []                 # ⚠ 書かない（詳細未取得・抽出漏れの掲載まで全件 fail になる）
   unknown_policy: keep
 
 want:
-  # 土地の設備（→ 課題#61 9c）。出現率は seed で詳細が取れた 312件（2026-09-12）の値で暫定。
-  # ⚠ 都市ガス（312件中164件＝52.6%）は入れていない。掃き出し後に測り直して判断する。
+  # 土地の設備（→ 課題#61 9c）。出現率は掃き出し後の 8,745件（2026-09-15）。
   features:
-    - { code: LAND_REGULAR_SHAPE,    weight: 4 }   # 43% 整形地（不整形地は除く）
-    - { code: LAND_ROAD_6M,          weight: 4 }   # 23% 前道6m以上
-    - { code: LOC_CORNER_LOT,        weight: 3 }   # 22% 角地
-    - { code: LOC_SOUTH_ROAD,        weight: 3 }   # 16% 南側道路
-    - { code: LAND_CLEARED_DELIVERY, weight: 2 }   # 46% 更地渡し
-    - { code: FEAT_VACANT,           weight: 2 }   # 14% 即引渡し可
+    - { code: LAND_REGULAR_SHAPE,    weight: 4 }   # 38.8% 整形地（不整形地は除く）
+    - { code: LAND_ROAD_6M,          weight: 4 }   # 29.5% 前道6m以上
+    - { code: LOC_CORNER_LOT,        weight: 3 }   # 20.3% 角地
+    - { code: LOC_SOUTH_ROAD,        weight: 3 }   # 19.0% 南側道路
+    - { code: EQUIP_CITY_GAS,        weight: 3 }   # 61.5% 都市ガス（プロパンは建てた後の光熱費に効く）
+    - { code: LAND_CLEARED_DELIVERY, weight: 2 }   # 40.6% 更地渡し
+    - { code: FEAT_VACANT,           weight: 2 }   # 14.3% 即引渡し可
   numeric:
     - { metric: price,                 weight: 25, best: 12000000, worst: 71000000 }  # p10 1,190万 / p90 7,080万
     - { metric: land_area_sqm,         weight: 25, best: 235,      worst: 63 }        # p90 234.2 / p10 63.0
-    - { metric: walk_minutes,          weight: 10, best: 3,        worst: 20 }
+    # ⚠ 徒歩が取れない（バス便）は0点で分母に残す。再正規化すると上位100件の74件を占めた（→ 課題#58）
+    - { metric: walk_minutes,          weight: 10, best: 3,        worst: 20, on_missing: zero }
     - { metric: commute_minutes,       weight: 10, best: 40,       worst: 90 }        # p10 40 / p90 91
     # ハザードは他の売買と同じ配点（購入は住み替えが利かない → ADR 0021・0023）
     - { metric: flood_rank_avg,        weight: 25, best: 0,        worst: 4 }

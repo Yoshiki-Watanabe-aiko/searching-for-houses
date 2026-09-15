@@ -364,6 +364,18 @@ MUST_ITEMS: tuple[MustSpec, ...] = (
         False,
     ),
     MustSpec(
+        "exclude_build_condition",
+        "建築条件付きを除く",
+        # ⚠ 土地だけ（ユーザー判断 2026-09-15 → 課題#61）。建物を伴う売買には建築条件の欄が無い。
+        TOCHI_TYPES,
+        # 建築条件の原文（``scrape.base.BUILD_CONDITION_ATTR_KEY``）と保存済みの真偽値から導く。
+        ("type_specific_attrs",),
+        # 建築条件は詳細ページの仕様表にしか出ない（一覧の本文の「建築条件なし」はタグで、
+        # 「建築条件付土地購入サポート」のバッジも混ざる）。
+        # ⚠ 一覧で fail にすると詳細を取りに行かず、fail した掲載は DB にも残らない。
+        False,
+    ),
+    MustSpec(
         "features",
         "必須の設備・条件コード",
         # ⚠ 全種別に置くが、そのファミリの辞書に無い条件コードは validate-config が
