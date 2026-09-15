@@ -46,7 +46,8 @@ def run_server(*, port: int, use_test_db: bool, open_browser: bool) -> int:
     settings = load_settings()
     url = settings.database_test_url if use_test_db else settings.database_url
     if not url:
-        print("DATABASE_TEST_URL が未設定です", file=sys.stderr)
+        name = "DATABASE_TEST_URL" if use_test_db else "DATABASE_URL"
+        print(f"{name} が未設定です", file=sys.stderr)
         return 1
     if not port_is_free(port):
         print(

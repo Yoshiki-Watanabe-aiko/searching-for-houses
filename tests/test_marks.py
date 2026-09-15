@@ -28,6 +28,17 @@ def test_未知の印はSQLに入れない() -> None:
         marks.mark_exists_sql("is_deleted")  # type: ignore[arg-type]
 
 
+def test_印の切り替えも未知の印をSQLに入れない() -> None:
+    """⚠ 列名を f-string で埋め込む関数は、呼び出し側を信じずに自分でも許可表を確かめる。
+
+    DB に触れる前に弾くので、接続の無いダミーを渡しても例外は ValueError になる。
+    """
+    with pytest.raises(ValueError):
+        marks.set_group_flag(None, listing_id=1, flag="memo = 'x', is_favorite", on=True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        marks._clear_group_flag(None, listing_id=1, flag="is_deleted")  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize("alias", ["p; DROP TABLE t_listings", "P", "", "p1"])
 def test_別名に使えない文字は弾く(alias: str) -> None:
     with pytest.raises(ValueError):
