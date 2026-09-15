@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}検索パターン一覧{% endblock %}
+{% block content %}
+<h1>検索パターン</h1>
+<div class="cards">
+  {% for card in cards %}
+  <a class="card" href="{{ url_for('web.ranking', slug=card.slug) }}">
+    <span class="card-title">{{ card.name }}</span>
+    <span class="card-type">{{ card.property_type }}</span>
+    <dl class="card-stats">
+      <div><dt>順位付き</dt><dd>{{ "{:,}".format(card.summary.ranked) }}件</dd></div>
+      <div><dt>お気に入り</dt><dd>{{ card.summary.favorites }}件</dd></div>
+      <div><dt>除外</dt><dd>{{ card.summary.excluded }}件</dd></div>
+    </dl>
+    <span class="card-note">最終採点 {{ card.scored_at_text }}</span>
+    {% if card.summary.stale %}
+    <span class="badge badge-warn">採点設定と食い違う行 {{ card.summary.stale }}件（rescore 未実行）</span>
+    {% endif %}
+  </a>
+  {% endfor %}
+</div>
+{% endblock %}

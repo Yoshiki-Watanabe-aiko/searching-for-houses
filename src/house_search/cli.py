@@ -282,6 +282,22 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         help="ガス種別不明をプロパンとみなす確率（省略時はパターンの utility）",
     )
+    p_web = sub.add_parser(
+        "web",
+        help=(
+            "ローカル限定のブラウザ閲覧画面を起動する（127.0.0.1 のみで待ち受け・"
+            "Ctrl+C で終了 → 課題#68）"
+        ),
+    )
+    p_web.add_argument(
+        "--port", type=int, default=8765, help="待ち受けるポート（既定 8765）"
+    )
+    p_web.add_argument(
+        "--test-db", action="store_true", help="DATABASE_TEST_URL のテストDBを読む"
+    )
+    p_web.add_argument(
+        "--open", action="store_true", help="起動後に既定のブラウザで開く"
+    )
     return parser
 
 
@@ -740,10 +756,27 @@ def _cmd_digest(args: argparse.Namespace) -> int:
             state = "（送信せず）"
         else:
             state = "送信成功" if result.sent else "送信失敗"
-        print(f"{result.pattern_name}: 上位 {result.entries}件 {state}")
+        # ⚠ 除外で飛ばした件数は黙らない（→ 課題#68。除外したことを忘れても気づけるように）
+        excluded_note = f"（除外 {result.excluded}件を飛ばした）" if result.excluded else ""
+        print(f"{result.pattern_name}: 上位 {result.entries}件 {state}{excluded_note}")
         if not args.dry_run and not result.sent and not result.skipped:
             exit_code = 1
     return exit_code
+
+
+def _cmd_web(args: argparse.Namespace) -> int:
+    # ⚠ 遅延 import にする。flask はブラウザ閲覧画面だけの依存で、ここを
+    #   モジュール先頭へ出すと、main の .venv へ `uv sync` する前の定期タスク
+    #   （scan / digest）まで import で落ちる
+    try:
+        from house_search.web.server import run_server
+    except ModuleNotFoundError as exc:
+        print(
+            f"閲覧画面の依存が入っていません（{exc.name}）。`uv sync` を実行してください。",
+            file=sys.stderr,
+        )
+        return 1
+    return run_server(port=args.port, use_test_db=args.test_db, open_browser=args.open)
 
 
 def _cmd_rescore(args: argparse.Namespace) -> int:
@@ -2119,6 +2152,7 @@ _COMMANDS = {
     "hazard-stats": _cmd_hazard_stats,
     "market-stats": _cmd_market_stats,
     "utility-stats": _cmd_utility_stats,
+    "web": _cmd_web,
 }
 
 

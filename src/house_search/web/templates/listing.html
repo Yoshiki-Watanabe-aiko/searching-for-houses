@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="{{ url_for('web.ranking', slug=slug) }}">← {{ pattern_name }} のランキング</a></p>
+
+<header class="listing-header">
+  <h1>{{ title }}</h1>
+  <p class="sub">{{ address }}・{{ property_type_name }}・{{ site_text }}{% if external_href %}・<a href="{{ external_href }}" target="_blank" rel="noopener noreferrer">掲載ページを開く</a>{% endif %}</p>
+  <p class="badges">
+    {% if score and score.rank_in_pattern %}<span class="badge badge-rank">{{ score.rank_in_pattern }}位</span>{% endif %}
+    {% if score and score.score is not none %}<span class="badge badge-score">{{ "%.1f"|format(score.score) }}点</span>{% endif %}
+    <span class="badge {% if is_active %}badge-pass{% else %}badge-fail{% endif %}">{{ status_label }}</span>
+    {% if group_mark.is_favorite %}<span class="badge badge-fav">★ お気に入り</span>{% endif %}
+    {% if group_mark.is_excluded %}<span class="badge badge-warn">除外中</span>{% endif %}
+    {% if is_stale %}<span class="badge badge-warn">採点設定と食い違う（rescore 未実行）</span>{% endif %}
+  </p>
+  {% if not score %}
+  <p class="notice">この掲載は「{{ pattern_name }}」で採点されていません（エリア帯の外、または採点の対象外）。</p>
+  {% elif not score.rank_in_pattern %}
+  <p class="notice">この掲載には順位が付いていません{% if representative_id %}（同じ物件の<a href="{{ url_for('web.listing', slug=slug, listing_id=representative_id) }}">代表の掲載</a>に順位が付きます）{% else %}（必須条件を満たさない、または採点できない）{% endif %}。</p>
+  {% endif %}
+</header>
+
+<div class="columns">
+<section class="panel">
+  <h2>概要</h2>
+  <dl class="facts">
+    <div><dt>{{ price_title }}</dt><dd class="pre">{{ price_body }}</dd></div>
+    <div><dt>条件</dt><dd>{{ summary_text }}</dd></div>
+    <div><dt>初回発見</dt><dd>{{ first_seen_text }}</dd></div>
+    <div><dt>最終確認</dt><dd>{{ last_seen_text }}</dd></div>
+    <div><dt>詳細ページ取得</dt><dd>{{ detail_fetched_text }}</dd></div>
+    <div><dt>最終採点</dt><dd>{{ scored_at_text }}</dd></div>
+  </dl>
+  <h3>交通{% if destination %}（通勤は {{ destination }} まで）{% endif %}</h3>
+  {% if stations %}
+  <table class="compact">
+    <thead><tr><th scope="col">駅</th><th scope="col">徒歩</th><th scope="col">通勤</th></tr></thead>
+    <tbody>
+    {% for station in stations %}
+      <tr><td>{{ station.name }}</td><td>{{ station.walk_text }}</td><td>{{ station.commute_text }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">駅を同定できていません（通勤時間は未確認）。</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>印とメモ</h2>
+  <form class="mark-form" method="post" action="{{ url_for('web.save_mark', listing_id=listing_id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <input type="hidden" name="next" value="{{ current_path }}">
+    <label class="check"><input type="checkbox" name="favorite" value="1"{% if group_mark.is_favorite %} checked{% endif %}> お気に入り</label>
+    <label class="check"><input type="checkbox" name="excluded" value="1"{% if group_mark.is_excluded %} checked{% endif %}> 除外（一覧の既定表示と日次ダイジェストから外す）</label>
+    <label>この掲載のメモ（{{ memo_max }}字まで）
+      <textarea name="memo" rows="5" maxlength="{{ memo_max }}">{{ own_memo }}</textarea>
+    </label>
+    <p class="hint">印は同じ物件（名寄せ）の別サイトの掲載にもまとめて効きます。チェックを外すと、別の掲載に付いた同じ印も外れます。順位・採点・個別通知は変わりません。</p>
+    <button type="submit">保存</button>
+  </form>
+</section>
+</div>
+
+<section class="panel">
+  <h2>スコア内訳{% if score and score.score is not none %}（{{ "%.1f"|format(score.score) }}点）{% endif %}</h2>
+  {% if breakdown %}
+  <div class="table-wrap">
+  <table class="compact">
+    <thead><tr><th scope="col">項目</th><th scope="col">種類</th><th scope="col">値</th><th scope="col">得点 / 満点</th><th scope="col">状態</th></tr></thead>
+    <tbody>
+    {% for item in breakdown %}
+      <tr class="status-{{ item.status }}{% if item.missing %} is-missing{% endif %}">
+        <td>{{ item.name }}{% if item.detail_text %}<details><summary>根拠</summary><code class="wrap">{{ item.detail_text }}</code></details>{% endif %}</td>
+        <td>{{ item.kind_label }}</td>
+        <td>{{ item.value_text }}</td>
+        <td class="num">{{ item.points }} / {{ item.weight }}</td>
+        <td>{{ item.status_label }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">「欠損」の項目は分子・分母の双方から外して採点しています。「未確認」は0点で分母に残ります。</p>
+  {% else %}
+  <p class="empty">採点内訳がありません。</p>
+  {% endif %}
+</section>
+
+<div class="columns">
+<section class="panel">
+  <h2>必須条件（現在の判定: {{ must_result_label }}）</h2>
+  {% if must_items %}
+  <table class="compact">
+    <thead><tr><th scope="col">項目</th><th scope="col">条件</th><th scope="col">この物件</th><th scope="col">判定</th></tr></thead>
+    <tbody>
+    {% for item in must_items %}
+      <tr><td>{{ item.label }}</td><td>{{ item.expected_text }}</td><td>{{ item.actual_text }}</td><td><span class="badge badge-{{ item.result }}">{{ item.result_label }}</span></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint">判定できない項目の扱い: {{ '通す（keep）' if unknown_policy == 'keep' else '除く（drop）' }}。この表は現在の設定で判定し直した結果です。</p>
+  {% else %}
+  <p class="empty">必須条件は設定されていません。</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>ハザード</h2>
+  <table class="compact">
+    <tbody>
+    {% for item in hazards %}
+      <tr{% if not item.resolved %} class="is-unresolved"{% endif %}><th scope="row">{{ item.label }}</th><td>{{ item.value_text }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+</div>
+
+<section class="panel">
+  <h2>設備（同じ物件の全掲載の和集合）</h2>
+  {% if not detail_fetched %}
+  <p class="notice">詳細ページが未取得のため、設備は確認できていません。</p>
+  {% endif %}
+  {% if features %}
+  <ul class="tags">
+    {% for name in features %}<li>{{ name }}</li>{% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">抽出できた設備はありません。</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>同じ物件の掲載（{{ members|length }}件）</h2>
+  <div class="table-wrap">
+  <table class="compact">
+    <thead><tr><th scope="col">サイト</th><th scope="col">金額</th><th scope="col">状態</th><th scope="col">順位</th><th scope="col">詳細取得</th><th scope="col">最終確認</th><th scope="col">印</th></tr></thead>
+    <tbody>
+    {% for member in members %}
+      <tr class="{% if member.is_current %}is-current{% endif %}{% if not member.is_active %} is-ended{% endif %}">
+        <td>
+          {% if member.is_current %}<strong>{{ member.site_text }}</strong>{% else %}<a href="{{ url_for('web.listing', slug=slug, listing_id=member.listing_id) }}">{{ member.site_text }}</a>{% endif %}
+          {% if member.is_representative %}<span class="badge badge-muted">代表</span>{% endif %}
+          {% if member.external_href %}<a class="sub" href="{{ member.external_href }}" target="_blank" rel="noopener noreferrer">掲載ページ</a>{% endif %}
+        </td>
+        <td>{{ member.price_text }}</td>
+        <td>{{ member.status_label }}</td>
+        <td>{{ member.rank_text }}</td>
+        <td>{{ member.detail_fetched_text }}</td>
+        <td>{{ member.last_seen_text }}</td>
+        <td>
+          {% if member.is_favorite %}★{% endif %}
+          {% if member.is_excluded %}除外{% endif %}
+          {% if member.memo %}<details><summary>メモ</summary><p class="pre">{{ member.memo }}</p></details>{% endif %}
+        </td>
+      </tr>
+      {% if member.raw_features_text %}
+      <tr class="raw-row"><td colspan="7"><details><summary>{{ member.site_text }} の設備原文</summary><p class="pre raw">{{ member.raw_features_text }}</p></details></td></tr>
+      {% endif %}
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+
+{% if attrs %}
+<section class="panel">
+  <h2>掲載の原文項目（{{ site_text }}）</h2>
+  <details>
+    <summary>{{ attrs|length }}項目を表示</summary>
+    <table class="compact">
+      <tbody>
+      {% for attr in attrs %}
+        <tr><th scope="row">{{ attr.key }}</th><td class="pre">{{ attr.value }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </details>
+</section>
+{% endif %}
+{% endblock %}

@@ -34,6 +34,39 @@ def create_db_engine(url: str, *, echo: bool = False) -> Engine:
     )
 
 
+# ブラウザ閲覧画面（→ 課題#68）の1文あたりの上限（ミリ秒）。
+# ⚠ 定期スキャンと同じDBを読むので、重い絞り込みが居座って取得の upsert を
+#   待たせないよう、画面側を先に諦めさせる。
+WEB_STATEMENT_TIMEOUT_MS = 10_000
+# 開いたまま放置されたトランザクションを切る上限（ミリ秒）
+WEB_IDLE_IN_TRANSACTION_TIMEOUT_MS = 30_000
+# pg_stat_activity で定期スキャンのロック保持と見分けるための名前
+WEB_APPLICATION_NAME = "house-search-web"
+
+
+def create_web_engine(url: str) -> Engine:
+    """ブラウザ閲覧画面専用のエンジン。
+
+    ⚠ **取得ロック（``scraping_lock``）は取らない。** 閲覧は取得と排他しない。
+    ⚠ 接続数は小さく抑える（1人がローカルで見るだけ。定期スキャンの接続を圧迫しない）。
+    """
+    return create_engine(
+        url,
+        pool_pre_ping=True,
+        pool_size=2,
+        max_overflow=2,
+        pool_timeout=CONNECT_TIMEOUT_SEC,
+        connect_args={
+            "connect_timeout": CONNECT_TIMEOUT_SEC,
+            "application_name": WEB_APPLICATION_NAME,
+            "options": (
+                f"-c statement_timeout={WEB_STATEMENT_TIMEOUT_MS} "
+                f"-c idle_in_transaction_session_timeout={WEB_IDLE_IN_TRANSACTION_TIMEOUT_MS}"
+            ),
+        },
+    )
+
+
 @lru_cache(maxsize=1)
 def get_engine() -> Engine:
     """本番DBのエンジンを遅延生成して使い回す。"""

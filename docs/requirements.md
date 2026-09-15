@@ -165,6 +165,7 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 ### 4.1 プロセスモデル
 
 毎回起動 → 実行 → 終了。Windows タスクスケジューラーで定期実行（常駐しない）。
+例外はブラウザ閲覧画面（`web` → §4.5）で、見るときに前面で起動し Ctrl+C で止める（これも常駐しない）。
 
 ### 4.2 CLI
 
@@ -205,6 +206,7 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 | `commute-stats` | 通勤時間の分布を実測（best/worst を決める材料） | ✅ Phase 5C |
 | `hazard-stats` | ハザード評価の解決率と分布を実測（weight・best/worst を決める材料） | ✅ Phase 5I |
 | `dedup-stats` | サイト別のキー充足率・クロスサイト重複率・ユニーク率の実測 | ✅ Phase 4 |
+| `web` | ローカル限定のブラウザ閲覧画面を起動する（127.0.0.1 のみ・`--port` 既定 8765・`--open` でブラウザを開く・`--test-db` → §4.5） | ✅ 2026-09-15 |
 
 **Phase 2 で全コマンドが実装済みになった。**
 `scan` はアダプタ未実装のサイトと無効化されたサイトを「スキップ」として明示的に報告する
@@ -411,6 +413,32 @@ CSV も `period`/`acquired_on` が変わるので「更新されました」と�
 登録に `Register-ScheduledTask`（PowerShell の CIM 経由）は使わない。自分自身のタスクを
 登録するだけでも 0x80070005 で拒否されることがあるため、**XMLを UTF-16 で書き出して
 `schtasks /create /XML`** で登録する（UTF-8 だと読めない）。
+
+### 4.5 ブラウザ閲覧画面（課題#68・ADR 0026）
+
+**✅ 2026-09-15 に実装。** 実装は `src/house_search/web/`（Flask のサーバ側描画）と `src/house_search/marks.py`。
+起動は `.\scripts\run_web.ps1`（`.venv` の python で `house-search web --open` を前面で起動・Ctrl+C で終了）。
+
+| 画面 | URL | 内容 |
+|---|---|---|
+| 検索パターン一覧 | `/` | 7パターンの順位付き件数・お気に入り数・除外数・最終採点日時・採点設定と食い違う行の数 |
+| ランキング | `/patterns/<YAMLのファイル名>` | 保存済みの順位（`rank_in_pattern`）の一覧。50件ずつ。絞り込み: 価格（賃貸は賃料＋管理費）・面積（賃貸/マンションは専有・戸建ては建物・土地は土地面積）・駅徒歩と通勤（**採点に使った値** ＝ `score_breakdown` の `value`）・必須条件の判定・サイト・市区（IDで絞る）・お気に入りだけ・除外も表示。並べ替え7通り。行ごとに「★」「除外」を切り替えられる |
+| 物件の詳細 | `/patterns/<…>/listings/<掲載ID>` | 金額・条件（通知と同じ文言）・駅ごとの徒歩と通勤（打ち切らない）・保存済みのスコア内訳・必須条件の項目ごとの判定（現在の設定で判定し直す）・設備（グループの和集合）・ハザード（**未解決と区域外を書き分ける**）・同じ物件の全掲載（掲載終了も含む・掲載ページへのリンク・設備原文）・`type_specific_attrs` の原文・印とメモのフォーム |
+
+- **順位・採点は定期スキャンの保存値をそのまま表示し、画面で採点し直さない。** 一覧は `rank_in_pattern IS NOT NULL` で
+  引くので「グループ代表＋未グループ物件」に閉じる
+- **印（お気に入り・除外・メモ）は掲載ごとに保存し、同じ名寄せグループのどれか1件に印があれば物件全体に効かせる**
+  （`t_listing_marks` → §11.1）。⚠ グループIDには付けない（`sync_groups` の組み直しで黙って外れる）。
+  ⚠ チェックを外すと同じグループの他の掲載の同じ印も外れる。メモは掲載ごと・2,000字まで（超えたら切り詰めずに入力エラー）
+- **除外が効くのは閲覧画面の既定表示と日次ダイジェストだけ**（→ §9）。順位・採点・個別通知・成約確認は変えない
+- 待ち受けは **127.0.0.1 固定**（引数で変えられない）。**`Host` ヘッダの検証**（DNS リバインディング対策・外れたら 421）、
+  書き込みは POST だけで**起動ごとの CSRF トークン**と `Origin`／`Sec-Fetch-Site` を検証（外れたら 403）、
+  テンプレートは自動エスケープを強制し、リンクは http/https だけ、JavaScript を使わない CSP（`default-src 'none'`）
+- **取得ロックは取らない**（定期スキャンの最中に起動してよい）。閲覧は読み取り専用トランザクション・専用エンジン
+  （接続 2＋2・`statement_timeout` 10秒・`application_name=house-search-web`）
+- ⚠ flask は閲覧画面だけの依存。`cli` は `web` サブコマンドの中で遅延 import し、定期タスクの経路からは import しない。
+  ⚠ main の `.venv` への `uv sync` は定期スキャンが走っていない時間に行う（走行中のプロセスが同じ `.venv` を使っている）
+- 作らないもの（ユーザー判断 2026-09-15）: 新着履歴・運用状況の画面、スキャン・再採点の起動、常駐、サムネイル、通知から画面へのリンク
 
 ---
 
@@ -1221,6 +1249,12 @@ SHA256 を `config_hash` として保存し、不一致なら自動再スコア�
     （ダイジェストの1行にも出る）。アダプタが `type_specific_attrs` に真偽値で立て
     （`scrape/base.py` の `CAVEAT_LABELS`）、`load_listing_views` が `ListingView.caveats` へ読む。
     ⚠ **表示専用で、採点にも MUST にも使わない**（除外 MUST は件数を実測してから設計する）
+- ⚠⚠ **日次ダイジェストは、閲覧画面で除外した物件を飛ばして繰り上げる**（→ §4.5・課題#68・ADR 0026）。
+  除外は抽出 SQL の **LIMIT の前**で抜くので上位 N 件の N は保たれる（後から捨てると N 未満に減る）。
+  ⚠ **表示する順位は DB の順位のまま**（欠番が見える。閲覧画面・個別通知の「パターン内N位」と一致させる）。
+  ⚠ 同じ名寄せグループの非代表に付いた除外でも代表が飛ぶ（判定は `marks.mark_exists_sql` の1箇所）。
+  飛ばした件数は CLI が `（除外 N件を飛ばした）` と出す。全件が除外で空になった便は送らない（課題#28 と同じ）。
+  ⚠ 個別通知（新着・値下げ・成約・他サイト安値）と `check-sold` の対象選定には効かない
 - Discord制約: description 4096字/1embed、6000字/1メッセージ、10embed/1メッセージ
 
 ### 9.1 通知先の分割と順位による絞り込み（2026-09-05 ユーザー判断）
@@ -1361,6 +1395,7 @@ DDLは Alembic（`migrations/`）、マスタデータは `db/seed/*.sql`（冪�
 | `t_listing_features` | 掲載から抽出した設備・特性 |
 | `t_listing_scores` | パターン別スコア（内訳JSONB・`config_hash`） |
 | `t_listing_groups` | 同一**住戸**と判定した掲載のグループ（クロスサイト名寄せ）|
+| `t_listing_marks` | **掲載への手動の印**（お気に入り・除外・メモ → §4.5・ADR 0026）。`listing_id` 一意。⚠ **グループIDは持たない**（組み直しでIDが振り直され印が黙って外れるため）。効果は読み出し時に同じグループへ広げる。メモは CHECK 制約で2,000字まで |
 | `t_notifications` | 個別通知の送信履歴（追記専用） |
 | `t_ranking_digests` | ダイジェスト送信履歴（追記専用） |
 | `t_scrape_runs` | 実行チェックポイント（中断・再開用） |
@@ -1883,6 +1918,11 @@ f:\searching-for-houses\
 │   ├── notify/
 │   │   ├── discord.py          # Webhook送信
 │   │   └── format.py           # Embed・ダイジェスト整形
+│   ├── marks.py                # 印（お気に入り・除外・メモ）の読み書きとグループ横断の判定（§4.5）
+│   ├── web/                    # ブラウザ閲覧画面（Flask・127.0.0.1 限定 → §4.5・ADR 0026）
+│   │   ├── __init__.py         # create_app（Host・CSRF の検証・セキュリティヘッダ）
+│   │   ├── security.py / filters.py / queries.py / presenters.py / views.py / server.py
+│   │   └── templates/ / static/
 │   └── pipeline/
 │       ├── runtime.py          # 実行時オブジェクト一式
 │       ├── persist.py          # upsert・キュー・ログ
@@ -1900,6 +1940,7 @@ f:\searching-for-houses\
 │   ├── lib/utf8_output.ps1     # 運用スクリプト共通: 出力を UTF-8 に揃える（ログの cp932 混在を防ぐ）
 │   ├── task_runner.ps1         # タスクから呼ばれる実体（-Wait で待つ側）
 │   ├── backup_db.ps1           # pg_dump（14世代保持・課題#8）
+│   ├── run_web.ps1             # ブラウザ閲覧画面を前面で起動（§4.5）
 │   └── register_tasks.ps1      # タスクスケジューラ登録（schtasks /XML・要管理者）
 ├── tests/
 │   ├── test_metrics.py
@@ -1932,6 +1973,7 @@ f:\searching-for-houses\
 | `httpx` | HTTP取得 |
 | `lxml` + `cssselect` | HTMLパース（CSSセレクタ） |
 | `pyyaml` | YAML読み込み |
+| `flask` 3.x | ブラウザ閲覧画面（§4.5）。⚠ 閲覧画面だけの依存で、定期タスクの経路からは import しない |
 | 開発: `pytest` / `pytest-cov` / `ruff` | テスト・lint |
 
 パッケージ管理は `uv`（`uv sync` / `uv run`）。

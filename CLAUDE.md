@@ -67,6 +67,7 @@ uv run house-search sync-market-rates --buy  # 売買の㎡単価相場（buy_ra
 uv run house-search dedup-stats            # サイト別の重複率・ユニーク率（ネットワーク不要）
 uv run house-search scan --seed --site CHINTAI_EX   # 無効化サイトの観測モード
 uv run house-search scan --detail-limit 800         # 詳細取得の上限を上書き（既定40 / --full時400）
+uv run house-search web --test-db          # ブラウザ閲覧画面をテストDBで起動（127.0.0.1:8765・Ctrl+C で終了 → 課題#68）
 ```
 
 運用スクリプト（PowerShell 5.1。1行ずつ実行する。`&&` は使えない）:
@@ -78,6 +79,7 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
 .\scripts\run_initial_scan.ps1 -Site NIFTY    # 1サイトだけ取り直す（切り離して起動）
 .\scripts\run_fetch_commutes.ps1              # 通勤時間の実ダイヤ取得（切り離して起動・約4.8時間）
 .\scripts\run_fetch_commutes.ps1 -Regions 北海道,東北  # 複数地方を順に（各地方の後に re-segment まで行う）
+.\scripts\run_web.ps1                         # ブラウザ閲覧画面（前面で起動・ブラウザを開く・Ctrl+C で終了 → ADR 0026）
 .\scripts\backup_db.ps1                       # pg_dump（14世代保持）
 .\scripts\update_market_rates.ps1            # 家賃相場の月次更新（全国・取得→CSV→DB・約90分）
 .\scripts\update_market_rates.ps1 -SkipFetch # 保存済みHTMLから作り直すだけ
@@ -620,6 +622,20 @@ uv run house-search scan --detail-limit 800         # 詳細取得の上限を�
   落とすのは `〈〉` と `()` だけなので、`strip_station_note` を別に通す
 - **駅名の照合を直したら `re-segment`。** 経路の原文から区間を作り直せるので
   4.8時間の再取得は要らない（設備の `re-extract` と同じ位置づけ）
+- ⚠⚠ **閲覧画面の印（お気に入り・除外・メモ）はグループIDに付けない**（→ ADR 0026・課題#68）。`sync_groups` は
+  メンバー0件のグループを消し、組み直しでIDが振り直されうるので、付けると**印が黙って外れる**。`t_listing_marks` は
+  `listing_id` に付け、グループへの効果は読み出し時に導く。⚠ 「同じグループのどれか1件に印」の判定は
+  `marks.mark_exists_sql` の1箇所（閲覧画面の一覧と日次ダイジェストが共用。片方だけ変えると画面とダイジェストが食い違う）
+- ⚠⚠ **ダイジェストの除外は LIMIT の前で抜く**（後から捨てると上位N件が減る）。順位（`rank_in_pattern`）・採点・
+  個別通知・`check-sold` には効かせない。⚠ `t_listing_marks` を読むので、**本番DBへのマイグレーションは main への
+  マージより前**に流す（逆だと 20:00 のダイジェストが落ちる）
+- ⚠ **閲覧画面（`web/`）はローカル限定でも `Host` ヘッダと CSRF トークンを検証する**（悪意あるサイトを開いたブラウザが
+  127.0.0.1 を読み書きできる → DNS リバインディング・CSRF）。⚠ テンプレートに `|safe` を足さない（物件名・設備原文は
+  スクレイピング由来。`tests/test_web_security.py` が禁止を固定）。⚠ JavaScript・インラインスタイルは CSP で止まる
+- ⚠ **flask は閲覧画面だけの依存。** 定期タスクの経路（`scan` / `digest` など）から `house_search.web` や flask を
+  モジュール先頭で import しない（`cli._cmd_web` だけが遅延 import。AST テストが固定）。
+  ⚠ main の `.venv` への `uv sync` は**走行中の python が無いことを確かめてから**（定期タスクは同じ `.venv` を使う）。
+  `run_web.ps1` が `uv run` ではなく `.venv` の python を直接呼ぶのも同じ理由（`uv run` は起動のたびに同期しうる）
 
 ## AI回答方針
 - 複数実装がある場合はトレードオフを説明してから推奨案を提示する
