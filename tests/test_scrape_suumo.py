@@ -34,8 +34,13 @@ def scraper() -> SuumoScraper:
 
 
 @pytest.fixture(scope="module")
-def listings(scraper: SuumoScraper):
-    return scraper.parse_list((FIXTURES / "list_page1.html").read_text(encoding="utf-8"))
+def list_html() -> str:
+    return (FIXTURES / "list_page1.html").read_text(encoding="utf-8")
+
+
+@pytest.fixture(scope="module")
+def listings(scraper: SuumoScraper, list_html: str):
+    return scraper.parse_list(list_html)
 
 
 @pytest.fixture(scope="module")
@@ -175,6 +180,23 @@ def test_ページ番号の付与と最終ページ判定(scraper: SuumoScraper)
     assert scraper.page_url("https://x/?a=1", 3).endswith(f"&pc={PAGE_SIZE}&pn=3")
     assert scraper.is_last_page(PAGE_SIZE - 1) is True
     assert scraper.is_last_page(PAGE_SIZE) is False
+
+
+def test_最終ページ番号をページ送りから読む(scraper: SuumoScraper, list_html: str) -> None:
+    """⚠⚠ ``is_last_page`` は住戸数と建物数の単位が違うので発火しない（→ 課題#69）。
+
+    ``max_pages_per_run`` を 40 へ上げたので、止める役は ``last_page`` が担う。
+    ⚠ サイト内のリンクは ``page=`` だが、こちらが送るのは ``pn=``。両方読めること。
+    """
+    assert scraper.last_page(list_html) == 1678
+
+    # ⚠ 最終ページでは自分の番号がリンクにならない。現在ページ側から読めること
+    only_current = '<div class="pagination-current">32</div>'
+    assert scraper.last_page(only_current) == 32
+    # 自分が送る pn= も読む（サイト内リンクは page= だが、保存した応答には両方ありうる）
+    assert scraper.last_page('<a href="/x/?ar=030&pn=7">7</a>') == 7
+    # ページ送りが無ければ None（従来の判定に委ねる）
+    assert scraper.last_page("<div>ページ送りなし</div>") is None
 
 
 # --- 一覧パース ----------------------------------------------------------

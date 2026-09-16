@@ -157,6 +157,43 @@ def test_相場の更新タスクどうしは同じ日に走らない(register_t
     assert rent_day != buy_day, "家賃相場と売買相場の更新日が同じです"
 
 
+def _start_hour_minute(start_at: str) -> tuple[int, int]:
+    """``StartAt`` の時刻部分を (時, 分) で返す。"""
+    hour, minute, _ = start_at.split("T")[1].split(":")
+    return int(hour), int(minute)
+
+
+def test_週次の棚卸しは増分スキャンの走行帯に重ねない(register_text: str) -> None:
+    """⚠⚠ 02:00 起点だった間、週次の棚卸しは**毎週まるごと飛んでいた**（→ 課題#69）。
+
+    01:15 起点の増分スキャンは実測約72分（＝02:27頃まで）走るので、02:00 に起動した
+    棚卸しは取得ロックを取れずに終わる。⚠ **そのとき終了コードは 0 で、ログも
+    「他の取得処理が実行中のためスキップしました」の1行だけ**なので、タスクの結果や
+    ログを見ても気づけない（実測 2026-09-06・09-13 の2回とも）。実害は
+    ``t_scrape_runs`` の ``mode='full'`` が**全サイト・全パターンで0件**という形でしか出ない。
+    """
+    starts = dict(
+        zip(
+            re.findall(r'Name\s*=\s*"([^"]+)"', register_text),
+            re.findall(r'StartAt\s*=\s*"([^"]+)"', register_text),
+            strict=True,
+        )
+    )
+    scan_hour, scan_minute = _start_hour_minute(starts["HouseSearch-Scan"])
+    sweep_hour, sweep_minute = _start_hour_minute(starts["HouseSearch-Sweep"])
+
+    # 増分スキャンの起動分（:15）から所要約72分ぶんは走っている。棚卸しは
+    # その後（:30 以降）に始め、増分の起動時そのものとも重ねない
+    assert sweep_minute >= scan_minute + 15, (
+        f"棚卸し {sweep_hour:02d}:{sweep_minute:02d} が増分スキャン"
+        f"（{scan_minute:02d}分起点・約72分）の走行帯に入っています"
+    )
+    assert (sweep_hour - scan_hour) % 2 == 1, (
+        f"棚卸し {sweep_hour:02d}時 が増分スキャン（{scan_hour:02d}時起点・2時間ごと）の"
+        "起動時刻と同じ時です"
+    )
+
+
 def test_取得を伴うタスクは無効で登録される(register_text: str) -> None:
     """⚠ 国交省APIを叩くので取得タスク扱い（-EnableScraping の対象に入れる）。"""
     block = re.search(r'Name\s*=\s*"HouseSearch-BuyMarketRates".*?TimeLimit', register_text, re.S)

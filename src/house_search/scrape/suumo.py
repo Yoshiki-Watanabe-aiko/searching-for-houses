@@ -73,6 +73,9 @@ PREFECTURE_JIS: dict[str, str] = {
 
 # 詳細URLに付く物件ID。一覧のチェックボックス value と同じ値になる
 _BC_PARAM = re.compile(r"[?&]bc=(\d+)")
+# ページ送りリンクのページ番号。⚠ サイト内のリンクは ``page=`` で出るが、
+# こちらが送るのは ``pn=``（同じ意味）なので両方を読む
+_PAGE_PARAM = re.compile(r"[?&](?:page|pn)=(\d+)")
 # 成約・掲載終了ページに出る文言
 _SOLD_MARKERS = ("この物件は掲載が終了", "掲載を終了", "ご覧いただけません", "お探しの物件は")
 
@@ -143,12 +146,53 @@ class SuumoScraper:
         return urls
 
     def page_url(self, base_url: str, page: int) -> str:
-        """一覧URLへページ番号を付ける。"""
+        """一覧URLへページ番号を付ける。
+
+        ⚠ ``pn`` は売買4アダプタの ``page`` と**同じ意味**（実測 2026-09-16・足立区。
+        ``pn=2`` と ``page=2`` が同じ住戸を返し、1ページ目との重なりは 0/40 だった）。
+        サーバはページ番号をHTML末尾のコメントに echo するので、疑ったらそこを見る。
+        """
         return f"{base_url}&pc={PAGE_SIZE}&pn={page}"
 
     def is_last_page(self, count: int) -> bool:
-        """1ページに満たない件数しか返らなければ最終ページ。"""
+        """1ページに満たない件数しか返らなければ最終ページ。
+
+        ⚠⚠ **``count`` は住戸数だが ``pc``（＝``PAGE_SIZE``）は建物数の指定**なので、
+        この判定はほぼ発火しない（1建物に複数住戸があり、実測で30建物から40〜72住戸）。
+        最終ページの検出は ``last_page``（下）が担う。ここは「ページ送りのフックを
+        持たないサイトと同じ既定の振る舞い」を残すためだけに置いてある。
+        """
         return count < PAGE_SIZE
+
+    def last_page(self, html_text: str) -> int | None:
+        """一覧のページ送りから最終ページ番号を読む（任意フック → ADR 0019 の型）。
+
+        ⚠⚠ **これが無いと ``max_pages_per_run`` を上げた意味が薄れる。**
+        ``is_last_page`` が住戸数で判定していて発火しないため、上限まで機械的に
+        叩き続ける。実測（2026-09-16・足立区・該当8,939件）の最終ページは
+        ``pc=30`` で **32ページ**・``pc=50`` で19ページなので、上限を40にすると
+        市区あたり最大8本が**最終ページの先へ向かう無駄打ち**になる。
+        ⚠ 最終ページを超えたときサーバが何を返すか（0件／1ページ目へ戻る／
+        エラーページ）は**測っていない**。1ページ目へ戻るなら重複が静かに増えるだけで
+        例外にならないので、超えないように止める。
+
+        ⚠ **``SiteScraper`` Protocol には足さない**（既存17アダプタに実装義務が
+        生じる。``collect_listings`` / ``fetch_detail`` と同じ任意フックとして
+        ``pipeline.scan`` が ``getattr`` で見る）。
+        """
+        doc = lxml_html.fromstring(html_text)
+        pages = {
+            int(match.group(1))
+            for anchor in doc.cssselect("a[href]")
+            if (match := _PAGE_PARAM.search(anchor.get("href") or ""))
+        }
+        # 「現在のページ」はリンクにならないので、最終ページでは自分の番号が
+        # リンク集合に入らない。現在ページも候補に混ぜる
+        for node in doc.cssselect(".pagination-current"):
+            text = node.text_content().strip()
+            if text.isdigit():
+                pages.add(int(text))
+        return max(pages) if pages else None
 
     def parse_list(self, html_text: str) -> list[ScrapedListing]:
         """一覧ページHTMLから掲載を取り出す。
