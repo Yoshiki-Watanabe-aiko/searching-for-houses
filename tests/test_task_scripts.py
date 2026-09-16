@@ -277,7 +277,8 @@ def test_pythonを呼ぶ運用スクリプトは出力をUTF8に揃える() -> N
     `scripts/*.ps1` から機械的に拾う（test_console_utf8.py と同じ考え方）。
     """
     callers = _python_callers()
-    assert len(callers) >= 4, f"python を呼ぶスクリプトの検出が壊れている: {[p.name for p in callers]}"
+    names = [p.name for p in callers]
+    assert len(callers) >= 4, f"python を呼ぶスクリプトの検出が壊れている: {names}"
 
     missing = [p.name for p in callers if "Set-Utf8ConsoleOutput" not in _read(p)]
     assert not missing, f"出力を UTF-8 に揃えていない（ログが混在する）: {missing}"
@@ -296,7 +297,9 @@ def test_夜間バッチも出力をUTF8に揃える() -> None:
 def test_UTF8の共通処理はBOMなしで出力を揃える() -> None:
     """⚠ 共通処理そのものは BOM 付き UTF-8（日本語コメントを 5.1 に読ませるため）。"""
     raw = UTF8_LIB.read_bytes()
-    assert raw.startswith(b"\xef\xbb\xbf"), "BOM が無い（PowerShell 5.1 が cp932 として読み構文が壊れる）"
+    assert raw.startswith(
+        b"\xef\xbb\xbf"
+    ), "BOM が無い（PowerShell 5.1 が cp932 として読み構文が壊れる）"
 
     text = _read(UTF8_LIB)
     assert "function Set-Utf8ConsoleOutput" in text
