@@ -30,6 +30,7 @@ REFERRING_FILES = [
     DOCS / "requirements.md",
     DOCS / "再設計計画.md",
     REPO / "CLAUDE.md",
+    *sorted((REPO / ".claude" / "rules").glob("*.md")),
     *sorted(ADR_DIR.glob("*.md")),
 ]
 
