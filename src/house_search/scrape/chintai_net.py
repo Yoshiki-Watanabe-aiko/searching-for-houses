@@ -319,7 +319,7 @@ class ChintaiNetScraper:
         """管理費。「11.8万円10,000円」の後半を読む。
 
         ⚠ **「32.5万円--」のように ``--`` のことがある。** SUUMO の「-」と同じく
-        0円として扱う（→ CLAUDE.md）。⚠ 「非公開」の意味かは**測れていない**。
+        0円として扱う（→ .claude/rules/scrape-sites.md）。⚠ 「非公開」の意味かは**測れていない**。
         """
         found = cells.cssselect("td.price")
         if not found:
