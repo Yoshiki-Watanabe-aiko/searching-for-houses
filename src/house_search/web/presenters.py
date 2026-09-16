@@ -23,6 +23,7 @@ from house_search.config.metrics import METRICS_BY_NAME
 from house_search.notify.format import (
     NotifiableListing,
     man_yen,
+    market_rate_body,
     price_field,
     price_summary,
     summary_line,
@@ -383,6 +384,16 @@ def attr_items(attrs: Mapping[str, Any] | None) -> list[AttrItem]:
 def price_block(prop: NotifiableListing) -> tuple[str, str]:
     """詳細の金額欄。通知と同じ見出し・本文（改行はテンプレートの CSS で出す）。"""
     return price_field(prop)
+
+
+def market_rate_block(prop: NotifiableListing) -> str:
+    """詳細の周辺相場欄（→ 課題#70）。⚠ 本文は通知と同じ関数を使う。
+
+    画面と通知で別々に組み立てると、片方だけ直したときに**同じ物件の相場が
+    画面と通知で食い違う**（印の判定を `marks.mark_exists_sql` の1箇所に
+    まとめてあるのと同じ理由 → 課題#68）。
+    """
+    return market_rate_body(prop)
 
 
 @dataclass(frozen=True, slots=True)

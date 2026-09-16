@@ -55,6 +55,26 @@ class StationAccess:
 
 
 @dataclass(frozen=True, slots=True)
+class MarketRateRef:
+    """採点に使った相場の行そのもの。**表示専用**で採点には使わない。
+
+    ⚠ 採点が読むのは ``ListingView.market_rate_ratio`` **だけ**である。
+    ここは「その比が何と比べた結果なのか」を通知・閲覧画面で説明するために持つ。
+    metric にしてはいけない（比と相場は同じ情報なので、価格軸に二重の重みが
+    掛かる。``notify.format.LOAN_ANNUAL_RATE`` のコメントと同じ趣旨）。
+
+    ⚠ **単位は ``segment`` が示す。** 賃貸（間取りの区分）は円/月、
+    売買（``AREA_SQM`` / ``FLOOR_SQM`` / ``LAND_SQM``）は円/㎡である。
+    取り違えても例外にならず、桁だけが静かに狂う。
+    """
+
+    rate_value: float
+    segment: str
+    stat_basis: str
+    period: str
+
+
+@dataclass(frozen=True, slots=True)
 class ListingView:
     """1物件の採点に必要な属性一式。
 
@@ -123,6 +143,21 @@ class ListingView:
     母集団の分布に合わせないと配点が死ぬ（→ 課題#31）。
     ⚠ 相場は市区・間取りによって**マンションの相場とアパートの相場が混ざる**
     （マンションに無いセルはアパートで補完している → 課題#49）。
+    """
+
+    market_rate: MarketRateRef | None = None
+    """``market_rate_ratio`` の分母に使った相場の行。**表示専用**（→ 課題#70）。
+
+    ⚠ **``None`` は「相場が引けなかった」の意味**で、0 とは違う
+    （ハザードの「区域外」と「未解決」を混ぜないのと同じ → ADR 0021 決定4）。
+    ⚠ 比が ``None`` でもこちらは入りうる（相場はあるが分子＝賃料や面積が無い場合）。
+    逆は無い。通知はこの2つを別々に見て文言を変える。
+    """
+    city_name: str | None = None
+    """相場を引いた市区の名称（``m_cities.canonical_name``）。**表示専用**。
+
+    ⚠ ``address`` から読み取らせない。政令市は「横浜市西区」と行政区まで入るが、
+    住所が町名までしか無いサイトもあり、読者が市区を一意に特定できない。
     """
 
     prefecture: str | None = None

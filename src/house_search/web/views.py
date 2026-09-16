@@ -201,6 +201,7 @@ def listing(slug: str, listing_id: int) -> str:
         commute_destination=destination,
     )
     price_title, price_body = presenters.price_block(prop)
+    market_rate_text = presenters.market_rate_block(prop)
     own_mark = member_marks.get(listing_id)
     return render_template(
         "listing.html",
@@ -224,6 +225,7 @@ def listing(slug: str, listing_id: int) -> str:
         scored_at_text=presenters.format_datetime(score.scored_at if score else None),
         price_title=price_title,
         price_body=price_body,
+        market_rate_text=market_rate_text,
         summary_text=summary_line(prop),
         destination=destination,
         stations=presenters.station_items(view),

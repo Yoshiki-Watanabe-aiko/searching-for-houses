@@ -18,7 +18,7 @@ from typing import Any
 
 from sqlalchemy import Connection, text
 
-from house_search.scoring.listing_view import ListingView, StationAccess
+from house_search.scoring.listing_view import ListingView, MarketRateRef, StationAccess
 from house_search.scoring.utility import UtilityProfile, estimate_utility
 from house_search.scrape.base import (
     BUILD_CONDITION_ATTR_KEY,
@@ -1013,36 +1013,25 @@ _PROPERTY_COLUMNS = """
     )) AS commute_minutes,
     hz.flood_rank_avg, hz.flood_rank_max, hz.flood_area_ratio,
     hz.landslide_area_ratio, hz.landslide_special_ratio, hz.liquefaction_rank_avg,
-    (
-        -- 相場との比較（→ 課題#49）。同じ市区の相場と比べる。
-        -- 賃貸は「月額 ÷ 間取りごとの家賃相場」、売買は「㎡単価 ÷ 市区の㎡単価相場」。
-        -- ⚠ **最新の period を1つだけ採る。** m_market_rates は履歴を残す設計
-        -- （period が違えば別の行）なので、絞らないと古い相場と混ざる。
-        -- ⚠ 相場が無いセルは NULL＝未解決。metric は欠損として再正規化される
-        -- （0 にすると「相場ちょうど」と区別がつかなくなる）。
-        -- ⚠⚠ **分子と segment は必ず対にする。** 面積の取り違え（専有↔延床）は
-        -- 例外にならず、比の水準だけが静かにずれる。
-        -- ⚠ 戸建ては**延床**で比べる。土地単価は市区中央値が 7,447〜5,692,308 円/㎡ と
-        -- 765倍に広がり（延床は132倍）、狭小地の都心で跳ねる。順位はどちらでも
-        -- ほぼ同じ（市区の順位相関 r=0.985・2026-09-08 実測）なので安定する方を採る。
-        -- ⚠ 未知のファミリは NULL にする（黙って別の面積で割らない）。
-        SELECT CASE pt.family
-                   WHEN 'CHINTAI' THEN p.rent_total::numeric
-                   WHEN 'MANSION_BUY' THEN p.price::numeric / NULLIF(p.area_sqm, 0)
-                   WHEN 'KODATE_BUY' THEN p.price::numeric / NULLIF(p.building_area_sqm, 0)
-               END / mr.rate_value
-        FROM m_market_rates mr
-        WHERE mr.family = pt.family
-          AND mr.level = 'city'
-          AND mr.city_id = p.city_id
-          AND mr.segment = CASE pt.family
-                               WHEN 'CHINTAI' THEN p.layout
-                               WHEN 'MANSION_BUY' THEN 'AREA_SQM'
-                               WHEN 'KODATE_BUY' THEN 'FLOOR_SQM'
-                           END
-        ORDER BY mr.period DESC
-        LIMIT 1
-    ) AS market_rate_ratio
+    -- 相場との比較（→ 課題#49）。同じ市区の相場と比べる。
+    -- 賃貸は「月額 ÷ 間取りごとの家賃相場」、売買は「㎡単価 ÷ 市区の㎡単価相場」。
+    -- ⚠⚠ **分子と segment は必ず対にする。** 面積の取り違え（専有↔延床）は
+    -- 例外にならず、比の水準だけが静かにずれる。相場の行の選び方は _MARKET_LATERAL 側。
+    -- ⚠ 未知のファミリは NULL にする（黙って別の面積で割らない）。
+    CASE pt.family
+        WHEN 'CHINTAI' THEN p.rent_total::numeric
+        WHEN 'MANSION_BUY' THEN p.price::numeric / NULLIF(p.area_sqm, 0)
+        WHEN 'KODATE_BUY' THEN p.price::numeric / NULLIF(p.building_area_sqm, 0)
+    END / mr.rate_value AS market_rate_ratio,
+    -- 以下は**表示専用**（→ 課題#70）。採点は上の比だけを読む。
+    -- ⚠ 比が NULL でもこの4つは入りうる（相場はあるが分子＝賃料・面積が無い場合）。
+    -- 通知はその2つを区別して「比較不可」と「相場不明」を書き分ける。
+    mr.rate_value AS market_rate_value,
+    mr.segment AS market_rate_segment,
+    mr.stat_basis AS market_rate_basis,
+    mr.period AS market_rate_period,
+    -- ⚠ 市区名は住所から読み取らせない（政令市の行政区・町名までのサイトで曖昧になる）。
+    mc.canonical_name AS city_name
 """
 
 
@@ -1133,6 +1122,43 @@ _HAZARD_LATERAL = """
         FROM m_hazard_levels h
         WHERE h.normalized_key = hzk.key AND h.level = hzk.level
     ) hz ON TRUE
+"""
+
+
+# 相場（m_market_rates）の1行を選ぶ（→ 課題#49・#70）。
+# ⚠ **LATERAL にしてあるのは、比と相場の値を同じ1行から採るため。**
+#   スカラーサブクエリを2本並べると、同じ「どの行を採るか」の解決を2回書くことになり、
+#   片方だけ直したときに**比と注記が食い違っても例外にならない**。
+# ⚠ **最新の period を1つだけ採る。** m_market_rates は履歴を残す設計
+#   （period が違えば別の行）なので、絞らないと古い相場と混ざる。
+# ⚠ 相場が無いセルは NULL＝未解決。metric は欠損として再正規化される
+#   （0 にすると「相場ちょうど」と区別がつかなくなる）。
+# ⚠ 戸建ては**延床**で比べる。土地単価は市区中央値が 7,447〜5,692,308 円/㎡ と
+#   765倍に広がり（延床は132倍）、狭小地の都心で跳ねる。順位はどちらでも
+#   ほぼ同じ（市区の順位相関 r=0.985・2026-09-08 実測）なので安定する方を採る。
+# ⚠ **TOCHI_BUY は CASE に無いので常に NULL＝未収録**（課題#61 の 9d が未着手）。
+#   9d で土地の相場を入れるときは、ここの CASE と
+#   `notify.format.SEGMENT_AREA` の LAND_SQM 行の**両方**を触ること。
+# ⚠ ORDER BY に source を足してあるのは同着の決定性のため。今は family ごとに
+#   取得元が1つなので、結果はこの行が無かったときと同じである。
+_MARKET_LATERAL = """
+    LEFT JOIN LATERAL (
+        SELECT mr.rate_value, mr.segment, mr.stat_basis, mr.period
+        FROM m_market_rates mr
+        WHERE mr.family = pt.family
+          AND mr.level = 'city'
+          AND mr.city_id = p.city_id
+          AND mr.segment = CASE pt.family
+                               WHEN 'CHINTAI' THEN p.layout
+                               WHEN 'MANSION_BUY' THEN 'AREA_SQM'
+                               WHEN 'KODATE_BUY' THEN 'FLOOR_SQM'
+                           END
+        ORDER BY mr.period DESC, mr.source
+        LIMIT 1
+    ) mr ON TRUE
+    -- ⚠ 相場の有無と独立に市区名を取る（相場が無くても市区名は出したい）。
+    -- ⚠ 別名を mc にしてあるのは、city_names の EXISTS が内側で c を使っているため。
+    LEFT JOIN m_cities mc ON mc.id = p.city_id
 """
 
 
@@ -1235,6 +1261,23 @@ def _opt_float(value: Any) -> float | None:
     return None if value is None else float(value)
 
 
+def _market_rate_ref(row: Any) -> MarketRateRef | None:
+    """採点に使った相場の行を**表示専用**の値へ詰め替える（→ 課題#70）。
+
+    ⚠ **``rate_value`` の有無だけで判定する。** 比（``market_rate_ratio``）が
+    None でも相場そのものは引けていることがあり（賃料や面積が無い掲載）、
+    そこを混ぜると通知が「相場不明」と「比較不可」を書き分けられなくなる。
+    """
+    if row.market_rate_value is None:
+        return None
+    return MarketRateRef(
+        rate_value=float(row.market_rate_value),
+        segment=row.market_rate_segment,
+        stat_basis=row.market_rate_basis,
+        period=row.market_rate_period,
+    )
+
+
 def _to_view(
     row: Any,
     feature_codes: frozenset[str],
@@ -1261,6 +1304,8 @@ def _to_view(
         walk_minutes=row.walk_minutes,
         commute_minutes=row.commute_minutes,
         market_rate_ratio=_opt_float(row.market_rate_ratio),
+        market_rate=_market_rate_ref(row),
+        city_name=row.city_name,
         flood_rank_avg=_opt_float(row.flood_rank_avg),
         flood_rank_max=_opt_float(row.flood_rank_max),
         flood_area_ratio=_opt_float(row.flood_area_ratio),
@@ -1344,7 +1389,7 @@ def load_listing_views(
             f"SELECT {_PROPERTY_COLUMNS} FROM t_listings p "
             "JOIN m_sites s ON s.id = p.site_id "
             "JOIN m_property_types pt ON pt.id = p.property_type_id "
-            f"{_ACCESS_LATERAL} {_HAZARD_LATERAL} "
+            f"{_ACCESS_LATERAL} {_HAZARD_LATERAL} {_MARKET_LATERAL} "
             f"WHERE {' AND '.join(where)}"
         ),
         params,
