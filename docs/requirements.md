@@ -228,7 +228,7 @@ v1 の実装は `legacy-go` ブランチ / `v1-go-final` タグに保全して�
 |---|---|---|---|
 | `HouseSearch-Scan` | **2時間ごと・01:15起点** | `task_runner.ps1 -Task scan`（`scan --family CHINTAI`・**賃貸のみ**） | PT1H50M |
 | `HouseSearch-ScanBuy` | **毎日 10:25** | `-Task scan-buy`（`scan --family MANSION_BUY --family KODATE_BUY --family TOCHI_BUY --detail-limit 200` → `check-sold`〈同〉`--limit 10 --top-rank-limit 30`） | PT1H40M |
-| `HouseSearch-Sweep` | **毎週日曜 02:00** | `-Task sweep`（`scan --full`・全パターン） | PT10H |
+| `HouseSearch-Sweep` | **毎週日曜 02:35** | `-Task sweep`（`scan --full`・全パターン） | PT10H |
 | `HouseSearch-CheckSold` | **毎日 08:40** | `-Task check-sold`（`--family CHINTAI`・**賃貸のみ**） | PT1H |
 | `HouseSearch-Digest` | 毎日 20:00 | `-Task digest` | PT30M |
 | `HouseSearch-Backup` | 毎日 03:30 | `-Task backup` → `backup_db.ps1` | PT30M |

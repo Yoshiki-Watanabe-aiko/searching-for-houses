@@ -345,6 +345,14 @@ def _collect_listings(
                 # **原因を取り違えたエラー**が出るだけで切り分けの役に立たない
                 if getattr(scraper, "city_rotation_limit", None) is None:
                     blackout = _check_filter_blackout(scraper, fetcher, plain_url, outcome)
+            # ⚠ **最終ページを超えて叩かない**（任意フック ``last_page`` → 課題#69）。
+            # SUUMO 賃貸の ``is_last_page`` は住戸数と建物数の単位が違うため発火せず、
+            # ``max_pages_per_run`` まで機械的に叩いてしまう。⚠ 最終ページの先が
+            # 何を返すかは測っていないので、**1ページ目へ戻る＝重複が静かに増える**
+            # 可能性を潰すために手前で止める
+            last_page = _last_page(scraper, response.text)
+            if last_page is not None and page >= last_page:
+                break
             if scraper.is_last_page(len(listings)):
                 break
     # ⚠⚠ **申告するのは「そのサイトから1件も取れなかったとき」だけ**
@@ -360,6 +368,24 @@ def _collect_listings(
     if blackout and not collected:
         outcome.errors.append(blackout)
     return collected
+
+
+def _last_page(scraper, html_text: str) -> int | None:
+    """アダプタが ``last_page`` を宣言していれば最終ページ番号を読む（→ 課題#69）。
+
+    ``collect_listings`` / ``fetch_detail`` と同じ**宣言ベースの任意フック**なので、
+    持たないアダプタは従来どおり ``is_last_page`` だけで止まる（→ ADR 0019）。
+
+    ⚠ **解析の失敗でページ送りを止めない。** 読めなければ None を返して
+    従来の判定に委ねる（ページ送りの都合でその市区の取得を落とすのは本末転倒）。
+    """
+    hook = getattr(scraper, "last_page", None)
+    if hook is None:
+        return None
+    try:
+        return hook(html_text)
+    except Exception:  # noqa: BLE001 - ページ送りの読み損ないで取得を止めない
+        return None
 
 
 def _check_filter_blackout(

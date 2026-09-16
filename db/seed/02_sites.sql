@@ -45,7 +45,7 @@ INSERT INTO m_sites (
     min_interval_sec, max_pages_per_run, daily_request_cap,
     representative_priority, notes
 ) VALUES
-    ('SUUMO',      'SUUMO',           'https://suumo.jp',          'HTTP',       TRUE,  2.5, 5, NULL,  10, NULL),
+    ('SUUMO',      'SUUMO',           'https://suumo.jp',          'HTTP',       TRUE,  2.5, 40, NULL,  10, '⚠ max_pages_per_run が 5 だと賃貸を網羅できない。実測 2026-09-16（足立区・MUST のフィルタ込みで該当8,939件）の一覧は pc=30 で32ページあり、5ページでは市区の16%しか見えない。40 は「実測の最終ページ32」に余裕を持たせた値で、最終ページの検出（アダプタの last_page）が先に止めるので無駄打ちにはならない（→ 課題#69）'),
     ('HOMES',      'LIFULL HOME''S',  'https://www.homes.co.jp',   'HTTP',       TRUE,  2.5, 5, NULL,  20, '1回の実行で5リクエストが上限。6件目からHTTP 202＋空ボディになる。⚠ 間隔を広げても上限は動かない（4秒でも10秒でも6件目・実測 2026-09-03）ので、10.0秒へ広げた対策を Phase 5E で 2.5秒へ戻した。取得量は市区ローテーション（1回5市区・次回は続きから）で確保する（→ 課題#17・#36）'),
     ('ATHOME',     'アットホーム',     'https://www.athome.co.jp',  'HTTP',       TRUE,  6.0, 5, NULL,  30, '1回の実行で4リクエストが上限。5件目からパズル認証のページ（HTTP 200・8KB）になる。⚠ 1件目は正常に返るので単発の疎通確認では再現できない。Phase 5E で市区ローテーション（1回4市区）を入れて is_active=true へ戻した（→ 課題#20・#36）'),
     ('NIFTY',      'ニフティ不動産',   'https://myhome.nifty.com',  'HTTP',       TRUE,  3.0, 5, NULL,  40, '他社サイトの掲載を集約するポータル。市区指定が必須。外部ドメインへ飛ぶ掲載は取り込まない'),
