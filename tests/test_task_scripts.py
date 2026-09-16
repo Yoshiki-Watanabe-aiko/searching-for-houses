@@ -317,3 +317,40 @@ def test_進捗の追い方はUTF8で読ませる() -> None:
         for line in _read(path).splitlines():
             if "Get-Content" in line and "-Wait" in line:
                 assert "-Encoding UTF8" in line, f"{path.name}: {line.strip()}"
+
+
+def test_有効化だけで早期終了するのはEnableOnlyのときだけ(register_text: str) -> None:
+    """⚠⚠ -EnableScraping に「有効化だけ」を持たせると定義が反映されない（→ 課題#71）。
+
+    2026-09-16 に実際に踏んだ。棚卸しの時刻を 02:00 → 02:35 に直したあと
+    ``-EnableScraping`` で流したが、当時はそれが「登録済みなら有効化して exit 0」の
+    専用モードだったため **schtasks /create に一度も到達せず**、タスクは 02:00 のまま
+    残っていた。⚠ **画面には「[有効化] …」と成功メッセージが並ぶので失敗に見えない。**
+    """
+    block = re.search(r"^if \(\$Enable(\w+)\) \{(.*?)^\}", register_text, re.S | re.M)
+    assert block, "有効化だけを行うブロックが読めません"
+    assert block.group(1) == "Only", (
+        "有効化だけのモードは -EnableOnly に限ること"
+        f"（いまは -Enable{block.group(1)} で早期終了する）"
+    )
+    assert "exit 0" in block.group(2), "有効化だけのブロックが早期終了していません"
+    # 登録の実行（schtasks /create の呼び出し）はこのブロックより後ろにあること
+    assert register_text.index("& schtasks.exe /create") > block.end()
+
+
+def test_自己昇格はスイッチを子へ引き継ぐ(register_text: str) -> None:
+    """⚠ 引き継ぎ漏れは**昇格後に黙って無視される**（エラーにならない）。
+
+    -DryRun は昇格しない・-Elevated は内部用なので対象外。
+    """
+    switches = set(re.findall(r"\[switch\]\$(\w+)", register_text)) - {"DryRun", "Elevated"}
+    forwarded = set(re.findall(r'\$childArgs \+= "-(\w+)"', register_text))
+
+    missing = switches - forwarded
+    assert not missing, f"昇格した子へ渡していないスイッチ: {sorted(missing)}"
+
+
+def test_登録本数のメッセージはタスク数から導く(register_text: str) -> None:
+    """⚠ 本数を直書きするとタスクを足したときに黙ってずれる（実際に「7本」のまま8本あった）。"""
+    hardcoded = re.findall(r"\"\d+本のタスクを\w+", register_text)
+    assert not hardcoded, f"本数が直書きされています: {hardcoded}"

@@ -88,8 +88,9 @@ uv run house-search web --test-db          # ブラウザ閲覧画面をテス�
 .\scripts\run_market_then_drain.ps1         # 相場の更新→売買の掃き出しを順に（切り離して起動）
 .\scripts\run_market_then_drain.ps1 -SkipMarket  # 掃き出しだけ
 .\scripts\register_tasks.ps1 -DryRun          # タスクXMLの生成と検証（権限不要）
-.\scripts\register_tasks.ps1                  # タスク登録（要管理者。2026-09-04 に登録・有効化済み → 課題#23）
-.\scripts\register_tasks.ps1 -EnableScraping  # 取得タスクを有効化（初回スキャン完了後）
+.\scripts\register_tasks.ps1                  # タスク登録（要管理者。取得6本は無効で入る → 課題#23）
+.\scripts\register_tasks.ps1 -EnableScraping  # 取得6本も有効にして登録し直す（⚠ 時刻や上限を直したらこれ）
+.\scripts\register_tasks.ps1 -EnableOnly      # 登録済みの取得6本を有効化するだけ（定義は書き換えない）
 ```
 
 ## 参照ファイル
@@ -446,6 +447,12 @@ uv run house-search web --test-db          # ブラウザ閲覧画面をテス�
   ⚠ **関数の出力を `| Out-Null` で捨てない**——PowerShell の関数は出力をすべて戻り値として返すので、
   終了コードのつもりで捨てると python の標準出力（`scan` の実行サマリ）まで消える（→ 課題#61）。
   ⚠ ログを追うときは `Get-Content … -Wait -Encoding UTF8`
+- ⚠⚠ **タスクの定義（時刻・上限・引数）を直したら「登録」を通す。`-EnableOnly` では反映されない**
+  （→ 課題#71）。`-EnableOnly` は `schtasks /change /enable` だけを行う経路で、
+  ⚠ **画面には「成功: …のパラメーターは変更されました。」「[有効化] …」が並び終了コードも0**なので
+  **成功に見えるまま古い定義が残る**（2026-09-16 に棚卸しの 02:35 が2回とも反映されなかった）。
+  反映は `(Get-ScheduledTask -TaskName 'HouseSearch-Sweep').Triggers.StartBoundary` で確かめる。
+  ⚠ 登録は定義を置き換えるので**走行中のタスクがあるときは行わない**（既定で拒否する）
 - **タスク用スクリプトと切り離し用スクリプトを流用し合わない。**
   `run_initial_scan.ps1` は `Start-Process` で切り離す側、`task_runner.ps1` は
   `-Wait` で待つ側。前者をタスクから呼ぶと即完了扱いになり二重起動する

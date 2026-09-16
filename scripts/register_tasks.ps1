@@ -3,9 +3,19 @@
 #
 # 使い方:
 #   .\scripts\register_tasks.ps1 -DryRun          # XMLを生成して検証するだけ（権限不要）
-#   .\scripts\register_tasks.ps1                  # 登録する（★管理者権限が要る）
-#   .\scripts\register_tasks.ps1 -EnableScraping  # 取得を伴う6本（Scan・ScanBuy・Sweep・CheckSold・MarketRates・BuyMarketRates）を有効化する
+#   .\scripts\register_tasks.ps1                  # 登録する（★管理者権限が要る。取得6本は無効で入る）
+#   .\scripts\register_tasks.ps1 -EnableScraping  # 登録し、取得を伴う6本（Scan・ScanBuy・Sweep・CheckSold・MarketRates・BuyMarketRates）も有効にする
+#   .\scripts\register_tasks.ps1 -EnableOnly      # 登録済みの取得6本を有効化するだけ（定義は書き換えない）
 #   .\scripts\register_tasks.ps1 -Unregister      # 8本とも削除する
+#
+# ★ 定義を直したら「登録」し直す（-EnableOnly では反映されない）:
+#   ⚠⚠ 2026-09-16 に実際に踏んだ。棚卸しの時刻を 02:00 → 02:35 に直したあと
+#   -EnableScraping を付けて実行したが、当時の -EnableScraping は
+#   **「既存タスクを有効化するだけ」で exit 0 する専用モード**だったため、
+#   schtasks /create に一度も到達せず **タスクは 02:00 のままだった**。
+#   ⚠ 「[有効化] …」と成功メッセージが並ぶので、**失敗に見えない**のが質の悪さ。
+#   → 有効化だけを行うモードは -EnableOnly へ切り出し、-EnableScraping は
+#     「有効な状態で登録し直す」に統一した。定義を直したときは必ず登録を通す。
 #
 # ★ 登録には管理者権限が必要（2026-09-02 に実測して判明）:
 #   LogonType が S4U（＝ログオフ中も実行・パスワード保存なし）のタスクを作るには
@@ -72,9 +82,17 @@
 param(
     [switch]$DryRun,
     [switch]$Unregister,
-    # 取得を伴う6本（Scan / ScanBuy / Sweep / CheckSold / MarketRates / BuyMarketRates）を有効化する。
-    # 初回全件スキャンが終わってから実行すること（並走すると実効間隔が半分になる）
+    # 取得を伴う6本（Scan / ScanBuy / Sweep / CheckSold / MarketRates / BuyMarketRates）を
+    # 有効にした状態で登録する。初回全件スキャンが終わってから実行すること
+    # （並走すると同一サイトへの実効間隔が半分になる）
     [switch]$EnableScraping,
+
+    # 登録済みの取得6本を有効化するだけ。定義（時刻・上限・引数）は書き換えない。
+    # ⚠ 定義を直したときにこれを使うと反映されない。そのときは -EnableScraping で登録し直す
+    [switch]$EnableOnly,
+
+    # 走行中のタスクがあっても登録を強行する（既定では拒否する）
+    [switch]$Force,
 
     # タスクを「実行するアカウント」。省略時は現在のログオンユーザー。
     # ⚠ 自己昇格すると実行者が管理者アカウントに変わるため、
@@ -130,8 +148,12 @@ if (-not $DryRun -and -not (Test-Elevated)) {
         "-File", "`"$PSCommandPath`"",
         "-Elevated", "-TaskUser", "`"$TaskUser`""
     )
+    # ⚠ スイッチを足したらここへも足す（忘れると昇格後に黙って無視される）。
+    #   tests/test_task_scripts.py が引き継ぎ漏れを検査している
     if ($Unregister)     { $childArgs += "-Unregister" }
     if ($EnableScraping) { $childArgs += "-EnableScraping" }
+    if ($EnableOnly)     { $childArgs += "-EnableOnly" }
+    if ($Force)          { $childArgs += "-Force" }
 
     try {
         # -NoExit で昇格した窓を開いたままにする（結果を読めるようにするため）
@@ -275,23 +297,33 @@ if ($Unregister) {
     foreach ($task in $Tasks) {
         & schtasks.exe /delete /tn $task.Name /f 2>&1 | Out-String | Write-Output
     }
-    Write-Host "7本のタスクを削除しました" -ForegroundColor Green
+    Write-Host "$($Tasks.Count)本のタスクを削除しました" -ForegroundColor Green
     exit 0
 }
 
-# ---- 既存タスクの有効化だけを行う ----------------------------------------
-if ($EnableScraping -and -not $DryRun) {
-    & schtasks.exe /query /tn "HouseSearch-Scan" 2>&1 | Out-Null
-    if ($LASTEXITCODE -eq 0) {
-        foreach ($task in ($Tasks | Where-Object { $_.Scraping })) {
-            & schtasks.exe /change /tn $task.Name /enable 2>&1 | Out-String | Write-Output
-            Write-Host "[有効化] $($task.Name)" -ForegroundColor Green
-        }
-        Write-Host ""
-        Write-Host "取得を伴うタスクを有効化しました。初回全件スキャンとの並走に注意してください。" -ForegroundColor Cyan
-        exit 0
+# ---- 既存タスクの有効化だけを行う（定義は書き換えない） --------------------
+# ⚠⚠ この早期 exit を -EnableScraping に持たせてはいけない（→ 2026-09-16 の実害・課題#71）。
+#   定義を直して -EnableScraping で流しても schtasks /create に到達せず、
+#   「[有効化] …」の成功メッセージだけが並んで**古い定義のまま残る**。
+#   走行中でも安全なのがこの経路の利点なので、-EnableOnly として残してある
+if ($EnableOnly) {
+    if ($DryRun) {
+        throw "-EnableOnly は登録済みタスクを直接書き換えるため -DryRun と併用できません"
     }
-    # 未登録なら通常の登録処理へ進む（Enabled=true で作られる）
+    & schtasks.exe /query /tn "HouseSearch-Scan" 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        # ⚠ 未登録のまま黙って登録処理へ流さない（-EnableOnly は「定義を変えない」約束なので、
+        #   ここで登録すると利用者の意図を超えて8本を作ることになる）
+        throw "タスクが未登録です。先に -EnableScraping を付けて登録してください。"
+    }
+    foreach ($task in ($Tasks | Where-Object { $_.Scraping })) {
+        & schtasks.exe /change /tn $task.Name /enable 2>&1 | Out-String | Write-Output
+        Write-Host "[有効化] $($task.Name)" -ForegroundColor Green
+    }
+    Write-Host ""
+    Write-Host "取得を伴うタスクを有効化しました（定義は変えていません）。" -ForegroundColor Cyan
+    Write-Host "⚠ 時刻や上限を直した場合はこれでは反映されません。-EnableScraping で登録し直してください。" -ForegroundColor Yellow
+    exit 0
 }
 
 function New-TaskXml {
@@ -426,6 +458,30 @@ if (-not $DryRun) {
     Write-Host ""
 }
 
+# ---- 走行中のタスクがあれば登録しない -------------------------------------
+# schtasks /create /f は定義を置き換えるので、走行中の回をその場で落としうる。
+# 取得の後処理（名寄せ・採点・通知）の前に落ちると新着通知が永久に失われる（→ 課題#63）。
+# ⚠ **State だけでは走行中を判定しきれない**。実行時間の上限で親が打ち切られると
+#   State は Ready に戻るのに子の python は取得ロックを握ったまま走り続ける（→ 課題#67）
+if (-not $DryRun) {
+    $running = @()
+    try {
+        $running = @(Get-ScheduledTask -TaskPath "\" -TaskName "HouseSearch-*" -ErrorAction Stop |
+                     Where-Object { $_.State -eq "Running" })
+    }
+    catch {
+        # ⚠ 確認できなかったことを黙って「走行中なし」と読み替えない
+        Write-Host "⚠ 走行中タスクの確認に失敗しました（$_）。手で確かめてください。" -ForegroundColor Yellow
+    }
+    if ($running.Count -gt 0) {
+        $names = ($running | ForEach-Object { $_.TaskName }) -join ", "
+        if (-not $Force) {
+            throw "走行中のタスクがあります（$names）。終了を待ってから登録するか、-Force を付けてください。"
+        }
+        Write-Host "⚠ 走行中のタスクがありますが -Force のため続行します（$names）" -ForegroundColor Yellow
+    }
+}
+
 $failed = 0
 foreach ($task in $Tasks) {
     $xml     = New-TaskXml -Task $task
@@ -474,16 +530,16 @@ if ($failed) {
 }
 
 Write-Host ""
-Write-Host "7本のタスクを登録しました。確認と手動起動:" -ForegroundColor Cyan
+Write-Host "$($Tasks.Count)本のタスクを登録しました。確認と手動起動:" -ForegroundColor Cyan
 foreach ($task in $Tasks) {
     Write-Host "  schtasks /query /tn $($task.Name) /fo LIST /v"
 }
 Write-Host "  schtasks /run /tn HouseSearch-Backup      # 一番安全な疎通確認"
 if (-not $EnableScraping) {
+    $scraping = @($Tasks | Where-Object { $_.Scraping } | ForEach-Object { $_.Name })
     Write-Host ""
-    Write-Host "⚠ HouseSearch-Scan と HouseSearch-CheckSold は無効で登録しました。" -ForegroundColor Yellow
+    Write-Host "⚠ 取得を伴う $($scraping.Count) 本は無効で登録しました: $($scraping -join ' / ')" -ForegroundColor Yellow
     Write-Host "  初回全件スキャン（run_initial_scan.ps1）が終わってから有効化してください:" -ForegroundColor Yellow
-    Write-Host "    .\scripts
-egister_tasks.ps1 -EnableScraping"
+    Write-Host '    .\scripts\register_tasks.ps1 -EnableOnly' -ForegroundColor Yellow
 }
 exit 0
