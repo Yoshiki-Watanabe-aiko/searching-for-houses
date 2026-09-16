@@ -182,6 +182,18 @@ def test_ページ番号の付与と最終ページ判定(scraper: SuumoScraper)
     assert scraper.is_last_page(PAGE_SIZE) is False
 
 
+def test_一覧に送る建物数は実測で効くと確かめた値(scraper: SuumoScraper) -> None:
+    """⚠ ``pc`` は**建物**数で、選択肢にない値は**黙って無視される**（→ 課題#69）。
+
+    無視されても例外にならず件数も減らない（1ページ30棟のまま読み続ける）ので、
+    値はリテラルで固定して「変えるなら実サイトで測り直す」を強制する。
+    実測 2026-09-16・足立区（該当8,939件）で ``pc=50`` は建物50・住戸65を返し、
+    最終ページが 32 → 19 になった（一覧のリクエスト数が約4割減る）。
+    """
+    assert PAGE_SIZE == 50
+    assert scraper.page_url("https://x/?a=1", 3) == "https://x/?a=1&pc=50&pn=3"
+
+
 def test_最終ページ番号をページ送りから読む(scraper: SuumoScraper, list_html: str) -> None:
     """⚠⚠ ``is_last_page`` は住戸数と建物数の単位が違うので発火しない（→ 課題#69）。
 
