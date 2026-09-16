@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from house_search.scoring.listing_view import ListingView, StationAccess
+from house_search.scoring.listing_view import ListingView, MarketRateRef, StationAccess
 from house_search.scoring.score import STATUS_UNKNOWN, ScoreResult
 from house_search.scoring.utility import (
     BASIS_ASSUMED,
@@ -93,6 +93,19 @@ class NotifiableListing:
     # 推定光熱費（→ 課題#64）。賃貸で utility を設定したパターンだけに付く。
     # 既定値付きなので、売買や設定の無いパターンの表示はこれまでどおり。
     utility: UtilityEstimate | None = None
+    # --- 周辺相場（→ 課題#70） ---
+    # ⚠ **表示専用。metric にも MUST にもしない**（相場比は既に WANT の1項目で、
+    #   金額を出すのは「その比が何と比べた結果か」を説明するためだけ。
+    #   `LOAN_ANNUAL_RATE` と同じ理由で価格軸に二重の重みを掛けない）。
+    # ⚠⚠ **賃貸の相場比の分子は `rent_total`（賃料＋管理費）で、光熱費込みの
+    #   月額ではない**（→ 課題#64・ADR 0025）。`_living_total` と取り違えると、
+    #   光熱費込みの額を家賃相場で割った無意味な比が出る（例外にならない）。
+    market_rate_ratio: float | None = None
+    market_rate: MarketRateRef | None = None
+    city_name: str | None = None
+    # 売買の相場（㎡単価）を「この物件の広さなら相場いくら」と読み替えるのに要る。
+    # ⚠ 渡し忘れると戸建てだけ面積表記が消える（例外にはならない）
+    building_area_sqm: float | None = None
 
     @property
     def monthly_cost(self) -> int | None:
@@ -156,6 +169,10 @@ def notifiable_from(
         stations=view.stations,
         commute_destination=commute_destination,
         utility=view.utility,
+        market_rate_ratio=view.market_rate_ratio,
+        market_rate=view.market_rate,
+        city_name=view.city_name,
+        building_area_sqm=view.building_area_sqm,
     )
 
 
@@ -328,6 +345,142 @@ def _chintai_living_cost_field(
     )
 
 
+# --- 周辺相場（→ 課題#70） ---------------------------------------------------
+
+#: 相場の出典コード → 通知に出す表記。
+#: ⚠ **未知のコードは `.get(code, code)` で生のまま出す**（別の出典へ黙って寄せない）。
+#: ⚠ 正典は `market/soba.py` の ``STAT_BASIS_*`` と `market/rates.py` の
+#:   ``BUY_STAT_BASIS``。ここへ import しないのは notify を軽く保つため
+#:   （lxml を通知の経路へ持ち込まない）。ずれは `test_notify_market` が検出する。
+STAT_BASIS_LABELS: dict[str, str] = {
+    "rent_listed_mansion": "スーモ掲載賃料・マンション",
+    "rent_listed_apart": "スーモ掲載賃料・アパート",
+    "trade_unit_price_01": "国交省 取引価格",
+    "trade_unit_price_02": "国交省 成約価格",
+}
+
+#: 売買の相場の区分 → ``(面積の属性名, 表記)``。面積は本文のラベルにだけ使う。
+#: ⚠⚠ **ファミリではなく segment から決める。** 分子の面積は SQL 側が segment と
+#:   対にして選んでいるので、「マンションは専有・戸建ては延床」という規則を
+#:   ここへ二重に書くと、片方だけ直したときに水準が静かにずれる。
+#: ⚠ ``LAND_SQM`` の行は、土地の相場を入れる（課題#61 の 9d）ときに
+#:   `persist._MARKET_LATERAL` の CASE と**両方**を触ること。
+SEGMENT_AREA: dict[str, tuple[str, str]] = {
+    "AREA_SQM": ("area_sqm", "専有"),
+    "FLOOR_SQM": ("building_area_sqm", "延床"),
+    "LAND_SQM": ("land_area_sqm", "土地"),
+}
+
+#: 相場に添える前提（`LOAN_NOTE`・`utility_note` と同じ「前提の併記」）。
+MARKET_NOTE_CHINTAI = "管理費の扱いは相場側に記載がなく、光熱費は含まない"
+MARKET_NOTE_BUY = "売出価格 ÷ 取引の相場なので 1.0 を超えやすい"
+#: 土地は相場データが構造的に無い（→ 課題#61 の 9d が未着手）。
+#: ⚠ 「不明」と書かない——取得漏れや解決失敗と読めてしまう。
+MARKET_LAND_UNCOLLECTED = "相場 未収録（土地の相場データは未整備）"
+
+
+def _market_basis_label(stat_basis: str) -> str:
+    return STAT_BASIS_LABELS.get(stat_basis, stat_basis)
+
+
+def _comparable_area(prop: NotifiableListing, segment: str) -> tuple[float | None, str | None]:
+    """相場を当てはめる面積と、その表記。⚠ 未知の区分は換算しない（推測で掛けない）。"""
+    entry = SEGMENT_AREA.get(segment)
+    if entry is None:
+        return None, None
+    attribute, label = entry
+    return getattr(prop, attribute, None), label
+
+
+def _market_missing_reason(prop: NotifiableListing) -> str:
+    """相場が引けなかった理由。⚠ 黙って省かず、何が足りないのかまで書く。
+
+    「相場マスタにセルが無い」と「市区や間取りが解決できていない」は
+    直し方がまるで違う（前者は相場の収集、後者は掲載側の解析）。
+    """
+    if prop.city_name is None:
+        return "相場不明（市区を特定できず）"
+    if not _is_buy(prop) and prop.layout is None:
+        return "相場不明（間取り不明）"
+    cell = prop.city_name if _is_buy(prop) else f"{prop.city_name}・{prop.layout}"
+    return f"相場不明（{cell} の相場は相場マスタに無い）"
+
+
+def _chintai_market_body(prop: NotifiableListing, rate: MarketRateRef) -> str:
+    note = (
+        f"※相場は {prop.city_name or '市区不明'}・{rate.segment} の "
+        f"{_market_basis_label(rate.stat_basis)}（{rate.period}）。{MARKET_NOTE_CHINTAI}"
+    )
+    rate_text = f"{yen(round(rate.rate_value))}/月"
+    ratio = prop.market_rate_ratio
+    if ratio is None:
+        # ⚠ 相場はあるが分子が無い。「相場不明」と**混ぜない**
+        return f"相場 {rate_text}（賃料＋管理費が不明のため比較不可）\n{note}"
+    # ⚠⚠ 分子は `rent_total`。`_living_total`（光熱費込み）を使ってはいけない
+    return (
+        f"相場比 {ratio:.2f} ＝ 賃料＋管理費 {yen(prop.rent_total)} ÷ 相場 {rate_text}\n{note}"
+    )
+
+
+def _buy_market_body(prop: NotifiableListing, rate: MarketRateRef) -> str:
+    area, area_label = _comparable_area(prop, rate.segment)
+    unit_text = f"{man_yen(round(rate.rate_value))}/㎡"
+    unit_label = f"{area_label}㎡単価" if area_label else "㎡単価"
+    note = (
+        f"※相場は {prop.city_name or '市区不明'}の "
+        f"{_market_basis_label(rate.stat_basis)}（{rate.period}・{unit_label}）。"
+        f"{MARKET_NOTE_BUY}"
+    )
+    ratio = prop.market_rate_ratio
+    if ratio is None or prop.price is None:
+        return f"相場 {unit_text}（面積または価格が不明のため換算不可）\n{note}"
+    # ⚠⚠ **面積を Python 側で選び直さない。** 単価も換算額も、SQL が segment と
+    #   対の面積で作った `ratio` から導く（単価＝相場×比／換算額＝価格÷比）。
+    #   こうしておくと専有↔延床の取り違えが構造的に起こりえない（→ 課題#70）。
+    own_unit = man_yen(round(rate.rate_value * ratio))
+    equivalent = man_yen(round(prop.price / ratio / 10_000) * 10_000)
+    size = f" {area:.1f}㎡" if area is not None else ""
+    return (
+        f"相場比 {ratio:.2f} ＝ {unit_label} {own_unit} ÷ 相場 {unit_text}\n"
+        f"同じ{area_label or '広さ'}{size}なら相場 {equivalent}\n{note}"
+    )
+
+
+def market_rate_body(prop: NotifiableListing) -> str:
+    """個別通知に出す周辺相場の本文。⚠ 相場が無いときも必ず何か返す（省かない）。"""
+    if _is_land(prop):
+        return MARKET_LAND_UNCOLLECTED
+    rate = prop.market_rate
+    if rate is None:
+        return _market_missing_reason(prop)
+    return _buy_market_body(prop, rate) if _is_buy(prop) else _chintai_market_body(prop, rate)
+
+
+def market_rate_summary(prop: NotifiableListing) -> str:
+    """ダイジェスト1行に足す短い相場（→ 課題#70）。
+
+    ⚠ **20字以内に収める。** ダイジェストは上位15件を1つの description に詰めており、
+    最悪ケース（長い題名＋長いURL＋注意事項）では既に4096字の予算に迫っている。
+    出典・期間の注記はここには出さない（個別通知で読めればよい）。
+    """
+    if _is_land(prop):
+        return "相場未収録"
+    rate = prop.market_rate
+    if rate is None:
+        return "相場不明"
+    ratio = prop.market_rate_ratio
+    if _is_buy(prop):
+        if ratio is None or prop.price is None:
+            return f"相場{man_yen(round(rate.rate_value))}/㎡（換算不可）"
+        # ⚠ 括弧の中は賃貸と同じく「相場そのもの」に揃える（この物件の広さでの相場）。
+        #   「同広さなら」と書くと21字になり、上の20字の約束を破る
+        equivalent = man_yen(round(prop.price / ratio / 10_000) * 10_000)
+        return f"相場比{ratio:.2f}（相場{equivalent}）"
+    if ratio is None:
+        return f"相場{man_yen(round(rate.rate_value))}/月（比較不可）"
+    return f"相場比{ratio:.2f}（相場{man_yen(round(rate.rate_value))}/月）"
+
+
 #: ダイジェストの1行に出すガス種別の短い表記
 _GAS_SHORT = {"city": "都市ガス", "lpg": "プロパン", "electric": "オール電化"}
 
@@ -432,6 +585,9 @@ def build_listing_embed(
         },
         dict(zip(("name", "value"), price_field(prop), strict=True), inline=True),
         {"name": "条件", "value": summary_line(prop), "inline": False},
+        # ⚠ 相場が引けなくても**必ず出す**（欄ごと消えると、相場を見ているのか
+        #   いないのか読者に分からない → 課題#70）
+        {"name": "周辺相場", "value": market_rate_body(prop), "inline": False},
     ]
 
     if access := access_lines(prop):
@@ -545,8 +701,8 @@ def _digest_line(entry: DigestEntry) -> str:
     site_note = f"{prop.site_code} ほか{others}サイト" if others > 0 else prop.site_code
     return (
         f"**{entry.rank}. [{title}]({prop.url})**\n"
-        f"　`{entry.score.score:5.1f}点` {price_summary(prop)} / "
-        f"{summary_line(prop)}\n"
+        f"　`{entry.score.score:5.1f}点` {price_summary(prop)} "
+        f"{market_rate_summary(prop)} / {summary_line(prop)}\n"
         f"　{prop.address or '住所不明'} ({site_note}){unknown_note}"
     )
 
